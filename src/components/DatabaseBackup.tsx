@@ -5,7 +5,8 @@
 
 import React, { useRef, useState } from 'react';
 import { dbEngine } from '../db';
-import { Download, Upload, RefreshCw, CheckCircle, AlertOctagon, HelpCircle, ShieldAlert, KeyRound, Cloud, CloudOff, Database } from 'lucide-react';
+import { Download, Upload, RefreshCw, CheckCircle, AlertOctagon, HelpCircle, ShieldAlert, KeyRound, Cloud, CloudOff, Database, Settings } from 'lucide-react';
+import { isCustomConfigUsed } from '../firebase';
 
 interface DatabaseBackupProps {
   onRefresh: () => void;
@@ -23,6 +24,117 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
   const [firebaseEnabled, setFirebaseEnabled] = useState(dbEngine.isFirebaseEnabled());
   const [syncLoading, setSyncLoading] = useState<'push' | 'pull' | null>(null);
   const [lastSync, setLastSync] = useState(localStorage.getItem('abuzekry_last_firebase_sync') || 'لم يتم المزامنة مسبقاً');
+
+  // Custom Firebase Config states
+  const [showCustomConfigForm, setShowCustomConfigForm] = useState(false);
+  const [customApiKey, setCustomApiKey] = useState('');
+  const [customProjectId, setCustomProjectId] = useState('');
+  const [customDatabaseId, setCustomDatabaseId] = useState('(default)');
+  const [customAuthDomain, setCustomAuthDomain] = useState('');
+  const [customStorageBucket, setCustomStorageBucket] = useState('');
+  const [customMessagingSenderId, setCustomMessagingSenderId] = useState('');
+  const [customAppId, setCustomAppId] = useState('');
+  const [pasteJsonText, setPasteJsonText] = useState('');
+
+  // Load custom firebase config values on init
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem('abuzekry_custom_firebase_config');
+      if (stored) {
+        const custom = JSON.parse(stored);
+        if (custom) {
+          setCustomApiKey(custom.apiKey || '');
+          setCustomProjectId(custom.projectId || '');
+          setCustomDatabaseId(custom.databaseId || '(default)');
+          setCustomAuthDomain(custom.authDomain || '');
+          setCustomStorageBucket(custom.storageBucket || '');
+          setCustomMessagingSenderId(custom.messagingSenderId || '');
+          setCustomAppId(custom.appId || '');
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const handleParseJson = (text: string) => {
+    setPasteJsonText(text);
+    try {
+      let cleaned = text.trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (match) {
+        cleaned = match[0];
+      }
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        const apiKeyMatch = cleaned.match(/apiKey\s*:\s*["']([^"']+)["']/);
+        const projectIdMatch = cleaned.match(/projectId\s*:\s*["']([^"']+)["']/);
+        const databaseIdMatch = cleaned.match(/databaseId\s*:\s*["']([^"']+)["']/);
+        const authDomainMatch = cleaned.match(/authDomain\s*:\s*["']([^"']+)["']/);
+        const storageBucketMatch = cleaned.match(/storageBucket\s*:\s*["']([^"']+)["']/);
+        const messagingSenderIdMatch = cleaned.match(/messagingSenderId\s*:\s*["']([^"']+)["']/);
+        const appIdMatch = cleaned.match(/appId\s*:\s*["']([^"']+)["']/);
+
+        parsed = {};
+        if (apiKeyMatch) parsed.apiKey = apiKeyMatch[1];
+        if (projectIdMatch) parsed.projectId = projectIdMatch[1];
+        if (databaseIdMatch) parsed.databaseId = databaseIdMatch[1];
+        if (authDomainMatch) parsed.authDomain = authDomainMatch[1];
+        if (storageBucketMatch) parsed.storageBucket = storageBucketMatch[1];
+        if (messagingSenderIdMatch) parsed.messagingSenderId = messagingSenderIdMatch[1];
+        if (appIdMatch) parsed.appId = appIdMatch[1];
+      }
+
+      if (parsed && (parsed.apiKey || parsed.projectId)) {
+        if (parsed.apiKey) setCustomApiKey(parsed.apiKey);
+        if (parsed.projectId) setCustomProjectId(parsed.projectId);
+        if (parsed.databaseId) setCustomDatabaseId(parsed.databaseId);
+        if (parsed.authDomain) setCustomAuthDomain(parsed.authDomain);
+        if (parsed.storageBucket) setCustomStorageBucket(parsed.storageBucket);
+        if (parsed.messagingSenderId) setCustomMessagingSenderId(parsed.messagingSenderId);
+        if (parsed.appId) setCustomAppId(parsed.appId);
+        
+        setStatus({ success: 'تم قراءة وتحليل بيانات كود الاتصال ولصقها في الحقول أدناه بنجاح!' });
+        setTimeout(() => setStatus(null), 4000);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSaveCustomConfig = () => {
+    if (!customApiKey.trim() || !customProjectId.trim()) {
+      setStatus({ error: 'برجاء تعيين حقول مفتاح الـ API والـ Project ID الأساسية لحفظ الاتصال.' });
+      return;
+    }
+
+    const config = {
+      apiKey: customApiKey.trim(),
+      projectId: customProjectId.trim(),
+      databaseId: customDatabaseId.trim(),
+      authDomain: customAuthDomain.trim(),
+      storageBucket: customStorageBucket.trim(),
+      messagingSenderId: customMessagingSenderId.trim(),
+      appId: customAppId.trim()
+    };
+
+    localStorage.setItem('abuzekry_custom_firebase_config', JSON.stringify(config));
+    setStatus({ success: 'تم حفظ إعدادات فاير بيز بنجاح! سيتم إعادة تحميل الصفحة الآن لتطبيق الاتصال الجديد...' });
+    
+    setTimeout(() => {
+      window.location.reload();
+    }, 2000);
+  };
+
+  const handleClearCustomConfig = () => {
+    localStorage.removeItem('abuzekry_custom_firebase_config');
+    setStatus({ success: 'تم إلغاء الاتصال المخصص بنجاح والرجوع لقاعدة البيانات الافتراضية. سيتم تحديث الصفحة الآن...' });
+    setTimeout(() => {
+      window.location.reload();
+    }, 2000);
+  };
 
   const handlePushToFirebase = async () => {
     setSyncLoading('push');
@@ -208,29 +320,157 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
             </div>
           </div>
           
-          <div className="flex items-center gap-2.5 bg-slate-800/60 hover:bg-slate-800 px-4 py-2.5 rounded-2xl border border-slate-700 transition">
-            <span className="text-xs font-bold text-slate-300">مزامنة تلقائية للمتصفح:</span>
+          <div className="flex items-center gap-4">
             <button
               type="button"
-              onClick={() => handleToggleFirebase(!firebaseEnabled)}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
-                firebaseEnabled ? 'bg-emerald-500' : 'bg-slate-600'
-              }`}
+              onClick={() => setShowCustomConfigForm(!showCustomConfigForm)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-900/60 hover:bg-indigo-900 border border-indigo-700/50 rounded-xl text-xs font-bold transition text-indigo-200"
             >
-              <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                  firebaseEnabled ? '-translate-x-5' : 'translate-x-0'
-                }`}
-              />
+              <Settings className="w-3.5 h-3.5" />
+              <span>{showCustomConfigForm ? 'إخفاء الإعدادات الخاصة' : 'إعدادات Firebase الخاصة بي'}</span>
             </button>
+
+            <div className="flex items-center gap-2.5 bg-slate-800/60 hover:bg-slate-800 px-4 py-2.5 rounded-2xl border border-slate-700 transition">
+              <span className="text-xs font-bold text-slate-300">مزامنة تلقائية للمتصفح:</span>
+              <button
+                type="button"
+                onClick={() => handleToggleFirebase(!firebaseEnabled)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                  firebaseEnabled ? 'bg-emerald-500' : 'bg-slate-600'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    firebaseEnabled ? '-translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Custom Firebase configuration form */}
+        {showCustomConfigForm && (
+          <div className="bg-slate-900/90 border border-indigo-500/30 p-5 rounded-xl space-y-4 text-xs font-semibold animate-in slide-in-from-top-2 duration-200">
+            <div className="border-b border-slate-800 pb-3">
+              <h5 className="text-sm font-bold text-indigo-300">ربط وتوصيل حساب Firebase الخاص بك (الحل لتخطي حدود الاستخدام)</h5>
+              <p className="text-slate-400 text-[11px] mt-1">تجنب قيود الاستخدام السحابية المجانية لـ Firebase الافتراضي من خلال توصيل مشروعك الشخصي والمستقل على Firebase مجاناً.</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-slate-300">ألصق كود تهيئة الـ Web App من Firebase Console لتعبئة الحقول تلقائياً:</label>
+              <textarea
+                value={pasteJsonText}
+                onChange={(e) => handleParseJson(e.target.value)}
+                placeholder='مثال: const firebaseConfig = { apiKey: "...", projectId: "..." };'
+                dir="ltr"
+                className="w-full h-20 p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono text-[11px] focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <div className="space-y-1">
+                <label className="block text-slate-400">API Key (مفتاح الـ API)*</label>
+                <input
+                  type="text"
+                  value={customApiKey}
+                  onChange={(e) => setCustomApiKey(e.target.value)}
+                  dir="ltr"
+                  className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">Project ID (معرف المشروع)*</label>
+                <input
+                  type="text"
+                  value={customProjectId}
+                  onChange={(e) => setCustomProjectId(e.target.value)}
+                  dir="ltr"
+                  className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">Database ID (معرف قاعدة البيانات - اختياري)</label>
+                <input
+                  type="text"
+                  value={customDatabaseId}
+                  onChange={(e) => setCustomDatabaseId(e.target.value)}
+                  placeholder="(default)"
+                  dir="ltr"
+                  className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">Auth Domain (اختياري)</label>
+                <input
+                  type="text"
+                  value={customAuthDomain}
+                  onChange={(e) => setCustomAuthDomain(e.target.value)}
+                  dir="ltr"
+                  className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">Storage Bucket (اختياري)</label>
+                <input
+                  type="text"
+                  value={customStorageBucket}
+                  onChange={(e) => setCustomStorageBucket(e.target.value)}
+                  dir="ltr"
+                  className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">App ID (اختياري)</label>
+                <input
+                  type="text"
+                  value={customAppId}
+                  onChange={(e) => setCustomAppId(e.target.value)}
+                  dir="ltr"
+                  className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3.5 pt-2 justify-end">
+              {isCustomConfigUsed && (
+                <button
+                  type="button"
+                  onClick={handleClearCustomConfig}
+                  className="px-4 py-2 bg-red-950 hover:bg-red-900 border border-red-900/50 text-red-300 rounded-lg transition duration-150 font-bold"
+                >
+                  الرجوع للمشروع الافتراضي وإلغاء التخصيص
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleSaveCustomConfig}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition duration-150 font-bold shadow-lg shadow-emerald-900/30"
+              >
+                حفظ الإعدادات وإعادة تشغيل الاتصال
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
           <div className="lg:col-span-7 space-y-3">
             <div className="flex items-center gap-2 text-xs font-semibold text-indigo-200 bg-indigo-950/50 p-3 rounded-xl border border-indigo-800/30 w-fit">
               <Database className="w-4 h-4 text-indigo-400 shrink-0" />
-              <span>المشروع الحالي: <strong className="font-mono text-white">secret-diode-r8phd</strong> (قاعدة بيانات مخصصة)</span>
+              <span>
+                نوع الاتصال السحابي:{' '}
+                <strong className="text-white">
+                  {isCustomConfigUsed ? 'مشروع مخصص الخاص بك' : 'مشروع السنتر الافتراضي المدمج'}
+                </strong>
+              </span>
             </div>
 
             <div className="text-xs text-indigo-150 leading-relaxed font-semibold space-y-1">

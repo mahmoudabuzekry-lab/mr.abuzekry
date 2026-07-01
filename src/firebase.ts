@@ -2,8 +2,8 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc, getDocFromServer } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
-// Firebase configuration from firebase-applet-config.json
-const firebaseConfig = {
+// Default Firebase configuration (AI Studio default project)
+const DEFAULT_CONFIG = {
   apiKey: "AIzaSyBi-69hlgDqb77ffmZwU4LN5FweUGDBB8Y",
   authDomain: "secret-diode-r8phd.firebaseapp.com",
   projectId: "secret-diode-r8phd",
@@ -12,13 +12,55 @@ const firebaseConfig = {
   appId: "1:1064646478267:web:0759d198bc7aed36515c9e"
 };
 
-const app = initializeApp(firebaseConfig);
+const DEFAULT_DB_ID = "ai-studio-c740c480-0e2f-414a-803c-2a2c9718abcc";
 
-// Use the specific firestore database ID from the config
-const db = getFirestore(app, "ai-studio-c740c480-0e2f-414a-803c-2a2c9718abcc");
-const auth = getAuth(app);
+// Load custom config from localStorage if it exists
+let firebaseConfig = DEFAULT_CONFIG;
+let databaseId = DEFAULT_DB_ID;
+let isCustomConfigUsed = false;
 
-export { db, auth };
+try {
+  const customConfigStr = localStorage.getItem('abuzekry_custom_firebase_config');
+  if (customConfigStr) {
+    const custom = JSON.parse(customConfigStr);
+    if (custom && custom.apiKey && custom.projectId) {
+      firebaseConfig = {
+        apiKey: custom.apiKey,
+        authDomain: custom.authDomain || `${custom.projectId}.firebaseapp.com`,
+        projectId: custom.projectId,
+        storageBucket: custom.storageBucket || `${custom.projectId}.firebasestorage.app`,
+        messagingSenderId: custom.messagingSenderId || "",
+        appId: custom.appId || ""
+      };
+      databaseId = custom.databaseId || "(default)";
+      isCustomConfigUsed = true;
+    }
+  }
+} catch (e) {
+  console.error("Error reading custom Firebase config:", e);
+}
+
+let app: any;
+let db: any;
+let auth: any;
+
+try {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app, databaseId);
+  auth = getAuth(app);
+} catch (e) {
+  console.error("Failed to initialize Firebase with custom/current config, falling back to default:", e);
+  try {
+    app = initializeApp(DEFAULT_CONFIG);
+    db = getFirestore(app, DEFAULT_DB_ID);
+    auth = getAuth(app);
+    isCustomConfigUsed = false;
+  } catch (err2) {
+    console.error("Critical: Failed to initialize default Firebase:", err2);
+  }
+}
+
+export { db, auth, isCustomConfigUsed };
 
 export enum OperationType {
   CREATE = 'create',
@@ -50,21 +92,22 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid || null,
-      email: auth.currentUser?.email || null,
-      emailVerified: auth.currentUser?.emailVerified || null,
-      isAnonymous: auth.currentUser?.isAnonymous || null,
-      tenantId: auth.currentUser?.tenantId || null,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+      userId: auth && auth.currentUser ? auth.currentUser.uid : null,
+      email: auth && auth.currentUser ? auth.currentUser.email : null,
+      emailVerified: auth && auth.currentUser ? auth.currentUser.emailVerified : null,
+      isAnonymous: auth && auth.currentUser ? auth.currentUser.isAnonymous : null,
+      tenantId: auth && auth.currentUser ? auth.currentUser.tenantId : null,
+      providerInfo: auth && auth.currentUser && auth.currentUser.providerData ? auth.currentUser.providerData.map(provider => ({
         providerId: provider.providerId,
         email: provider.email,
-      })) || []
+      })) : []
     },
     operationType,
     path
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.warn('Firestore Operation Offline/Delayed: ', JSON.stringify(errInfo));
+  localStorage.setItem('abuzekry_firebase_offline_state', 'true');
+  localStorage.setItem('abuzekry_firebase_last_error', errInfo.error);
 }
 
 // Validate Connection to Firestore
@@ -72,9 +115,10 @@ async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
+    console.warn(
+      "ملاحظة حول الاتصال بـ Firebase: لم يتمكن التطبيق من الاتصال بقاعدة البيانات السحابية الافتراضية (قد يكون ذلك بسبب انتهاء حد الاستخدام المجاني للمشروع المشترك، أو عدم وجود اتصال بالإنترنت). يمكنك ربط مشروعك الخاص المستقل مجاناً من صفحة النسخ الاحتياطي ومزامنة البيانات لتجنب أي قيود.",
+      error
+    );
   }
 }
 testConnection();
