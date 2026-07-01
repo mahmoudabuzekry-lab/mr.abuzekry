@@ -20,7 +20,8 @@ import {
   Users, Calendar, CreditCard, Award, MessageSquare, Database, LogIn, Compass,
   BookOpen, LogOut, CheckCircle, Clock, Search, ShieldAlert, Award as AwardIcon, User, 
   MapPin, Phone, HelpCircle, GraduationCap, DollarSign, ListOrdered, CheckCircle2,
-  Lock, Unlock, KeyRound, ShieldAlert as ShieldIcon
+  Lock, Unlock, KeyRound, ShieldAlert as ShieldIcon,
+  Cloud, CloudOff, RefreshCw, Wifi, WifiOff
 } from 'lucide-react';
 
 export default function App() {
@@ -70,6 +71,10 @@ export default function App() {
   // Active Teacher Panel Tab
   const [activeTeacherTab, setActiveTeacherTab] = useState<'dashboard' | 'students' | 'groups' | 'attendance' | 'finances' | 'exams' | 'whatsapp' | 'backup'>('dashboard');
 
+  // Background Auto-Sync state
+  const [autoSyncState, setAutoSyncState] = useState<'idle' | 'checking' | 'syncing' | 'synced' | 'offline' | 'error'>('idle');
+  const [autoSyncMessage, setAutoSyncMessage] = useState<string>('');
+
   // Load and refresh state from storage
   const loadDatabase = () => {
     dbEngine.init();
@@ -95,6 +100,226 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Automatic background database synchronization with Firebase on startup/mount & periodically
+  useEffect(() => {
+    let active = true;
+    let syncInterval: any = null;
+
+    const runAutoSync = async (silent = false) => {
+      if (!dbEngine.isFirebaseEnabled()) {
+        setAutoSyncState('idle');
+        return;
+      }
+
+      if (!silent) {
+        setAutoSyncState('checking');
+        setAutoSyncMessage('جاري الاتصال بالسحابة...');
+      }
+
+      try {
+        const { testConnection, getPendingQueue, processSyncQueue, downloadBackupFromFirebase } = await import('./firebase');
+        const isOnline = await testConnection();
+
+        if (!isOnline) {
+          if (active) {
+            setAutoSyncState('offline');
+            setAutoSyncMessage('يعمل أوفلاين (بدون اتصال)');
+            setTimeout(() => {
+              if (active) setAutoSyncMessage('');
+            }, 5000);
+          }
+          return;
+        }
+
+        // 1. Process any pending offline operations in the queue
+        const pendingQueue = getPendingQueue();
+        if (pendingQueue.length > 0) {
+          if (active) {
+            setAutoSyncState('syncing');
+            setAutoSyncMessage(`جاري ترحيل ${pendingQueue.length} تعديلات معلقة...`);
+          }
+          await processSyncQueue();
+        }
+
+        // 2. Fetch the latest cloud backup
+        if (active && !silent) {
+          setAutoSyncState('syncing');
+          setAutoSyncMessage('جاري مزامنة السجلات مع السحابة...');
+        }
+
+        const backup = await downloadBackupFromFirebase();
+        const studentsLocal = dbEngine.getStudents();
+        const groupsLocal = dbEngine.getGroups();
+        const hasNoLocalData = studentsLocal.length === 0 && groupsLocal.length === 0;
+
+        if (backup) {
+          const remoteTime = backup.updatedAt ? new Date(backup.updatedAt).getTime() : 0;
+          const lastSyncStr = localStorage.getItem('abuzekry_last_firebase_sync');
+          const localTime = lastSyncStr ? new Date(lastSyncStr).getTime() : 0;
+
+          if (hasNoLocalData || remoteTime > localTime) {
+            if (active) {
+              setAutoSyncState('syncing');
+              setAutoSyncMessage('✨ تم استقبال تحديثات جديدة من السحابة!');
+            }
+
+            // Apply backup payload to localStorage safely
+            if (backup.students) localStorage.setItem('abuzekry_students', JSON.stringify(backup.students));
+            if (backup.groups) localStorage.setItem('abuzekry_groups', JSON.stringify(backup.groups));
+            if (backup.payments) localStorage.setItem('abuzekry_payments', JSON.stringify(backup.payments));
+            if (backup.attendance) localStorage.setItem('abuzekry_attendance', JSON.stringify(backup.attendance));
+            if (backup.exams) localStorage.setItem('abuzekry_exams', JSON.stringify(backup.exams));
+            if (backup.examScores) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(backup.examScores));
+            if (backup.templates) localStorage.setItem('abuzekry_templates', JSON.stringify(backup.templates));
+            if (backup.prices) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(backup.prices));
+
+            dbEngine.init(); // Recalculate states & repair duplicates
+            loadDatabase();  // Update React active view states
+
+            localStorage.setItem('abuzekry_last_firebase_sync', backup.updatedAt || new Date().toISOString());
+
+            if (active) {
+              setAutoSyncState('synced');
+              setAutoSyncMessage('✨ تم تحديث السجلات سحابياً بنجاح!');
+              setTimeout(() => {
+                if (active) setAutoSyncMessage('');
+              }, 4000);
+            }
+          } else if (remoteTime < localTime) {
+            // Local is newer (for example: if updates were done on phone offline and we just connected)
+            if (active && !silent) {
+              setAutoSyncState('syncing');
+              setAutoSyncMessage('جاري مزامنة ورفع تعديلاتك الأحدث للسحابة...');
+            }
+            await dbEngine.syncAllToFirebase();
+            if (active && !silent) {
+              setAutoSyncState('synced');
+              setAutoSyncMessage('✨ تم تحديث السحابة ببياناتك الجديدة!');
+              setTimeout(() => {
+                if (active) setAutoSyncMessage('');
+              }, 4000);
+            }
+          } else {
+            // Timestamps are identical - database is perfectly synced
+            if (active && !silent) {
+              setAutoSyncState('synced');
+              setAutoSyncMessage('✅ السجلات متطابقة بالكامل مع السحابة.');
+              setTimeout(() => {
+                if (active) setAutoSyncMessage('');
+              }, 4000);
+            }
+          }
+        } else {
+          // No remote backup, but we have local data - upload initial backup
+          if (!hasNoLocalData) {
+            if (active) {
+              setAutoSyncState('syncing');
+              setAutoSyncMessage('جاري رفع نسخة احتياطية أولى للسحابة...');
+            }
+            await dbEngine.syncAllToFirebase();
+            if (active) {
+              setAutoSyncState('synced');
+              setAutoSyncMessage('✨ تم تهيئة السحابة بنجاح!');
+              setTimeout(() => {
+                if (active) setAutoSyncMessage('');
+              }, 4000);
+            }
+          } else {
+            if (active) {
+              setAutoSyncState('idle');
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn("Auto-sync failed on background task:", err);
+        if (active && !silent) {
+          setAutoSyncState('error');
+          setAutoSyncMessage('خطأ في المزامنة أو الحصة مستنفذة');
+          setTimeout(() => {
+            if (active) setAutoSyncMessage('');
+          }, 6000);
+        }
+      }
+    };
+
+    runAutoSync(false);
+
+    // Run silent auto sync checking every 30 seconds to fetch other device modifications dynamically
+    syncInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        runAutoSync(true);
+      }
+    }, 30000);
+
+    const handleOnline = () => {
+      runAutoSync(false);
+    };
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      active = false;
+      if (syncInterval) clearInterval(syncInterval);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
+
+  // Listen to immediate operations sync events to show live feedback on any user operation
+  useEffect(() => {
+    let active = true;
+
+    const handleSyncStarted = (e: any) => {
+      if (!active) return;
+      setAutoSyncState('syncing');
+      setAutoSyncMessage('جاري مزامنة التعديلات سحابياً...');
+    };
+
+    const handleSyncProcessing = (e: any) => {
+      if (!active) return;
+      setAutoSyncState('syncing');
+      const count = e.detail?.count || 1;
+      setAutoSyncMessage(`جاري حفظ ${count} تعديلات سحابياً...`);
+    };
+
+    const handleSyncCompleted = () => {
+      if (!active) return;
+      setAutoSyncState('synced');
+      setAutoSyncMessage('✨ تم حفظ ومزامنة التعديلات!');
+      loadDatabase(); // refresh UI local states
+      setTimeout(() => {
+        if (active) setAutoSyncMessage('');
+      }, 3500);
+    };
+
+    const handleSyncFailed = (e: any) => {
+      if (!active) return;
+      setAutoSyncState('offline');
+      setAutoSyncMessage(e.detail?.message || 'تم الحفظ محلياً (أوفلاين)');
+      setTimeout(() => {
+        if (active) setAutoSyncMessage('');
+      }, 5000);
+    };
+
+    const handleSyncStatusUpdated = () => {
+      if (!active) return;
+      loadDatabase(); // Keep react state fresh when queue resolves
+    };
+
+    window.addEventListener('abuzekry_sync_started', handleSyncStarted);
+    window.addEventListener('abuzekry_sync_processing', handleSyncProcessing);
+    window.addEventListener('abuzekry_sync_completed', handleSyncCompleted);
+    window.addEventListener('abuzekry_sync_failed', handleSyncFailed);
+    window.addEventListener('abuzekry_sync_status_updated', handleSyncStatusUpdated);
+
+    return () => {
+      active = false;
+      window.removeEventListener('abuzekry_sync_started', handleSyncStarted);
+      window.removeEventListener('abuzekry_sync_processing', handleSyncProcessing);
+      window.removeEventListener('abuzekry_sync_completed', handleSyncCompleted);
+      window.removeEventListener('abuzekry_sync_failed', handleSyncFailed);
+      window.removeEventListener('abuzekry_sync_status_updated', handleSyncStatusUpdated);
+    };
   }, []);
 
   const handleLogoClick = () => {
@@ -260,6 +485,30 @@ export default function App() {
               <p className="text-xs text-slate-500 font-medium">الأستاذ محمود أبوذكري — لتأسيس جيل علمي مبدع</p>
             </div>
           </div>
+
+          {/* Cloud Sync Status Badge */}
+          {dbEngine.isFirebaseEnabled() && autoSyncMessage && (
+            <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all duration-300 shadow-xs ${
+              autoSyncState === 'checking' || autoSyncState === 'syncing'
+                ? 'bg-blue-50/85 text-blue-800 border-blue-200/60 animate-pulse'
+                : autoSyncState === 'synced'
+                ? 'bg-emerald-50/85 text-emerald-800 border-emerald-200/60'
+                : autoSyncState === 'offline'
+                ? 'bg-amber-50/85 text-amber-850 border-amber-200/60'
+                : 'bg-red-50/85 text-red-800 border-red-200/60'
+            }`}>
+              {autoSyncState === 'checking' || autoSyncState === 'syncing' ? (
+                <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+              ) : autoSyncState === 'synced' ? (
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+              ) : autoSyncState === 'offline' ? (
+                <WifiOff className="w-3.5 h-3.5 text-amber-600" />
+              ) : (
+                <CloudOff className="w-3.5 h-3.5 text-red-600" />
+              )}
+              <span>{autoSyncMessage}</span>
+            </div>
+          )}
 
           {userRole === 'guest' ? (
             <button

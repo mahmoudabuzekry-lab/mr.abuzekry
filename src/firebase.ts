@@ -188,6 +188,13 @@ export function addToSyncQueue(entityKey: string, data: any) {
   });
   savePendingQueue(filtered);
   
+  // Dispatch custom event to notify components that sync has been queued
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('abuzekry_sync_started', {
+      detail: { entityKey, count: filtered.length }
+    }));
+  }
+  
   // Trigger async background processing
   processSyncQueue().catch(() => {});
 }
@@ -199,6 +206,11 @@ export async function processSyncQueue(): Promise<void> {
   if (queue.length === 0) return;
 
   isProcessingQueue = true;
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('abuzekry_sync_processing', {
+      detail: { count: queue.length }
+    }));
+  }
   console.log(`Processing Firebase Sync queue (${queue.length} items)...`);
 
   try {
@@ -206,6 +218,11 @@ export async function processSyncQueue(): Promise<void> {
     const online = await testConnection();
     if (!online) {
       isProcessingQueue = false;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('abuzekry_sync_failed', {
+          detail: { message: 'تعذر الاتصال بالإنترنت - سيتم ترحيل البيانات لاحقاً تلقائياً' }
+        }));
+      }
       return;
     }
 
@@ -230,10 +247,25 @@ export async function processSyncQueue(): Promise<void> {
     }
   } catch (e) {
     console.error("Error in processSyncQueue:", e);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('abuzekry_sync_failed', {
+        detail: { message: 'حدث خطأ أثناء مزامنة البيانات السحابية' }
+      }));
+    }
   } finally {
     isProcessingQueue = false;
     // Dispatch custom event to notify components of queue update
-    window.dispatchEvent(new CustomEvent('abuzekry_sync_status_updated'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('abuzekry_sync_status_updated'));
+      const remaining = getPendingQueue().length;
+      if (remaining === 0) {
+        window.dispatchEvent(new CustomEvent('abuzekry_sync_completed'));
+      } else {
+        window.dispatchEvent(new CustomEvent('abuzekry_sync_failed', {
+          detail: { message: `متبقي ${remaining} عمليات معلقة لعدم استقرار الشبكة` }
+        }));
+      }
+    }
   }
 }
 
@@ -288,10 +320,17 @@ export async function syncEntityToFirebase(entityKey: string, data: any): Promis
     const queue = getPendingQueue().filter(item => item.entityKey !== entityKey);
     savePendingQueue(queue);
     localStorage.setItem('abuzekry_firebase_offline_state', 'false');
-    window.dispatchEvent(new CustomEvent('abuzekry_sync_status_updated'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('abuzekry_sync_status_updated'));
+      window.dispatchEvent(new CustomEvent('abuzekry_sync_completed'));
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
-    // Silent catch, since it's already queued for offline sync!
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('abuzekry_sync_failed', {
+        detail: { message: 'تم الحفظ محلياً (أوفلاين)' }
+      }));
+    }
   }
 }
 
