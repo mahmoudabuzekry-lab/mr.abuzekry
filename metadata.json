@@ -1,0 +1,6 @@
+{
+  "name": "إدارة مجموعات الأستاذ محمود أبوذكري",
+  "description": "النظام الذكي المتكامل لإدارة مجموعات الدروس الخصوصية لمادة العلوم للأستاذ محمود أبوذكري - الحضور بالـ QR والمدفوعات والنتائج.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
