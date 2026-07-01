@@ -88,6 +88,34 @@ export interface FirestoreErrorInfo {
   }
 }
 
+// Timeout utility to ensure offline clients or exhausted projects fail fast instead of hanging
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 3500, label: string = "Operation"): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`انتهت مهلة الاتصال (${label}) - يبدو أن العميل غير متصل أو تم استهلاك الحصة المجانية للمشروع.`));
+    }, timeoutMs);
+
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+// Global Sync Status State
+export type SyncStatusType = 'synced' | 'syncing' | 'offline' | 'error';
+export interface SyncStateInfo {
+  status: SyncStatusType;
+  lastSyncTime: string;
+  errorMessage?: string;
+  pendingQueueCount: number;
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
@@ -111,29 +139,117 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 // Validate Connection to Firestore
-async function testConnection() {
+export async function testConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await withTimeout(getDocFromServer(doc(db, 'test', 'connection')), 2500, "اختبار الاتصال");
+    localStorage.setItem('abuzekry_firebase_offline_state', 'false');
+    return true;
   } catch (error) {
-    console.warn(
-      "ملاحظة حول الاتصال بـ Firebase: لم يتمكن التطبيق من الاتصال بقاعدة البيانات السحابية الافتراضية (قد يكون ذلك بسبب انتهاء حد الاستخدام المجاني للمشروع المشترك، أو عدم وجود اتصال بالإنترنت). يمكنك ربط مشروعك الخاص المستقل مجاناً من صفحة النسخ الاحتياطي ومزامنة البيانات لتجنب أي قيود.",
-      error
-    );
+    console.warn("Firebase testing failed:", error);
+    localStorage.setItem('abuzekry_firebase_offline_state', 'true');
+    return false;
   }
 }
-testConnection();
+
+// Queue Management for Offline Writes
+export interface QueueItem {
+  id: string;
+  entityKey: string;
+  data: any;
+  timestamp: string;
+}
+
+export function getPendingQueue(): QueueItem[] {
+  try {
+    const raw = localStorage.getItem('abuzekry_pending_sync_queue');
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function savePendingQueue(queue: QueueItem[]) {
+  try {
+    localStorage.setItem('abuzekry_pending_sync_queue', JSON.stringify(queue));
+  } catch (e) {
+    console.error("Error saving pending sync queue:", e);
+  }
+}
+
+export function addToSyncQueue(entityKey: string, data: any) {
+  const queue = getPendingQueue();
+  // Remove existing item for same entity to avoid duplicate writes
+  const filtered = queue.filter(item => item.entityKey !== entityKey);
+  filtered.push({
+    id: `q_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+    entityKey,
+    data,
+    timestamp: new Date().toISOString()
+  });
+  savePendingQueue(filtered);
+  
+  // Trigger async background processing
+  processSyncQueue().catch(() => {});
+}
+
+let isProcessingQueue = false;
+export async function processSyncQueue(): Promise<void> {
+  if (isProcessingQueue) return;
+  const queue = getPendingQueue();
+  if (queue.length === 0) return;
+
+  isProcessingQueue = true;
+  console.log(`Processing Firebase Sync queue (${queue.length} items)...`);
+
+  try {
+    // Verify connection first before attempting writes
+    const online = await testConnection();
+    if (!online) {
+      isProcessingQueue = false;
+      return;
+    }
+
+    // Process items one by one
+    const currentQueue = [...queue];
+    for (const item of currentQueue) {
+      try {
+        const docRef = doc(db, "abuzekry_realtime", item.entityKey);
+        await withTimeout(setDoc(docRef, {
+          items: item.data,
+          updatedAt: item.timestamp
+        }), 4000, `مزامنة ${item.entityKey}`);
+
+        // Remove from local queue
+        const updatedQueue = getPendingQueue().filter(q => q.id !== item.id);
+        savePendingQueue(updatedQueue);
+      } catch (err) {
+        console.warn(`Failed to process sync item for ${item.entityKey}, will retry later:`, err);
+        // Stop processing this run if there is a connection failure during execution
+        break;
+      }
+    }
+  } catch (e) {
+    console.error("Error in processSyncQueue:", e);
+  } finally {
+    isProcessingQueue = false;
+    // Dispatch custom event to notify components of queue update
+    window.dispatchEvent(new CustomEvent('abuzekry_sync_status_updated'));
+  }
+}
 
 // Helper to push full local backup to Firebase
 export async function uploadBackupToFirebase(data: any): Promise<void> {
   const path = "abuzekry_data/main_backup";
   try {
     const docRef = doc(db, "abuzekry_data", "main_backup");
-    await setDoc(docRef, {
+    await withTimeout(setDoc(docRef, {
       ...data,
       updatedAt: new Date().toISOString()
-    });
+    }), 5000, "رفع نسخة احتياطية كاملة");
+    localStorage.setItem('abuzekry_firebase_offline_state', 'false');
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
+    throw err;
   }
 }
 
@@ -142,27 +258,40 @@ export async function downloadBackupFromFirebase(): Promise<any | null> {
   const path = "abuzekry_data/main_backup";
   try {
     const docRef = doc(db, "abuzekry_data", "main_backup");
-    const docSnap = await getDoc(docRef);
+    const docSnap = await withTimeout(getDoc(docRef), 5000, "تنزيل نسخة احتياطية كاملة");
+    localStorage.setItem('abuzekry_firebase_offline_state', 'false');
     if (docSnap.exists()) {
       return docSnap.data();
     }
     return null;
   } catch (err) {
     handleFirestoreError(err, OperationType.GET, path);
+    throw err;
   }
 }
 
 // Single item updater helper to write individual updates immediately
 export async function syncEntityToFirebase(entityKey: string, data: any): Promise<void> {
   const path = `abuzekry_realtime/${entityKey}`;
+  
+  // Add to local queue first (supports offline-first immediately)
+  addToSyncQueue(entityKey, data);
+  
   try {
     const docRef = doc(db, "abuzekry_realtime", entityKey);
-    await setDoc(docRef, {
+    await withTimeout(setDoc(docRef, {
       items: data,
       updatedAt: new Date().toISOString()
-    });
+    }), 3500, `حفظ ${entityKey}`);
+
+    // If successful, remove from the queue
+    const queue = getPendingQueue().filter(item => item.entityKey !== entityKey);
+    savePendingQueue(queue);
+    localStorage.setItem('abuzekry_firebase_offline_state', 'false');
+    window.dispatchEvent(new CustomEvent('abuzekry_sync_status_updated'));
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
+    // Silent catch, since it's already queued for offline sync!
   }
 }
 
@@ -171,7 +300,8 @@ export async function fetchEntityFromFirebase(entityKey: string): Promise<any | 
   const path = `abuzekry_realtime/${entityKey}`;
   try {
     const docRef = doc(db, "abuzekry_realtime", entityKey);
-    const docSnap = await getDoc(docRef);
+    const docSnap = await withTimeout(getDoc(docRef), 4000, `جلب ${entityKey}`);
+    localStorage.setItem('abuzekry_firebase_offline_state', 'false');
     if (docSnap.exists()) {
       return docSnap.data();
     }
@@ -180,3 +310,19 @@ export async function fetchEntityFromFirebase(entityKey: string): Promise<any | 
   }
   return null;
 }
+
+// Listen to online events to automatically flush the queue
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log("Device is online. Flushing Firebase sync queue...");
+    processSyncQueue().catch(() => {});
+  });
+
+  // Periodically process queue every 45 seconds if pending items exist
+  setInterval(() => {
+    if (getPendingQueue().length > 0) {
+      processSyncQueue().catch(() => {});
+    }
+  }, 45000);
+}
+
