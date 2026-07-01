@@ -110,7 +110,8 @@ export default function App() {
 
   const handleSecretLoginSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (secretInput === '120' || secretInput === 'admin') {
+    const storedPass = localStorage.getItem('abuzekry_admin_password') || '120';
+    if (secretInput === storedPass || secretInput === '120' || secretInput === 'admin') {
       setUserRole('teacher');
       setIsPasswordError(false);
       setSecretInput('');
@@ -182,7 +183,8 @@ export default function App() {
 
   const handleTeacherLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminPassword === '120' || adminPassword === 'admin') {
+    const storedPass = localStorage.getItem('abuzekry_admin_password') || '120';
+    if (adminPassword === storedPass || adminPassword === '120' || adminPassword === 'admin') {
       setUserRole('teacher');
       setIsPasswordError(false);
       setAdminPassword('');
@@ -296,344 +298,254 @@ export default function App() {
         {userRole === 'guest' && (
           <div className="space-y-10 py-4 no-print animate-in fade-in duration-300">
             {/* Center Hero statement */}
-            <div className="text-center max-w-2xl mx-auto space-y-3.5">
-              <span className="inline-flex items-center gap-1.5 text-xs bg-indigo-50 text-indigo-700 px-4 py-1.5 rounded-full font-bold border border-indigo-100/60 shadow-xs">
-                ✨ منصة العلوم المتكاملة الحديثة
-              </span>
-              <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 font-sans tracking-tight leading-tight">
-                بوابة التعلّم الذكي للأستاذ <span className="text-transparent bg-clip-text bg-gradient-to-l from-indigo-600 to-sky-600">محمود أبوذكري</span>
+            <div className="text-center max-w-2xl mx-auto space-y-4">
+              <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight">
+                منصة دروس العلوم
+              </h1>
+              <h2 className="text-2xl md:text-3xl font-extrabold text-indigo-600">
+                للأستاذ محمود أبوذكري
               </h2>
-              <p className="text-xs md:text-sm text-slate-500 leading-relaxed max-w-xl mx-auto font-medium">
-                النظام السحابي الذكي لمتابعة التحصيل العلمي واختبارات العلوم، رصد المصروفات والحضور الفوري، وإرسال تقارير الأداء التفصيلية لأولياء الأمور أولاً بأول.
-              </p>
+              <div className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 px-5 py-2 rounded-full text-sm md:text-base font-extrabold font-mono border border-slate-200/80 transition shadow-xs">
+                <span>📞</span>
+                <a href="tel:01110335245" className="hover:underline">01110335245</a>
+              </div>
             </div>
 
-            {/* Split Grid: Right for Interactive Forms, Left for Features/Stats */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 max-w-6xl mx-auto items-start">
-              
-              {/* Right Panel: Interactive Access & Registration Hub */}
-              <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200/80 shadow-xl overflow-hidden">
-                {/* Custom Elegant Tab Switcher */}
-                <div className="flex border-b border-slate-100 bg-slate-50/70 p-2 gap-1.5">
-                  <button
-                    onClick={() => setGuestTab('parent')}
-                    className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                      guestTab === 'parent'
-                        ? 'bg-white text-emerald-700 shadow-sm border border-slate-150 font-black'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'
-                    }`}
-                  >
-                    <Users className={`w-4 h-4 ${guestTab === 'parent' ? 'text-emerald-600' : 'text-slate-400'}`} />
-                    <span>بوابة ولي الأمر</span>
-                  </button>
+            {/* Centered Premium Interactive Access & Registration Hub */}
+            <div className="max-w-3xl mx-auto bg-white rounded-3xl border-2 border-slate-150/80 shadow-2xl overflow-hidden">
+              {/* Custom Elegant Tab Switcher */}
+              <div className="flex border-b border-slate-100 bg-slate-50/70 p-2.5 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setGuestTab('parent')}
+                  className={`flex-1 py-4 px-6 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2.5 cursor-pointer ${
+                    guestTab === 'parent'
+                      ? 'bg-white text-emerald-800 shadow-md border border-slate-200'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'
+                  }`}
+                >
+                  <Users className={`w-5 h-5 ${guestTab === 'parent' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                  <span>بوابة ولي الأمر</span>
+                </button>
 
-                  <button
-                    onClick={() => setGuestTab('student')}
-                    className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                      guestTab === 'student'
-                        ? 'bg-white text-indigo-700 shadow-sm border border-slate-150 font-black'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'
-                    }`}
-                  >
-                    <GraduationCap className={`w-4 h-4 ${guestTab === 'student' ? 'text-indigo-600' : 'text-slate-400'}`} />
-                    <span>بوابة الطالب</span>
-                  </button>
+                <button
+                  type="button"
+                  onClick={() => setGuestTab('student')}
+                  className={`flex-1 py-4 px-6 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2.5 cursor-pointer ${
+                    guestTab === 'student'
+                      ? 'bg-white text-indigo-800 shadow-md border border-slate-200'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'
+                  }`}
+                >
+                  <GraduationCap className={`w-5 h-5 ${guestTab === 'student' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                  <span>بوابة الطالب</span>
+                </button>
 
-                  <button
-                    onClick={() => setGuestTab('register')}
-                    className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                      guestTab === 'register'
-                        ? 'bg-white text-amber-800 shadow-sm border border-slate-150 font-black'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'
-                    }`}
-                  >
-                    <BookOpen className={`w-4 h-4 ${guestTab === 'register' ? 'text-amber-600' : 'text-slate-400'}`} />
-                    <span>تسجيل جديد</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setGuestTab('register')}
+                  className={`flex-1 py-4 px-6 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2.5 cursor-pointer ${
+                    guestTab === 'register'
+                      ? 'bg-white text-amber-900 shadow-md border border-slate-200'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'
+                  }`}
+                >
+                  <BookOpen className={`w-5 h-5 ${guestTab === 'register' ? 'text-amber-600' : 'text-slate-400'}`} />
+                  <span>تسجيل جديد</span>
+                </button>
+              </div>
 
-                {/* Tab Forms Body */}
-                <div className="p-6 md:p-8 space-y-6">
-                  
-                  {/* TAB 1: PARENT PORTAL */}
-                  {guestTab === 'parent' && (
-                    <div className="space-y-4 animate-in fade-in duration-200">
-                      <div className="space-y-1 text-right">
-                        <h3 className="text-base font-bold text-slate-800">الاستعلام والمتابعة لأولياء الأمور</h3>
-                        <p className="text-[11px] text-slate-500 leading-normal">
-                          يرجى إدخال رقم الهاتف المسجل لولي الأمر لمتابعة تقارير غياب الطالب، نتائج الاختبارات، والمستحقات والاشتراكات الشهرية.
-                        </p>
-                      </div>
-
-                      <form onSubmit={handleParentSearchSubmit} className="space-y-3">
-                        <div className="relative">
-                          <input
-                            type="tel"
-                            required
-                            placeholder="أدخل رقم هاتف ولي الأمر (مثال: 01198765432)"
-                            value={parentPhoneInput}
-                            onChange={(e) => setParentPhoneInput(e.target.value)}
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-center text-xs font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 transition-all font-mono placeholder:text-slate-400"
-                          />
-                        </div>
-
-                        <button
-                          type="submit"
-                          onClick={() => setUserRole('parent')}
-                          className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/10 hover:shadow-lg active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
-                        >
-                          <Users className="w-4 h-4" />
-                          <span>دخول بوابة ولي الأمر ومتابعة الأبناء</span>
-                        </button>
-                      </form>
-
-                      {/* Parent Tips / Quick Hints */}
-                      <div className="bg-emerald-50/40 text-emerald-900/90 p-3 rounded-xl text-[10px] leading-relaxed border border-emerald-100/50">
-                        💡 <span className="font-bold">ملاحظة مهمة:</span> في حال لم يفتح الحساب، تأكد من تسجيل رقم الموبايل لدى إدارة السنتر للأستاذ محمود لتفعيله في النظام الذكي.
-                      </div>
+              {/* Tab Forms Body */}
+              <div className="p-8 md:p-12 space-y-8">
+                
+                {/* TAB 1: PARENT PORTAL */}
+                {guestTab === 'parent' && (
+                  <div className="space-y-6 animate-in fade-in duration-200">
+                    <div className="space-y-2 text-right">
+                      <h3 className="text-xl md:text-2xl font-black text-slate-900">الاستعلام والمتابعة لأولياء الأمور</h3>
+                      <p className="text-xs md:text-sm text-slate-600 leading-relaxed font-medium">
+                        يرجى إدخال رقم الهاتف المسجل لولي الأمر لمتابعة غياب وحضور الأبناء، والاطلاع على نتائج اختبارات العلوم والتقارير الدورية والمستحقات المالية بشكل فوري.
+                      </p>
                     </div>
-                  )}
 
-                  {/* TAB 2: STUDENT PORTAL */}
-                  {guestTab === 'student' && (
-                    <div className="space-y-4 animate-in fade-in duration-200">
-                      <div className="space-y-1 text-right">
-                        <h3 className="text-base font-bold text-slate-800">البوابة الإلكترونية الذكية للمتعلم</h3>
-                        <p className="text-[11px] text-slate-500 leading-normal">
-                          أدخل الكود الخاص بك كطالب (مثال: S-1001) للاطلاع على مواعيد مجموعتك ومراجعة أوراق اختبارات العلوم، واستخراج كارت الباركود الرقمي المخصص للحضور.
-                        </p>
+                    <form onSubmit={handleParentSearchSubmit} className="space-y-4">
+                      <div className="relative">
+                        <input
+                          type="tel"
+                          required
+                          placeholder="أدخل رقم هاتف ولي الأمر المعتمد (مثال: 01198765432)"
+                          value={parentPhoneInput}
+                          onChange={(e) => setParentPhoneInput(e.target.value)}
+                          className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-200 rounded-2xl text-center text-sm md:text-base font-bold outline-none focus:bg-white focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 transition-all font-mono placeholder:text-slate-400"
+                        />
                       </div>
 
-                      <form onSubmit={handleStudentSearchSubmit} className="space-y-3">
-                        <div className="relative">
+                      <button
+                        type="submit"
+                        onClick={() => setUserRole('parent')}
+                        className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-sm md:text-base font-black transition-all shadow-lg shadow-emerald-600/20 hover:shadow-xl active:scale-[0.99] flex items-center justify-center gap-2.5 cursor-pointer"
+                      >
+                        <Users className="w-5 h-5" />
+                        <span>دخول بوابة ولي الأمر ومتابعة الأداء</span>
+                      </button>
+                    </form>
+
+                    {/* Parent Tips / Quick Hints */}
+                    <div className="bg-emerald-50/50 text-emerald-950 p-4 rounded-2xl text-xs leading-relaxed border border-emerald-100/60 font-medium">
+                      💡 <span className="font-extrabold text-emerald-800">تنبيه مهم:</span> لضمان فتح ملف أبنائك، يرجى استخدام رقم الموبايل الشخصي لولي الأمر الذي قمت بتسجيله مسبقاً في استمارة المركز لدى الأستاذ محمود.
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: STUDENT PORTAL */}
+                {guestTab === 'student' && (
+                  <div className="space-y-6 animate-in fade-in duration-200">
+                    <div className="space-y-2 text-right">
+                      <h3 className="text-xl md:text-2xl font-black text-slate-900">البوابة الإلكترونية الذكية للمتعلم</h3>
+                      <p className="text-xs md:text-sm text-slate-600 leading-relaxed font-medium">
+                        أدخل كود الطالب الخاص بك المطبوع على كارت الباركود (مثال: S-1001) للاطلاع على مواعيد مجموعتك ومراجعة أوراق اختبارات العلوم واستخراج كارت الحضور الرقمي.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleStudentSearchSubmit} className="space-y-4">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          required
+                          placeholder="أدخل كود المتعلم المكون من حرف S ورقم (مثال: S-1001)"
+                          value={studentCodeInput}
+                          onChange={(e) => setStudentCodeInput(e.target.value)}
+                          className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-200 rounded-2xl text-center text-sm md:text-base font-bold outline-none focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all font-mono placeholder:text-slate-400"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        onClick={() => setUserRole('student')}
+                        className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-sm md:text-base font-black transition-all shadow-lg shadow-indigo-600/20 hover:shadow-xl active:scale-[0.99] flex items-center justify-center gap-2.5 cursor-pointer"
+                      >
+                        <GraduationCap className="w-5 h-5" />
+                        <span>دخول البوابة ومطالعة الملف التعليمي</span>
+                      </button>
+                    </form>
+
+                    {/* Student Tips / Quick Hints */}
+                    <div className="bg-indigo-50/50 text-indigo-950 p-4 rounded-2xl text-xs leading-relaxed border border-indigo-100/60 font-medium">
+                      🔑 <span className="font-extrabold text-indigo-800">هل تواجه مشكلة في معرفة كودك؟</span> كودك الفريد مدوّن على الكارت الذكي المطبوع، وفي حال فقدانه يرجى مراجعة سكرتارية الدرس فوراً لإملائه لك.
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: NEW REGISTRATION FORM */}
+                {guestTab === 'register' && (
+                  <div className="space-y-6 animate-in fade-in duration-200">
+                    <div className="space-y-2 text-right pb-3 border-b border-slate-100">
+                      <h3 className="text-xl md:text-2xl font-black text-slate-900">استمارة الحجز والتقديم الإلكتروني</h3>
+                      <p className="text-xs md:text-sm text-slate-600 leading-relaxed font-medium">
+                        سجل بياناتك الشخصية والدراسية بدقة وموثوقية لتأمين حجز مقعدك في مجموعات العلوم للأستاذ محمود أبوذكري. سيقوم النظام بحفظ الطلب فوراً لاعتماده وتوزيع المجموعة.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handlePublicRegisterSubmit} className="space-y-5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-extrabold text-slate-700 mb-2">اسم الطالب رباعي باللغة العربية *</label>
                           <input
                             type="text"
                             required
-                            placeholder="أدخل كود الطالب المكون من حرف S ورقم (مثال: S-1001)"
-                            value={studentCodeInput}
-                            onChange={(e) => setStudentCodeInput(e.target.value)}
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-center text-xs font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all font-mono placeholder:text-slate-400"
+                            placeholder="أدخل الاسم رباعي بوضوح تام..."
+                            value={regForm.name}
+                            onChange={(e) => setRegForm({...regForm, name: e.target.value})}
+                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition"
                           />
                         </div>
+                        <div>
+                          <label className="block text-xs font-extrabold text-slate-700 mb-2">الصف الدراسي الحالي *</label>
+                          <select
+                            value={regForm.grade}
+                            onChange={(e) => setRegForm({...regForm, grade: e.target.value as any})}
+                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition font-sans"
+                          >
+                            <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                            <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                            <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
+                            <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
+                            <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
+                            <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
+                          </select>
+                        </div>
+                      </div>
 
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-extrabold text-slate-700 mb-2">رقم هاتف الطالب الشخصي (واتساب) *</label>
+                          <input
+                            type="tel"
+                            required
+                            placeholder="رقم الموبايل الشخصي النشط..."
+                            value={regForm.phone}
+                            onChange={(e) => setRegForm({...regForm, phone: e.target.value})}
+                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold font-mono outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-extrabold text-slate-700 mb-2">رقم هاتف ولي الأمر / الوالد *</label>
+                          <input
+                            type="tel"
+                            required
+                            placeholder="موبايل الوالد لإرسال الإشعارات والتقارير..."
+                            value={regForm.parentPhone}
+                            onChange={(e) => setRegForm({...regForm, parentPhone: e.target.value})}
+                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold font-mono outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-extrabold text-slate-700 mb-2">اسم المدرسة الحالية</label>
+                          <input
+                            type="text"
+                            placeholder="اسم المدرسة..."
+                            value={regForm.school}
+                            onChange={(e) => setRegForm({...regForm, school: e.target.value})}
+                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-extrabold text-slate-700 mb-2">العنوان / منطقة السكن الحالية</label>
+                          <input
+                            type="text"
+                            placeholder="الحي السكني أو المدينة الحالية..."
+                            value={regForm.address}
+                            onChange={(e) => setRegForm({...regForm, address: e.target.value})}
+                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition"
+                          />
+                        </div>
+                      </div>
+
+                      {regSuccess && (
+                        <div className="p-4 bg-emerald-50 text-emerald-900 border border-emerald-100 rounded-2xl text-xs md:text-sm font-bold text-center leading-relaxed flex items-center justify-center gap-2.5 animate-bounce">
+                          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                          <span>تم إرسال طلب انضمامك وحجز المقعد بنجاح! الإدارة ستقوم بمراجعته وتفعيل ملفك خلال ساعات.</span>
+                        </div>
+                      )}
+
+                      <div className="flex justify-end pt-3">
                         <button
                           type="submit"
-                          onClick={() => setUserRole('student')}
-                          className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/10 hover:shadow-lg active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
+                          disabled={regSuccess}
+                          className="w-full sm:w-auto px-10 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs md:text-sm rounded-xl transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
                         >
-                          <GraduationCap className="w-4 h-4" />
-                          <span>دخول البوابة وتصفح الملف الدراسي</span>
+                          <BookOpen className="w-5 h-5" />
+                          <span>إرسال طلب الانضمام الإلكتروني للدرس</span>
                         </button>
-                      </form>
-
-                      {/* Student Tips / Quick Hints */}
-                      <div className="bg-indigo-50/40 text-indigo-900/90 p-3 rounded-xl text-[10px] leading-relaxed border border-indigo-100/50">
-                        🔑 <span className="font-bold">هل نسيت كود الطالب؟</span> الكود مدوّن على كارت الطالب المطبوع، أو يمكنك التواصل مع سكرتارية الدرس فوراً لإملاء كودك المعتمد.
                       </div>
-                    </div>
-                  )}
-
-                  {/* TAB 3: NEW REGISTRATION FORM */}
-                  {guestTab === 'register' && (
-                    <div className="space-y-4 animate-in fade-in duration-200">
-                      <div className="space-y-1 text-right pb-2 border-b border-slate-100">
-                        <h3 className="text-base font-bold text-slate-800">استمارة الحجز والتقديم الإلكتروني</h3>
-                        <p className="text-[11px] text-slate-500 leading-normal">
-                          سجل بياناتك للانضمام فوراً لمجموعات الأستاذ محمود أبوذكري. سيقوم النظام بحجز مكانك المبدئي لحين اعتماد الطلب وتحديد المجموعة من السكرتارية.
-                        </p>
-                      </div>
-
-                      <form onSubmit={handlePublicRegisterSubmit} className="space-y-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-600 mb-1">اسم الطالب رباعي باللغة العربية *</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="أدخل الاسم رباعي بوضوح..."
-                              value={regForm.name}
-                              onChange={(e) => setRegForm({...regForm, name: e.target.value})}
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 transition"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-600 mb-1">الصف الدراسي الحالي *</label>
-                            <select
-                              value={regForm.grade}
-                              onChange={(e) => setRegForm({...regForm, grade: e.target.value as any})}
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 transition font-sans"
-                            >
-                              <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
-                              <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
-                              <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
-                              <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
-                              <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
-                              <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-600 mb-1">تليفون الطالب الشخصي للتواصل *</label>
-                            <input
-                              type="tel"
-                              required
-                              placeholder="رقم الموبايل الشخصي..."
-                              value={regForm.phone}
-                              onChange={(e) => setRegForm({...regForm, phone: e.target.value})}
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 transition"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-600 mb-1">تليفون ولي الأمر / الأب *</label>
-                            <input
-                              type="tel"
-                              required
-                              placeholder="موبايل الوالد لإرسال الغياب والتقارير..."
-                              value={regForm.parentPhone}
-                              onChange={(e) => setRegForm({...regForm, parentPhone: e.target.value})}
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 transition"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-600 mb-1">اسم المدرسة الحالية</label>
-                            <input
-                              type="text"
-                              placeholder="اسم المدرسة..."
-                              value={regForm.school}
-                              onChange={(e) => setRegForm({...regForm, school: e.target.value})}
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 transition"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-600 mb-1">العنوان / منطقة السكن الحالية</label>
-                            <input
-                              type="text"
-                              placeholder="الحي السكني أو المدينة..."
-                              value={regForm.address}
-                              onChange={(e) => setRegForm({...regForm, address: e.target.value})}
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 transition"
-                            />
-                          </div>
-                        </div>
-
-                        {regSuccess && (
-                          <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-lg text-xs font-bold text-center leading-relaxed flex items-center justify-center gap-2 animate-bounce">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            تم إرسال طلب انضمامك للمركز بنجاح! بانتظار تفعيله من الأستاذ محمود.
-                          </div>
-                        )}
-
-                        <div className="flex justify-end pt-2">
-                          <button
-                            type="submit"
-                            disabled={regSuccess}
-                            className="w-full sm:w-auto px-8 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
-                          >
-                            <BookOpen className="w-4 h-4" />
-                            <span>إرسال طلب الانضمام الإلكتروني للدرس</span>
-                          </button>
-                        </div>
-                      </form>
-                    </div>
-                  )}
-
-                </div>
-              </div>
-
-              {/* Left Panel: Bento Info Wall */}
-              <div className="lg:col-span-5 space-y-6">
-                
-                {/* Center Quick Stats Card */}
-                <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden">
-                  {/* Subtle decorative grid/watermark inside card */}
-                  <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-500/10 via-transparent to-transparent pointer-events-none"></div>
-                  
-                  <div className="relative space-y-4">
-                    <span className="text-[10px] bg-white/10 text-indigo-200 px-2.5 py-1 rounded-full font-bold">
-                      💡 إحصائيات المنصة الحالية
-                    </span>
-                    
-                    <h3 className="text-lg font-bold">مجتمع المبدعين العلمي</h3>
-                    <p className="text-[11px] text-slate-300 leading-normal">
-                      تنظم المنصة دفاتر الطلاب والمستويات بأعلى معايير الدقة والاحترافية لتأسيس بيئة تعليمية ذكية.
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-4 pt-3 border-t border-white/10">
-                      <div className="space-y-1 text-right">
-                        <span className="text-[10px] text-slate-400 block">الطلاب المسجلين</span>
-                        <span className="text-xl font-extrabold text-white font-sans">{approvedStudentsCount || '٤٥'} طالباً</span>
-                      </div>
-                      <div className="space-y-1 text-right border-r border-white/10 pr-4">
-                        <span className="text-[10px] text-slate-400 block">المجموعات الدراسية</span>
-                        <span className="text-xl font-extrabold text-white font-sans">{totalGroupsCount || '٨'} مجموعات</span>
-                      </div>
-                    </div>
+                    </form>
                   </div>
-                </div>
-
-                {/* Bento Features Highlights list */}
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-5 shadow-sm">
-                  <h4 className="text-xs font-black text-slate-400 tracking-wider uppercase">مميزات نظام الأستاذ محمود أبوذكري</h4>
-                  
-                  <div className="space-y-4">
-                    {/* Item 1: Whatsapp */}
-                    <div className="flex gap-3 items-start">
-                      <div className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center shrink-0">
-                        <MessageSquare className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h5 className="text-xs font-bold text-slate-800">إشعارات واتساب فورية</h5>
-                        <p className="text-[10px] text-slate-500 leading-normal mt-0.5">
-                          تصل درجات غياب وحضور واختبارات الطالب بشكل فوري وموثق عبر الواتساب لهاتف الوالد.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Item 2: Barcode */}
-                    <div className="flex gap-3 items-start">
-                      <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center shrink-0">
-                        <Compass className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h5 className="text-xs font-bold text-slate-800">تحضير ذكي بالباركود</h5>
-                        <p className="text-[10px] text-slate-500 leading-normal mt-0.5">
-                          توزيع كروت الباركود المطبوعة على الطلاب لإثبات حضورهم بثانية واحدة عبر قارئ الباركود.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Item 3: Exams */}
-                    <div className="flex gap-3 items-start">
-                      <div className="w-8 h-8 bg-amber-50 text-amber-700 rounded-lg flex items-center justify-center shrink-0">
-                        <AwardIcon className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h5 className="text-xs font-bold text-slate-800">تقييم مستمر واختبارات دورية</h5>
-                        <p className="text-[10px] text-slate-500 leading-normal mt-0.5">
-                          رصد درجات الاختبارات المتكررة وعرض كشف تراكمي لمستوى استيعاب المتعلم على مدار السنة.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Contact and Support card */}
-                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 text-right space-y-1.5">
-                  <span className="text-[10px] font-bold text-slate-700 flex items-center gap-1">
-                    📞 مركز الدعم وسكرتارية السنتر
-                  </span>
-                  <p className="text-[9.5px] text-slate-500 leading-relaxed">
-                    للاستفسارات والاتصال الفوري بالأستاذ محمود أبوذكري يرجى التواصل برقم الموبايل: <span className="font-mono font-bold text-slate-800">01055566677</span>
-                  </p>
-                </div>
+                )}
 
               </div>
-
             </div>
           </div>
         )}

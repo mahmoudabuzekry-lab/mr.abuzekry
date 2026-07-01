@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "BackupData": {
+      "title": "BackupData",
+      "description": "Full center backup data of students, groups, payments, attendance, and exam scores",
+      "type": "object",
+      "properties": {
+        "students": { "type": "array" },
+        "groups": { "type": "array" },
+        "payments": { "type": "array" },
+        "attendance": { "type": "array" },
+        "exams": { "type": "array" },
+        "examScores": { "type": "array" },
+        "templates": { "type": "array" },
+        "prices": { "type": "object" },
+        "version": { "type": "string" },
+        "exportedAt": { "type": "string" }
+      }
+    },
+    "RealtimeCollection": {
+      "title": "RealtimeCollection",
+      "description": "Saves individual tables in real-time to allow synchronization across devices",
+      "type": "object",
+      "properties": {
+        "items": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "abuzekry_data/main_backup": {
+      "schema": "BackupData",
+      "description": "Single document backup of everything"
+    },
+    "abuzekry_realtime/{entityKey}": {
+      "schema": "RealtimeCollection",
+      "description": "Real-time list collections updated on-the-fly"
+    }
+  }
+}

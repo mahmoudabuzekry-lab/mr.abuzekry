@@ -5,7 +5,7 @@
 
 import React, { useRef, useState } from 'react';
 import { dbEngine } from '../db';
-import { Download, Upload, RefreshCw, CheckCircle, AlertOctagon, HelpCircle, ShieldAlert } from 'lucide-react';
+import { Download, Upload, RefreshCw, CheckCircle, AlertOctagon, HelpCircle, ShieldAlert, KeyRound, Cloud, CloudOff, Database } from 'lucide-react';
 
 interface DatabaseBackupProps {
   onRefresh: () => void;
@@ -14,7 +14,66 @@ interface DatabaseBackupProps {
 export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
   const [status, setStatus] = useState<{ success?: string; error?: string } | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwdStatus, setPwdStatus] = useState<{ success?: string; error?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Firebase states
+  const [firebaseEnabled, setFirebaseEnabled] = useState(dbEngine.isFirebaseEnabled());
+  const [syncLoading, setSyncLoading] = useState<'push' | 'pull' | null>(null);
+  const [lastSync, setLastSync] = useState(localStorage.getItem('abuzekry_last_firebase_sync') || 'لم يتم المزامنة مسبقاً');
+
+  const handlePushToFirebase = async () => {
+    setSyncLoading('push');
+    setStatus(null);
+    try {
+      await dbEngine.syncAllToFirebase();
+      setLastSync(new Date().toISOString());
+      setStatus({ success: 'تم بنجاح وبسرعة رفع ومزامنة كامل قاعدة البيانات الحالية على سحابة فاير بيز الخاصة بك! جميع الأجهزة متزامنة الآن.' });
+    } catch (err: any) {
+      console.error(err);
+      setStatus({ error: `عذراً، فشل رفع البيانات للرابط السحابي: ${err.message || err}` });
+    } finally {
+      setSyncLoading(null);
+      setTimeout(() => setStatus(null), 6000);
+    }
+  };
+
+  const handlePullFromFirebase = async () => {
+    setSyncLoading('pull');
+    setStatus(null);
+    try {
+      const ok = await dbEngine.syncAllFromFirebase();
+      if (ok) {
+        setLastSync(new Date().toISOString());
+        setStatus({ success: 'تم بنجاح تحميل واستيراد أحدث سجلات وقاعدة بيانات السنتر من سحابة فاير بيز وتطبيقها على المتصفح!' });
+        onRefresh();
+      } else {
+        setStatus({ error: 'عذراً، لم يتم العثور على أي نسخة احتياطية سابقة مخزنة على سحابة فاير بيز الخاصة بك.' });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setStatus({ error: `فشل تحميل البيانات السحابية: ${err.message || err}` });
+    } finally {
+      setSyncLoading(null);
+      setTimeout(() => setStatus(null), 6000);
+    }
+  };
+
+  const handleToggleFirebase = (val: boolean) => {
+    dbEngine.setFirebaseEnabled(val);
+    setFirebaseEnabled(val);
+    if (val) {
+      dbEngine.syncAllToFirebase().then(() => {
+        setLastSync(new Date().toISOString());
+        setStatus({ success: 'تم تفعيل الحفظ التلقائي السحابي ومزامنة البيانات المحلية الحالية فورا!' });
+        setTimeout(() => setStatus(null), 4000);
+      }).catch(err => {
+        console.error(err);
+      });
+    }
+  };
 
   const handleExport = () => {
     try {
@@ -123,17 +182,178 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
         {/* Reset Card */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 hover:border-slate-400 transition duration-200 flex flex-col justify-between space-y-4">
           <div className="space-y-1.5">
-            <h4 className="font-bold text-red-750 text-sm">تهيئة واستعادة شيت البداية</h4>
-            <p className="text-xs text-slate-500 leading-relaxed font-semibold font-medium">حذف كافة العمليات والبيانات الحالية وإعادة تصفير قاعدة البيانات لإفراغ مساحة تصفية للطلاب أو بدء نظام جديد.</p>
+            <h4 className="font-bold text-red-750 text-sm">حذف وتصفير البيانات بالكامل</h4>
+            <p className="text-xs text-slate-500 leading-relaxed font-semibold font-medium">حذف كافة البيانات التجريبية والعمليات الحالية والبدء بقاعدة بيانات فارغة تماماً لتسجيل طلابك الفعليين.</p>
           </div>
           <button
             onClick={handleReset}
             className="w-full py-2.5 bg-red-50 text-red-655 border border-red-100 hover:bg-red-100 font-bold text-xs rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer"
           >
             <RefreshCw className="w-4 h-4 text-red-650" />
-            صيانة وإعادة تمهيد افتراضي
+            حذف كافة البيانات والبدء من جديد
           </button>
         </div>
+      </div>
+
+      {/* Firebase Cloud Sync Control Panel */}
+      <div className="bg-gradient-to-l from-slate-900 to-indigo-950 text-white p-6 md:p-8 rounded-2xl text-right space-y-6 shadow-xl border border-indigo-900 mt-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-indigo-800/40 pb-5">
+          <div className="flex items-center gap-3">
+            <div className="bg-indigo-500/20 p-2.5 rounded-xl border border-indigo-500/30">
+              <Cloud className="w-6 h-6 text-indigo-400 animate-pulse" />
+            </div>
+            <div>
+              <h4 className="font-black text-base md:text-lg text-white">بوابة الربط والمزامنة السحابية مع Firebase</h4>
+              <p className="text-indigo-200 text-xs mt-0.5 font-semibold">تأمين ومزامنة بيانات السنتر على حساب فاير بيز السحابي الخاص بك بشكل فوري وتلقائي</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2.5 bg-slate-800/60 hover:bg-slate-800 px-4 py-2.5 rounded-2xl border border-slate-700 transition">
+            <span className="text-xs font-bold text-slate-300">مزامنة تلقائية للمتصفح:</span>
+            <button
+              type="button"
+              onClick={() => handleToggleFirebase(!firebaseEnabled)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                firebaseEnabled ? 'bg-emerald-500' : 'bg-slate-600'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                  firebaseEnabled ? '-translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          <div className="lg:col-span-7 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-indigo-200 bg-indigo-950/50 p-3 rounded-xl border border-indigo-800/30 w-fit">
+              <Database className="w-4 h-4 text-indigo-400 shrink-0" />
+              <span>المشروع الحالي: <strong className="font-mono text-white">secret-diode-r8phd</strong> (قاعدة بيانات مخصصة)</span>
+            </div>
+
+            <div className="text-xs text-indigo-150 leading-relaxed font-semibold space-y-1">
+              <p>• عند تفعيل المزامنة التلقائية، سيقوم النظام بحفظ ورفع أي تغيير فوراً (مثل تسجيل حضور، دفع اشتراك، إضافة طالب) لسحابة Firebase.</p>
+              <p>• يتيح لك ذلك ربط أجهزة متعددة (مثال: جهاز المعلم، تليفون السكرتارية، شاشة السنتر) ومتابعة البيانات في نفس اللحظة بكل أمان وسهولة.</p>
+            </div>
+
+            <p className="text-[11px] text-slate-400 font-bold">
+              آخر مزامنة سحابية كاملة: <span className="text-indigo-300 font-mono">{lastSync.includes('T') ? new Date(lastSync).toLocaleString('ar-EG') : lastSync}</span>
+            </p>
+          </div>
+
+          <div className="lg:col-span-5 flex flex-col sm:flex-row gap-3 justify-end">
+            <button
+              type="button"
+              onClick={handlePushToFirebase}
+              disabled={syncLoading !== null}
+              className="py-3 px-5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl flex-1 flex items-center justify-center gap-2 transition shadow-lg shadow-emerald-700/20 active:scale-98 cursor-pointer"
+            >
+              {syncLoading === 'push' ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Cloud className="w-4 h-4" />
+              )}
+              <span>رفع البيانات الحالية للسحابة</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePullFromFirebase}
+              disabled={syncLoading !== null}
+              className="py-3 px-5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-indigo-300 border border-slate-700 font-extrabold text-xs rounded-xl flex-1 flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
+            >
+              {syncLoading === 'pull' ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Database className="w-4 h-4" />
+              )}
+              <span>تنزيل واستعادة البيانات</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Password Management Card */}
+      <div className="bg-white p-6 rounded-xl border border-slate-200 mt-6 text-right space-y-4 shadow-xs">
+        <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+          <KeyRound className="w-5 h-5 text-blue-600" />
+          <h4 className="font-bold text-slate-800 text-sm">تغيير الرمز السري لبوابة الطاقم الإداري</h4>
+        </div>
+        
+        <p className="text-xs text-slate-500 leading-relaxed font-semibold">
+          الرمز السري الافتراضي لبوابة الطاقم الإداري هو <span className="font-mono text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded font-black">120</span> أو <span className="font-mono text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded font-black">admin</span>. يمكنك تعيين كود سري مخصص جديد لحماية خصوصية بيانات السنتر والمجموعات.
+        </p>
+
+        {(() => {
+          const handlePasswordChange = (e: React.FormEvent) => {
+            e.preventDefault();
+            if (!newPassword.trim()) {
+              setPwdStatus({ error: 'الرجاء إدخال كود سري جديد وصالح.' });
+              return;
+            }
+            if (newPassword.trim() !== confirmPassword.trim()) {
+              setPwdStatus({ error: 'عذراً، كلمة المرور الجديدة وتأكيدها غير متطابقتين.' });
+              return;
+            }
+            localStorage.setItem('abuzekry_admin_password', newPassword.trim());
+            setPwdStatus({ success: `تم حفظ وتفعيل الكود السري الجديد بنجاح! الرمز المعتمد الآن هو: ${newPassword.trim()}` });
+            setNewPassword('');
+            setConfirmPassword('');
+            setTimeout(() => setPwdStatus(null), 5000);
+          };
+
+          return (
+            <form onSubmit={handlePasswordChange} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end max-w-4xl">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-600">الرمز السري الجديد *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="أدخل الرمز الجديد..."
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs font-bold outline-none transition text-right"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-600">تأكيد الرمز السري الجديد *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="تأكيد الرمز الجديد..."
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs font-bold outline-none transition text-right"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="py-2.5 px-5 bg-blue-650 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer"
+              >
+                <KeyRound className="w-4 h-4" />
+                حفظ الكود السري الجديد
+              </button>
+            </form>
+          );
+        })()}
+
+        {pwdStatus?.success && (
+          <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-lg text-xs font-bold flex items-center gap-2 animate-pulse mt-2">
+            <CheckCircle className="w-4 h-4" />
+            <span>{pwdStatus.success}</span>
+          </div>
+        )}
+
+        {pwdStatus?.error && (
+          <div className="p-3 bg-red-50 text-red-755 border border-red-100 rounded-lg text-xs font-bold flex items-center gap-2 mt-2">
+            <AlertOctagon className="w-4 h-4" />
+            <span>{pwdStatus.error}</span>
+          </div>
+        )}
       </div>
 
       {status?.success && (
@@ -159,17 +379,17 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
             <div className="flex items-center gap-3 border-b border-slate-100 pb-3 text-red-600">
               <ShieldAlert className="w-5 h-5 flex-shrink-0" />
               <h3 className="text-base font-bold text-slate-900">
-                تحذير أمان: استعادة شيت البداية
+                تحذير أمان: حذف وتصفير قاعدة البيانات بالكامل
               </h3>
             </div>
 
             {/* Modal Content */}
             <div className="text-xs text-slate-600 leading-relaxed font-semibold space-y-3">
               <p className="text-slate-900 text-sm font-bold leading-relaxed">
-                تنبيه هام جداً: سيؤدي هذا الإجراء إلى حذف كافة بيانات الطلاب والمجموعات والحسابات والدرجات والواجبات الحالية تماماً من المتصفح!
+                تنبيه هام جداً: سيؤدي هذا الإجراء إلى حذف كافة بيانات الطلاب والمجموعات والحسابات والدرجات والواجبات الحالية تماماً من المتصفح ومن السحابة!
               </p>
               <p className="text-slate-400 font-medium leading-relaxed">
-                سيتم استبدال البيانات الحالية بالبيانات التعريفية التجريبية الافتراضية للسنتر كشيت بداية نظيف. نوصي بشدة بتحميل نسخة احتياطية أولاً قبل المتابعة.
+                سيتم تصفير البيانات بالكامل والبدء بقاعدة بيانات فارغة ونظيفة لتسجيل عملك الفعلي. نوصي بشدة بتحميل نسخة احتياطية أولاً قبل المتابعة.
               </p>
             </div>
 

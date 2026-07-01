@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Match abuzekry_data collection
+    match /abuzekry_data/{docId} {
+      allow read, write: if true;
+    }
+
+    // Match abuzekry_realtime collection
+    match /abuzekry_realtime/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

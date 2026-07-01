@@ -4,6 +4,7 @@
  */
 
 import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType } from './types';
+import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase } from './firebase';
 
 // Price mapping for each grade
 export const DEFAULT_GRADE_PRICES: Record<GradeType, number> = {
@@ -27,90 +28,12 @@ const STORAGE_KEYS = {
 };
 
 // Seed Data
-const INITIAL_GROUPS: Group[] = [
-  { id: 'g1', name: 'مجموعة نيوتن (أ)', grade: 'الصف الثالث الإعدادي', day: 'السبت والإيجار المتبادل', time: '04:00 م', maxCapacity: 25, location: 'السنتر الرئيسي - القاعة 1', currentCount: 4 },
-  { id: 'g2', name: 'مجموعة أينشتاين (ب)', grade: 'الصف الثالث الإعدادي', day: 'الأحد والثلاثاء', time: '06:00 م', maxCapacity: 20, location: 'السنتر الرئيسي - القاعة 2', currentCount: 2 },
-  { id: 'g3', name: 'مجموعة جاليليو (أ)', grade: 'الصف الأول الإعدادي', day: 'الإثنين والخميس', time: '04:00 م', maxCapacity: 30, location: 'سنتر النور - القاعة 3', currentCount: 3 },
-  { id: 'g4', name: 'مجموعة جابر بن حيان', grade: 'الصف الثاني الإعدادي', day: 'السبت والأربعاء', time: '02:00 م', maxCapacity: 25, location: 'سنتر النخبة', currentCount: 2 },
-  { id: 'g5', name: 'مجموعة الفارابي (أ)', grade: 'الصف الرابع الابتدائي', day: 'الأحد', time: '03:00 م', maxCapacity: 15, location: 'مكتب المعلم الخاص', currentCount: 2 },
-  { id: 'g6', name: 'مجموعة البيروني (ب)', grade: 'الصف السادس الابتدائي', day: 'الثلاثاء', time: '03:00 م', maxCapacity: 20, location: 'سنتر النور - القاعة 1', currentCount: 1 },
-];
-
-const INITIAL_STUDENTS: Student[] = [
-  { id: 's1', code: 'S-1001', name: 'أحمد محمود عبد الخالق', phone: '01012345678', parentPhone: '01198765432', grade: 'الصف الثالث الإعدادي', school: 'طه حسين الإعدادية بنين', address: 'وسط البلد، أسيوط', groupId: 'g1', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-10T10:00:00Z' },
-  { id: 's2', code: 'S-1002', name: 'محمد علي كريم', phone: '01234567890', parentPhone: '01511122233', grade: 'الصف الثالث الإعدادي', school: 'صلاح الدين الإعدادية بأسيوط', address: 'حي السادات، أسيوط', groupId: 'g1', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-11T11:30:00Z' },
-  { id: 's3', code: 'S-1003', name: 'ياسمين ممدوح شرف', phone: '01066778899', parentPhone: '01144556677', grade: 'الصف الثالث الإعدادي', school: 'الخنساء الإعدادية بنات', address: 'الهلالي، أسيوط', groupId: 'g1', status: 'approved', exemptionType: 'partial', discountAmount: 50, createdAt: '2026-05-12T09:15:00Z' },
-  { id: 's4', code: 'S-1004', name: 'عبد الرحمن ياسر فوزي', phone: '01288991122', parentPhone: '01022334455', grade: 'الصف الثالث الإعدادي', school: 'التحرير الإعدادية بنين', address: 'النزلة، أسيوط', groupId: 'g1', status: 'approved', exemptionType: 'full', discountAmount: 0, createdAt: '2026-05-12T14:20:00Z' },
-  { id: 's5', code: 'S-1005', name: 'منة الله أشرف رضا', phone: '01555443322', parentPhone: '01222445566', grade: 'الصف الثالث الإعدادي', school: 'الشهيد محمد رأفت بنات', address: 'شارع النميس، أسيوط', groupId: 'g2', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-14T10:00:00Z' },
-  { id: 's6', code: 'S-1006', name: 'خالد مصطفى بكري', phone: '01122334499', parentPhone: '01000998877', grade: 'الصف الثالث الإعدادي', school: 'التحرير الإعدادية', address: 'غرب مسيل الكعك، أسيوط', groupId: 'g2', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-14T13:45:00Z' },
-  
-  { id: 's7', code: 'S-2001', name: 'أنس محمود أبو ذكري', phone: '01099887766', parentPhone: '01122334455', grade: 'الصف الأول الإعدادي', school: 'الشهيد يحيى الإعدادية', address: 'شارع الجمهورية، أسيوط', groupId: 'g3', status: 'approved', exemptionType: 'full', discountAmount: 0, createdAt: '2026-05-15T08:00:00Z' },
-  { id: 's8', code: 'S-2002', name: 'حبيبة وائل جاد', phone: '01211122244', parentPhone: '01055566677', grade: 'الصف الأول الإعدادي', school: 'عصمت عفيفي الإعدادية', address: 'شارع المحافظة، أسيوط', groupId: 'g3', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-16T12:00:00Z' },
-  { id: 's9', code: 'S-2003', name: 'ندى أحمد جلال', phone: '01512345678', parentPhone: '01199885544', grade: 'الصف الأول الإعدادي', school: 'المعلمات الإعدادية بنات', address: 'الفاتح، أسيوط', groupId: 'g3', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-17T15:10:00Z' },
-  
-  { id: 's10', code: 'S-3001', name: 'تامر حسني صيام', phone: '01088776655', parentPhone: '01211223344', grade: 'الصف الثاني الإعدادي', school: 'الفتح الإعدادية بنين', address: 'الفتح، أسيوط', groupId: 'g4', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-18T10:30:00Z' },
-  { id: 's11', code: 'S-3002', name: 'شهد عبد الرحيم كمال', phone: '01111222333', parentPhone: '01555666999', grade: 'الصف الثاني الإعدادي', school: 'اليرموك الإعدادية', address: 'السادات، أسيوط', groupId: 'g4', status: 'approved', exemptionType: 'partial', discountAmount: 40, createdAt: '2026-05-18T11:00:00Z' },
-  
-  { id: 's12', code: 'S-4001', name: 'مروان هيثم رجب', phone: '01222333444', parentPhone: '01099998888', grade: 'الصف الرابع الابتدائي', school: 'أم المؤمنين الابتدائية', address: 'النميس، أسيوط', groupId: 'g5', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-19T09:00:00Z' },
-  { id: 's13', code: 'S-4002', name: 'فريدة إسلام شحاتة', phone: '01544332211', parentPhone: '01177665544', grade: 'الصف الرابع الابتدائي', school: 'النهضة الرسمية لغات', address: 'فريال، أسيوط', groupId: 'g5', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-19T10:15:00Z' },
-  
-  { id: 's14', code: 'S-5001', name: 'عمر جابر الهواري', phone: '01055443312', parentPhone: '01255556666', grade: 'الصف السادس الابتدائي', school: 'النيل متميزة لغات', address: 'أرض الملاعب، أسيوط', groupId: 'g6', status: 'approved', exemptionType: 'none', discountAmount: 0, createdAt: '2026-05-20T16:00:00Z' },
-  
-  // Pending students (waiting for approval)
-  { id: 's_p1', code: 'S-PEND-1', name: 'ضياء السعيد النجار', phone: '01011122255', parentPhone: '01566644422', grade: 'الصف الثالث الإعدادي', school: 'شمال الإعدادية بنين', address: 'جامعة أسيوط، أسيوط', groupId: 'g1', status: 'pending', exemptionType: 'none', discountAmount: 0, createdAt: '2026-06-21T09:00:00Z' },
-  { id: 's_p2', code: 'S-PEND-2', name: 'سارة نور الدين فرج', phone: '01133344455', parentPhone: '01288877766', grade: 'الصف الأول الإعدادي', school: 'النخبة الخاصة بمصر', address: 'شطا، أسيوط', groupId: 'g3', status: 'pending', exemptionType: 'none', discountAmount: 0, createdAt: '2026-06-22T06:30:00Z' }
-];
-
-const INITIAL_EXAMS: Exam[] = [
-  { id: 'e1', title: 'اختبار نصف شهر مايو - كيمياء وفيزياء', grade: 'الصف الثالث الإعدادي', date: '2026-05-18', maxScore: 20 },
-  { id: 'e2', title: 'اختبار دوري - الطاقات والحرارة', grade: 'الصف الأول الإعدادي', date: '2026-05-20', maxScore: 15 },
-  { id: 'e3', title: 'اختبار تجريبي - الوحدة الأولى والثانية', grade: 'الصف الثاني الإعدادي', date: '2026-05-22', maxScore: 30 }
-];
-
-const INITIAL_EXAM_SCORES: ExamScore[] = [
-  // Class 3 Prep exam scores
-  { id: 'e1_s1', examId: 'e1', examTitle: 'اختبار نصف شهر مايو - كيمياء وفيزياء', studentId: 's1', studentName: 'أحمد محمود عبد الخالق', score: 19 },
-  { id: 'e1_s2', examId: 'e1', examTitle: 'اختبار نصف شهر مايو - كيمياء وفيزياء', studentId: 's2', studentName: 'محمد علي كريم', score: 17, notes: 'ممتاز ويجب الحفاظ على التركيز' },
-  { id: 'e1_s3', examId: 'e1', examTitle: 'اختبار نصف شهر مايو - كيمياء وفيزياء', studentId: 's3', studentName: 'ياسمين ممدوح شرف', score: 15 },
-  { id: 'e1_s4', examId: 'e1', examTitle: 'اختبار نصف شهر مايو - كيمياء وفيزياء', studentId: 's4', studentName: 'عبد الرحمن ياسر فوزي', score: 20, notes: 'الدرجة النهائية - بارك الله فيك' },
-  { id: 'e1_s5', examId: 'e1', examTitle: 'اختبار نصف شهر مايو - كيمياء وفيزياء', studentId: 's5', studentName: 'منة الله أشرف رضا', score: 11, notes: 'مستواها يحتاج لمزيد من المتابعة وحل تدريبات' },
-  { id: 'e1_s6', examId: 'e1', examTitle: 'اختبار نصف شهر مايو - كيمياء وفيزياء', studentId: 's6', studentName: 'خالد مصطفى بكري', score: 8, notes: 'ضعيف - مقصر في الواجبات اليومية' },
-  
-  // Class 1 Prep exam scores
-  { id: 'e2_s7', examId: 'e2', examTitle: 'اختبار دوري - الطاقات والحرارة', studentId: 's7', studentName: 'أنس محمود أبو ذكري', score: 15, notes: 'ممتاز، كفو يا بطل' },
-  { id: 'e2_s8', examId: 'e2', examTitle: 'اختبار دوري - الطاقات والحرارة', studentId: 's8', studentName: 'حبيبة وائل جاد', score: 13 },
-  { id: 'e2_s9', examId: 'e2', examTitle: 'اختبار دوري - الطاقات والحرارة', studentId: 's9', studentName: 'ندى أحمد جلال', score: 9, notes: 'تحتاج لمراجعة المفاهيم السابقة' }
-];
-
-const INITIAL_PAYMENTS: Payment[] = [
-  // Payments for May 2026
-  { id: 'p1', studentId: 's1', studentName: 'أحمد محمود عبد الخالق', grade: 'الصف الثالث الإعدادي', month: 'مايو 2026', amountPaid: 120, amountDue: 120, date: '2026-05-05', paymentMethod: 'نقدي' },
-  { id: 'p2', studentId: 's2', studentName: 'محمد علي كريم', grade: 'الصف الثالث الإعدادي', month: 'مايو 2026', amountPaid: 120, amountDue: 120, date: '2026-05-05', paymentMethod: 'نقدي' },
-  { id: 'p3', studentId: 's3', studentName: 'ياسمين ممدوح شرف', grade: 'الصف الثالث الإعدادي', month: 'مايو 2026', amountPaid: 70, amountDue: 70, date: '2026-05-06', paymentMethod: 'فودافون كاش', notes: 'خصم جزئي 50 جينهاً' },
-  { id: 'p4', studentId: 's4', studentName: 'عبد الرحمن ياسر فوزي', grade: 'الصف الثالث الإعدادي', month: 'مايو 2026', amountPaid: 0, amountDue: 0, date: '2026-05-06', paymentMethod: 'أخرى', notes: 'إعفاء كامل لأسباب تفوق' },
-  { id: 'p5', studentId: 's5', studentName: 'منة الله أشرف رضا', grade: 'الصف الثالث الإعدادي', month: 'مايو 2026', amountPaid: 120, amountDue: 120, date: '2026-05-08', paymentMethod: 'نقدي' },
-  
-  { id: 'p6', studentId: 's7', studentName: 'أنس محمود أبو ذكري', grade: 'الصف الأول الإعدادي', month: 'مايو 2026', amountPaid: 0, amountDue: 0, date: '2026-05-01', paymentMethod: 'أخرى', notes: 'ابن الأستاذ - إعفاء كامل' },
-  { id: 'p7', studentId: 's8', studentName: 'حبيبة وائل جاد', grade: 'الصف الأول الإعدادي', month: 'مايو 2026', amountPaid: 100, amountDue: 100, date: '2026-05-03', paymentMethod: 'نقدي' },
-  
-  // June 2026 Payments
-  { id: 'p8', studentId: 's1', studentName: 'أحمد محمود عبد الخالق', grade: 'الصف الثالث الإعدادي', month: 'يونيو 2026', amountPaid: 120, amountDue: 120, date: '2026-06-04', paymentMethod: 'نقدي' },
-  { id: 'p9', studentId: 's3', studentName: 'ياسمين ممدوح شرف', grade: 'الصف الثالث الإعدادي', month: 'يونيو 2026', amountPaid: 70, amountDue: 70, date: '2026-06-05', paymentMethod: 'فودافون كاش' }
-];
-
-const INITIAL_ATTENDANCE: Attendance[] = [
-  // Attendance on May 16, 2026 (Group 1 - Newton A)
-  { id: 's1_2026-05-16', studentId: 's1', studentName: 'أحمد محمود عبد الخالق', groupId: 'g1', date: '2026-05-16', status: 'present', checkInTime: '03:55 م', checkOutTime: '05:30 م' },
-  { id: 's2_2026-05-16', studentId: 's2', studentName: 'محمد علي كريم', groupId: 'g1', date: '2026-05-16', status: 'present', checkInTime: '03:58 م', checkOutTime: '05:28 م' },
-  { id: 's3_2026-05-16', studentId: 's3', studentName: 'ياسمين ممدوح شرف', groupId: 'g1', date: '2026-05-16', status: 'present', checkInTime: '04:02 م', checkOutTime: '05:32 م' },
-  { id: 's4_2026-05-16', studentId: 's4', studentName: 'عبد الرحمن ياسر فوزي', groupId: 'g1', date: '2026-05-16', status: 'present', checkInTime: '03:50 م', checkOutTime: '05:30 م' },
-  
-  // Attendance on May 23, 2026 (Group 1 - Newton A)
-  { id: 's1_2026-05-23', studentId: 's1', studentName: 'أحمد محمود عبد الخالق', groupId: 'g1', date: '2026-05-23', status: 'present', checkInTime: '03:55 م' },
-  { id: 's2_2026-05-23', studentId: 's2', studentName: 'محمد علي كريم', groupId: 'g1', date: '2026-05-23', status: 'late', checkInTime: '04:20 م', checkOutTime: '05:30 م' },
-  { id: 's3_2026-05-23', studentId: 's3', studentName: 'ياسمين ممدوح شرف', groupId: 'g1', date: '2026-05-23', status: 'absent' },
-  { id: 's4_2026-05-23', studentId: 's4', studentName: 'عبد الرحمن ياسر فوزي', groupId: 'g1', date: '2026-05-23', status: 'present', checkInTime: '03:51 م', checkOutTime: '05:31 م' },
-];
+const INITIAL_GROUPS: Group[] = [];
+const INITIAL_STUDENTS: Student[] = [];
+const INITIAL_EXAMS: Exam[] = [];
+const INITIAL_EXAM_SCORES: ExamScore[] = [];
+const INITIAL_PAYMENTS: Payment[] = [];
+const INITIAL_ATTENDANCE: Attendance[] = [];
 
 const INITIAL_TEMPLATES: WhatsAppTemplate[] = [
   {
@@ -169,6 +92,24 @@ class LocalDatabase {
   }
 
   public init() {
+    if (!localStorage.getItem('abuzekry_demo_cleared_v2')) {
+      this.set(STORAGE_KEYS.GROUPS, []);
+      this.set(STORAGE_KEYS.STUDENTS, []);
+      this.set(STORAGE_KEYS.EXAMS, []);
+      this.set(STORAGE_KEYS.EXAM_SCORES, []);
+      this.set(STORAGE_KEYS.PAYMENTS, []);
+      this.set(STORAGE_KEYS.ATTENDANCE, []);
+      localStorage.setItem('abuzekry_demo_cleared_v2', 'true');
+      
+      if (this.isFirebaseEnabled()) {
+        try {
+          this.clearAllDemoData();
+        } catch (e) {
+          console.error('Failed to clear firebase demo data on migration:', e);
+        }
+      }
+    }
+
     if (!localStorage.getItem(STORAGE_KEYS.GROUPS)) {
       this.set(STORAGE_KEYS.GROUPS, INITIAL_GROUPS);
     }
@@ -311,38 +252,144 @@ class LocalDatabase {
     return this.get(STORAGE_KEYS.GRADE_PRICES, DEFAULT_GRADE_PRICES);
   }
 
+  // Firebase configuration toggle
+  public isFirebaseEnabled(): boolean {
+    return localStorage.getItem('abuzekry_firebase_enabled') !== 'false';
+  }
+
+  public setFirebaseEnabled(enabled: boolean): void {
+    localStorage.setItem('abuzekry_firebase_enabled', enabled ? 'true' : 'false');
+  }
+
+  public async syncAllToFirebase(): Promise<void> {
+    const data = {
+      students: this.getStudents(),
+      groups: this.getGroups(),
+      payments: this.getPayments(),
+      attendance: this.getAttendance(),
+      exams: this.getExams(),
+      examScores: this.getExamScores(),
+      templates: this.getTemplates(),
+      prices: this.getPrices(),
+      version: '1.0.0',
+      exportedAt: new Date().toISOString()
+    };
+    await uploadBackupToFirebase(data);
+    localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
+
+    // Sync separate collections for real-time fetch on client portals
+    await Promise.all([
+      syncEntityToFirebase('students', data.students),
+      syncEntityToFirebase('groups', data.groups),
+      syncEntityToFirebase('payments', data.payments),
+      syncEntityToFirebase('attendance', data.attendance),
+      syncEntityToFirebase('exams', data.exams),
+      syncEntityToFirebase('examScores', data.examScores),
+      syncEntityToFirebase('templates', data.templates),
+      syncEntityToFirebase('prices', data.prices)
+    ]);
+  }
+
+  public async syncAllFromFirebase(): Promise<boolean> {
+    const backup = await downloadBackupFromFirebase();
+    if (backup) {
+      if (backup.students) this.setStudentsDirect(backup.students);
+      if (backup.groups) this.setGroupsDirect(backup.groups);
+      if (backup.payments) this.setPaymentsDirect(backup.payments);
+      if (backup.attendance) this.setAttendanceDirect(backup.attendance);
+      if (backup.exams) this.setExamsDirect(backup.exams);
+      if (backup.examScores) this.setExamScoresDirect(backup.examScores);
+      if (backup.templates) this.setTemplatesDirect(backup.templates);
+      if (backup.prices) this.setPricesDirect(backup.prices);
+      this.syncGroupCounts();
+      localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
+      return true;
+    }
+    return false;
+  }
+
+  // Direct setters bypassing firebase sync to avoid loops during pull
+  private setStudentsDirect(students: Student[]): void {
+    this.set(STORAGE_KEYS.STUDENTS, students);
+  }
+  private setGroupsDirect(groups: Group[]): void {
+    this.set(STORAGE_KEYS.GROUPS, groups);
+  }
+  private setPaymentsDirect(payments: Payment[]): void {
+    this.set(STORAGE_KEYS.PAYMENTS, payments);
+  }
+  private setAttendanceDirect(attendance: Attendance[]): void {
+    this.set(STORAGE_KEYS.ATTENDANCE, attendance);
+  }
+  private setExamsDirect(exams: Exam[]): void {
+    this.set(STORAGE_KEYS.EXAMS, exams);
+  }
+  private setExamScoresDirect(scores: ExamScore[]): void {
+    this.set(STORAGE_KEYS.EXAM_SCORES, scores);
+  }
+  private setTemplatesDirect(templates: WhatsAppTemplate[]): void {
+    this.set(STORAGE_KEYS.WHATSAPP_TEMPLATES, templates);
+  }
+  private setPricesDirect(prices: Record<GradeType, number>): void {
+    this.set(STORAGE_KEYS.GRADE_PRICES, prices);
+  }
+
   // Setters / Replacers
   public setStudents(students: Student[]): void {
     this.set(STORAGE_KEYS.STUDENTS, students);
     this.syncGroupCounts();
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('students', students);
+    }
   }
 
   public setGroups(groups: Group[]): void {
     this.set(STORAGE_KEYS.GROUPS, groups);
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('groups', groups);
+    }
   }
 
   public setPayments(payments: Payment[]): void {
     this.set(STORAGE_KEYS.PAYMENTS, payments);
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('payments', payments);
+    }
   }
 
   public setAttendance(attendance: Attendance[]): void {
     this.set(STORAGE_KEYS.ATTENDANCE, attendance);
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('attendance', attendance);
+    }
   }
 
   public setExams(exams: Exam[]): void {
     this.set(STORAGE_KEYS.EXAMS, exams);
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('exams', exams);
+    }
   }
 
   public setExamScores(scores: ExamScore[]): void {
     this.set(STORAGE_KEYS.EXAM_SCORES, scores);
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('examScores', scores);
+    }
   }
 
   public setTemplates(templates: WhatsAppTemplate[]): void {
     this.set(STORAGE_KEYS.WHATSAPP_TEMPLATES, templates);
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('templates', templates);
+    }
   }
 
   public setPrices(prices: Record<GradeType, number>): void {
     this.set(STORAGE_KEYS.GRADE_PRICES, prices);
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('prices', prices);
+    }
   }
 
   // Auto-sync current student count per group
@@ -515,6 +562,25 @@ class LocalDatabase {
       scores.push(entry);
     }
     this.setExamScores(scores);
+  }
+
+  public clearAllDemoData(): void {
+    this.set(STORAGE_KEYS.STUDENTS, []);
+    this.set(STORAGE_KEYS.GROUPS, []);
+    this.set(STORAGE_KEYS.PAYMENTS, []);
+    this.set(STORAGE_KEYS.ATTENDANCE, []);
+    this.set(STORAGE_KEYS.EXAMS, []);
+    this.set(STORAGE_KEYS.EXAM_SCORES, []);
+
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('students', []);
+      syncEntityToFirebase('groups', []);
+      syncEntityToFirebase('payments', []);
+      syncEntityToFirebase('attendance', []);
+      syncEntityToFirebase('exams', []);
+      syncEntityToFirebase('examScores', []);
+      this.syncAllToFirebase().catch(err => console.error('Error syncing cleared state to firebase:', err));
+    }
   }
 
   // Backup and Restore
