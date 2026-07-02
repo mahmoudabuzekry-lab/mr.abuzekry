@@ -3,14 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { dbEngine } from '../db';
-import { Student, Payment, GradeType, ExemptionType } from '../types';
+import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate } from '../types';
 import { 
   DollarSign, Landmark, Filter, Search, Plus, Trash2, Printer, X, Download, 
-  Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle
+  Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle,
+  Cloud, CloudOff, RefreshCw, Wifi, WifiOff, Server, Database
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { testConnection, getPendingQueue, fetchEntityFromFirebase } from '../firebase';
 
 interface FinanceManagerProps {
   students: Student[];
@@ -21,6 +23,88 @@ interface FinanceManagerProps {
 
 export default function FinanceManager({ students, payments, prices, onRefresh }: FinanceManagerProps) {
   const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'prices'>('history');
+  
+  // Cloud Sync tracking states
+  const [isOnline, setIsOnline] = useState<boolean | null>(null);
+  const [pendingQueueCount, setPendingQueueCount] = useState<number>(0);
+  const [cloudPaymentsCount, setCloudPaymentsCount] = useState<number | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const checkFinancialSyncStatus = async () => {
+    try {
+      const online = await testConnection();
+      setIsOnline(online);
+      
+      const queue = getPendingQueue();
+      const paymentQueueItems = queue.filter(item => item.entityKey === 'payments').length;
+      setPendingQueueCount(paymentQueueItems);
+
+      if (online) {
+        const cPayments = await fetchEntityFromFirebase('payments');
+        if (cPayments && cPayments.items) {
+          setCloudPaymentsCount(cPayments.items.length);
+        } else {
+          setCloudPaymentsCount(0);
+        }
+      } else {
+        setCloudPaymentsCount(null);
+      }
+    } catch (err: any) {
+      console.warn("Failed to fetch financial sync stats:", err);
+      setSyncError("فشل استعلام مطابقة الدفاتر المالية سحابياً.");
+    }
+  };
+
+  useEffect(() => {
+    checkFinancialSyncStatus();
+
+    const handleSyncUpdate = () => {
+      checkFinancialSyncStatus();
+    };
+
+    window.addEventListener('abuzekry_sync_status_updated', handleSyncUpdate);
+    window.addEventListener('abuzekry_sync_completed', handleSyncUpdate);
+    return () => {
+      window.removeEventListener('abuzekry_sync_status_updated', handleSyncUpdate);
+      window.removeEventListener('abuzekry_sync_completed', handleSyncUpdate);
+    };
+  }, [payments]);
+
+  const handleForceSyncFinance = async () => {
+    setIsSyncing(true);
+    setSyncFeedback(null);
+    setSyncError(null);
+    try {
+      const online = await testConnection();
+      if (!online) {
+        setSyncError("الجهاز غير متصل بالإنترنت حالياً. سيتم حفظ العمليات محلياً وإرسالها عند توفر الشبكة.");
+        setIsSyncing(false);
+        return;
+      }
+
+      if (!dbEngine.isFirebaseEnabled()) {
+        setSyncError("الربط السحابي غير مفعل حالياً. يمكنك تفعيله من صفحة النسخ الاحتياطي.");
+        setIsSyncing(false);
+        return;
+      }
+
+      await dbEngine.syncAllToFirebase();
+      setSyncFeedback("تم مزامنة ومطابقة الدفاتر المالية والاشتراكات بنجاح مع السيرفر السحابي! ✨");
+      await checkFinancialSyncStatus();
+      onRefresh();
+    } catch (err: any) {
+      console.error(err);
+      setSyncError(`فشلت مزامنة الدفاتر: ${err.message || err}`);
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => {
+        setSyncFeedback(null);
+        setSyncError(null);
+      }, 5000);
+    }
+  };
   
   // Filters
   const [filterMonth, setFilterMonth] = useState<string>('يونيو 2026');
@@ -107,7 +191,12 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
 
   // Find unpaid students for a targeted month
   const getDebtors = () => {
-    const activeStudents = students.filter(s => s.status === 'approved');
+    const activeStudents = students.filter(s => {
+      if (s.status !== 'approved') return false;
+      // Do not charge or demand from any student for a month preceding their registration date on the platform
+      if (doesMonthPrecedeDate(filterMonth, s.createdAt)) return false;
+      return true;
+    });
     const monthPayments = payments.filter(p => p.month === filterMonth);
 
     return activeStudents.map(student => {
@@ -182,6 +271,130 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200" id="finance-manager">
+      
+      {/* Financial Cloud Sync Explorer Panel */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 md:p-6 text-right space-y-4 shadow-xs no-print">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-3.5">
+          <div className="space-y-1">
+            <h4 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+              <Server className="w-4.5 h-4.5 text-indigo-600" />
+              مراقبة ومطابقة المزامنة السحابية للدفاتر والاشتراكات
+            </h4>
+            <p className="text-[11px] text-slate-500 leading-relaxed font-semibold">
+              يقوم النظام تلقائياً برصد وتأمين فواتير المقبوضات على خوادم السحابة. طابق السجلات لضمان سلامة الدفاتر المالية بين الأجهزة.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Live Connection Badge */}
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold ${
+              isOnline === true
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : isOnline === false
+                ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse'
+                : 'bg-slate-50 text-slate-500 border-slate-200'
+            }`}>
+              {isOnline === true ? (
+                <>
+                  <Wifi className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>متصل بالسحابة (مؤمن)</span>
+                </>
+              ) : isOnline === false ? (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-amber-600" />
+                  <span>غير متصل بالسحابة</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-3 h-3 animate-spin text-slate-400" />
+                  <span>جاري فحص الاتصال...</span>
+                </>
+              )}
+            </div>
+            
+            {/* Sync configuration check */}
+            <span className="text-[10px] font-black px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-600 border border-slate-200">
+              {dbEngine.isFirebaseEnabled() ? 'المزامنة التلقائية: نشطة ⚡' : 'المزامنة التلقائية: معطلة 🔒'}
+            </span>
+          </div>
+        </div>
+
+        {/* Sync Feedbacks and Errors */}
+        {syncFeedback && (
+          <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-150 rounded-xl text-xs font-semibold animate-in fade-in duration-200">
+            ✅ {syncFeedback}
+          </div>
+        )}
+        {syncError && (
+          <div className="p-3 bg-amber-50 text-amber-900 border border-amber-150 rounded-xl text-xs font-semibold animate-in fade-in duration-200">
+            ⚠️ {syncError}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Local records stat */}
+          <div className="bg-slate-50/70 border border-slate-200/60 rounded-xl p-3.5 flex items-center justify-between">
+            <div className="space-y-1">
+              <span className="text-[11px] text-slate-500 font-bold block">إجمالي الإيصالات محلياً (المتصفح)</span>
+              <strong className="text-lg text-slate-800 font-mono font-black">{payments.length} سند قبض</strong>
+            </div>
+            <div className="text-xl bg-white p-2 rounded-lg border border-slate-200">💻</div>
+          </div>
+
+          {/* Cloud records stat */}
+          <div className="bg-slate-50/70 border border-slate-200/60 rounded-xl p-3.5 flex items-center justify-between">
+            <div className="space-y-1">
+              <span className="text-[11px] text-slate-500 font-bold block">المقبوضات المرفوعة سحابياً</span>
+              <strong className="text-lg text-indigo-900 font-mono font-black">
+                {cloudPaymentsCount !== null ? `${cloudPaymentsCount} سند قبض` : '—'}
+              </strong>
+            </div>
+            <div className="text-xl bg-white p-2 rounded-lg border border-slate-200">☁️</div>
+          </div>
+
+          {/* Status Match check & action */}
+          <div className="bg-slate-50/70 border border-slate-200/60 rounded-xl p-3.5 flex flex-col justify-between gap-2.5">
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-500 font-bold">حالة تطابق الدفاتر:</span>
+              {cloudPaymentsCount === null ? (
+                <span className="text-slate-400">غير معلوم (أوفلاين)</span>
+              ) : payments.length === cloudPaymentsCount ? (
+                <span className="text-emerald-700 font-black flex items-center gap-1">
+                  مطابقة تامة (100%) ✨
+                </span>
+              ) : (
+                <span className="text-amber-700 font-black flex items-center gap-1 animate-pulse">
+                  يوجد فروقات غير مرفوعة ⚠️
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 justify-end">
+              {pendingQueueCount > 0 && (
+                <span className="text-[10px] bg-indigo-100 text-indigo-800 font-black px-2 py-0.5 rounded-full animate-pulse">
+                  {pendingQueueCount} عملية معلقة
+                </span>
+              )}
+              
+              <button
+                type="button"
+                onClick={handleForceSyncFinance}
+                disabled={isSyncing}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-black rounded-lg transition active:scale-95 flex items-center gap-1 cursor-pointer"
+              >
+                <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>مزامنة وتأمين الدفاتر الآن</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Security / Role disclaimer */}
+        <div className="text-[10px] text-slate-400 bg-slate-50 p-2.5 rounded-lg border border-slate-150 flex items-center gap-1.5 justify-end">
+          <span>🔒 يرجى العلم: حركات المزامنة وحفظ النسخ مشروطة تفاعلياً وامتيازياً لتسجيل دخول الطاقم السري (الأدمن) فقط.</span>
+        </div>
+      </div>
+
       {/* Financial Upper overview metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 no-print text-right">
         {/* Metric 1 */}

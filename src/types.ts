@@ -98,3 +98,57 @@ export interface GradePrice {
   grade: GradeType;
   price: number;
 }
+
+const ARABIC_MONTHS_MAP: { [key: string]: number } = {
+  'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4,
+  'مايو': 5, 'يونيو': 6, 'يوليو': 7, 'أغسطس': 8,
+  'سبتمبر': 9, 'أكتوبر': 10, 'نوفمبر': 11, 'ديسمبر': 12
+};
+
+function parseArabicDigits(str: string): string {
+  const map: { [key: string]: string } = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
+  };
+  return str.replace(/[٠-٩]/g, (d) => map[d] || d);
+}
+
+export function doesMonthPrecedeDate(monthStr: string, dateIsoStr: string): boolean {
+  if (!dateIsoStr) return false;
+  
+  const normalizedStr = parseArabicDigits(monthStr).replace(/,/g, ' ');
+  const parts = normalizedStr.split(/\s+/).filter(Boolean);
+  
+  let targetMonth = 1;
+  let targetYear = 2026;
+  
+  for (const part of parts) {
+    for (const [mName, mVal] of Object.entries(ARABIC_MONTHS_MAP)) {
+      if (part.includes(mName)) {
+        targetMonth = mVal;
+        break;
+      }
+    }
+    
+    const parsedNum = parseInt(part, 10);
+    if (!isNaN(parsedNum) && parsedNum > 1900) {
+      targetYear = parsedNum;
+    }
+  }
+  
+  const regDate = new Date(dateIsoStr);
+  if (isNaN(regDate.getTime())) return false;
+  
+  const regYear = regDate.getFullYear();
+  const regMonth = regDate.getMonth() + 1;
+  
+  if (targetYear < regYear) {
+    return true;
+  }
+  if (targetYear === regYear && targetMonth < regMonth) {
+    return true;
+  }
+  
+  return false;
+}
+
