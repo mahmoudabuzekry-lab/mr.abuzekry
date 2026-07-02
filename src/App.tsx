@@ -102,24 +102,21 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Automatic background database synchronization with Firebase on startup/mount & periodically
+  // Automatic background database synchronization with Firebase on startup/mount
   useEffect(() => {
     let active = true;
-    let syncInterval: any = null;
 
-    const runAutoSync = async (silent = false) => {
+    const pullFromCloudOnStartup = async () => {
       if (!dbEngine.isFirebaseEnabled()) {
         setAutoSyncState('idle');
         return;
       }
 
-      if (!silent) {
-        setAutoSyncState('checking');
-        setAutoSyncMessage('جاري الاتصال بالسحابة...');
-      }
+      setAutoSyncState('checking');
+      setAutoSyncMessage('جاري جلب أحدث البيانات من السحابة...');
 
       try {
-        const { testConnection, getPendingQueue, processSyncQueue, downloadBackupFromFirebase } = await import('./firebase');
+        const { testConnection, downloadBackupFromFirebase } = await import('./firebase');
         const isOnline = await testConnection();
 
         if (!isOnline) {
@@ -133,110 +130,50 @@ export default function App() {
           return;
         }
 
-        // 1. Process any pending offline operations in the queue
-        const pendingQueue = getPendingQueue();
-        if (pendingQueue.length > 0) {
-          if (active) {
-            setAutoSyncState('syncing');
-            setAutoSyncMessage(`جاري ترحيل ${pendingQueue.length} تعديلات معلقة...`);
-          }
-          await processSyncQueue();
-        }
-
-        // 2. Fetch the latest cloud backup
-        if (active && !silent) {
-          setAutoSyncState('syncing');
-          setAutoSyncMessage('جاري مزامنة السجلات مع السحابة...');
-        }
-
         const backup = await downloadBackupFromFirebase();
-        const studentsLocal = dbEngine.getStudents();
-        const groupsLocal = dbEngine.getGroups();
-        const hasNoLocalData = studentsLocal.length === 0 && groupsLocal.length === 0;
 
         if (backup) {
-          const remoteTime = backup.updatedAt ? new Date(backup.updatedAt).getTime() : 0;
-          const lastSyncStr = localStorage.getItem('abuzekry_last_firebase_sync');
-          const localTime = lastSyncStr ? new Date(lastSyncStr).getTime() : 0;
+          if (active) {
+            setAutoSyncState('syncing');
+            setAutoSyncMessage('✨ جاري تطبيق السجلات السحابية على جهازك...');
+          }
 
-          if (hasNoLocalData || remoteTime > localTime) {
-            if (active) {
-              setAutoSyncState('syncing');
-              setAutoSyncMessage('✨ تم استقبال تحديثات جديدة من السحابة!');
-            }
+          // Apply backup payload to localStorage safely
+          if (backup.students) localStorage.setItem('abuzekry_students', JSON.stringify(backup.students));
+          if (backup.groups) localStorage.setItem('abuzekry_groups', JSON.stringify(backup.groups));
+          if (backup.payments) localStorage.setItem('abuzekry_payments', JSON.stringify(backup.payments));
+          if (backup.attendance) localStorage.setItem('abuzekry_attendance', JSON.stringify(backup.attendance));
+          if (backup.exams) localStorage.setItem('abuzekry_exams', JSON.stringify(backup.exams));
+          if (backup.examScores) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(backup.examScores));
+          if (backup.templates) localStorage.setItem('abuzekry_templates', JSON.stringify(backup.templates));
+          if (backup.prices) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(backup.prices));
 
-            // Apply backup payload to localStorage safely
-            if (backup.students) localStorage.setItem('abuzekry_students', JSON.stringify(backup.students));
-            if (backup.groups) localStorage.setItem('abuzekry_groups', JSON.stringify(backup.groups));
-            if (backup.payments) localStorage.setItem('abuzekry_payments', JSON.stringify(backup.payments));
-            if (backup.attendance) localStorage.setItem('abuzekry_attendance', JSON.stringify(backup.attendance));
-            if (backup.exams) localStorage.setItem('abuzekry_exams', JSON.stringify(backup.exams));
-            if (backup.examScores) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(backup.examScores));
-            if (backup.templates) localStorage.setItem('abuzekry_templates', JSON.stringify(backup.templates));
-            if (backup.prices) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(backup.prices));
+          dbEngine.init(); // Recalculate states & repair duplicates
+          loadDatabase();  // Update React active view states
 
-            dbEngine.init(); // Recalculate states & repair duplicates
-            loadDatabase();  // Update React active view states
+          localStorage.setItem('abuzekry_last_firebase_sync', backup.updatedAt || new Date().toISOString());
 
-            localStorage.setItem('abuzekry_last_firebase_sync', backup.updatedAt || new Date().toISOString());
-
-            if (active) {
-              setAutoSyncState('synced');
-              setAutoSyncMessage('✨ تم تحديث السجلات سحابياً بنجاح!');
-              setTimeout(() => {
-                if (active) setAutoSyncMessage('');
-              }, 4000);
-            }
-          } else if (remoteTime < localTime) {
-            // Local is newer (for example: if updates were done on phone offline and we just connected)
-            if (active && !silent) {
-              setAutoSyncState('syncing');
-              setAutoSyncMessage('جاري مزامنة ورفع تعديلاتك الأحدث للسحابة...');
-            }
-            await dbEngine.syncAllToFirebase();
-            if (active && !silent) {
-              setAutoSyncState('synced');
-              setAutoSyncMessage('✨ تم تحديث السحابة ببياناتك الجديدة!');
-              setTimeout(() => {
-                if (active) setAutoSyncMessage('');
-              }, 4000);
-            }
-          } else {
-            // Timestamps are identical - database is perfectly synced
-            if (active && !silent) {
-              setAutoSyncState('synced');
-              setAutoSyncMessage('✅ السجلات متطابقة بالكامل مع السحابة.');
-              setTimeout(() => {
-                if (active) setAutoSyncMessage('');
-              }, 4000);
-            }
+          if (active) {
+            setAutoSyncState('synced');
+            setAutoSyncMessage('✅ تم استيراد السجلات وتحديث جهازك بنجاح!');
+            setTimeout(() => {
+              if (active) setAutoSyncMessage('');
+            }, 4000);
           }
         } else {
-          // No remote backup, but we have local data - upload initial backup
-          if (!hasNoLocalData) {
-            if (active) {
-              setAutoSyncState('syncing');
-              setAutoSyncMessage('جاري رفع نسخة احتياطية أولى للسحابة...');
-            }
-            await dbEngine.syncAllToFirebase();
-            if (active) {
-              setAutoSyncState('synced');
-              setAutoSyncMessage('✨ تم تهيئة السحابة بنجاح!');
-              setTimeout(() => {
-                if (active) setAutoSyncMessage('');
-              }, 4000);
-            }
-          } else {
-            if (active) {
-              setAutoSyncState('idle');
-            }
+          if (active) {
+            setAutoSyncState('idle');
+            setAutoSyncMessage('لا توجد نسخة احتياطية سابقة على السحابة.');
+            setTimeout(() => {
+              if (active) setAutoSyncMessage('');
+            }, 4000);
           }
         }
       } catch (err: any) {
-        console.warn("Auto-sync failed on background task:", err);
-        if (active && !silent) {
+        console.warn("Pulling cloud data failed on startup:", err);
+        if (active) {
           setAutoSyncState('error');
-          setAutoSyncMessage('خطأ في المزامنة أو الحصة مستنفذة');
+          setAutoSyncMessage('تعذر تحديث البيانات أو الحصة مستنفذة');
           setTimeout(() => {
             if (active) setAutoSyncMessage('');
           }, 6000);
@@ -244,23 +181,15 @@ export default function App() {
       }
     };
 
-    runAutoSync(false);
-
-    // Run silent auto sync checking every 30 seconds to fetch other device modifications dynamically
-    syncInterval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        runAutoSync(true);
-      }
-    }, 30000);
+    pullFromCloudOnStartup();
 
     const handleOnline = () => {
-      runAutoSync(false);
+      pullFromCloudOnStartup();
     };
     window.addEventListener('online', handleOnline);
 
     return () => {
       active = false;
-      if (syncInterval) clearInterval(syncInterval);
       window.removeEventListener('online', handleOnline);
     };
   }, []);
@@ -510,19 +439,7 @@ export default function App() {
             </div>
           )}
 
-          {userRole === 'guest' ? (
-            <button
-              onClick={() => {
-                setSecretInput('');
-                setShowSecretModal(true);
-              }}
-              className="p-2.5 border border-slate-100 bg-slate-50/50 hover:bg-slate-100 text-slate-400 hover:text-slate-800 rounded-xl transition duration-150 cursor-pointer flex items-center gap-1.5 group select-none shadow-xs"
-              title="دخول المعلم (البوابة المشفرة)"
-            >
-              <Lock className="w-4 h-4 text-slate-400 group-hover:rotate-12 transition-transform duration-200" />
-              <span className="text-[10px] text-slate-500 font-bold hidden sm:inline">بوابة الطاقم (سري)</span>
-            </button>
-          ) : (
+          {userRole !== 'guest' && (
             <div className="flex items-center gap-3 space-x-3 space-x-reverse">
               <span className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg inline-block">
                 حساب: {userRole === 'teacher' ? 'موجه المادة (الأدمن)' : userRole === 'parent' ? 'ولي الأمر' : 'بوابة الطالب'}
