@@ -70,6 +70,12 @@ const INITIAL_TEMPLATES: WhatsAppTemplate[] = [
 
 // Local DB Engine class
 class LocalDatabase {
+  private isTeacherActive: boolean = false;
+
+  public setTeacherActive(active: boolean): void {
+    this.isTeacherActive = active;
+  }
+
   private get<T>(key: string, defaultValue: T): T {
     try {
       const data = localStorage.getItem(key);
@@ -254,6 +260,9 @@ class LocalDatabase {
 
   // Firebase configuration toggle
   public isFirebaseEnabled(): boolean {
+    if (!this.isTeacherActive) {
+      return false;
+    }
     return localStorage.getItem('abuzekry_firebase_enabled') !== 'false';
   }
 

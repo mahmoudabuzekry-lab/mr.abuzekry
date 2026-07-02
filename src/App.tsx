@@ -54,6 +54,7 @@ export default function App() {
     grade: 'الصف الثالث الإعدادي' as GradeType,
     school: '',
     address: '',
+    groupId: '',
   });
   const [regSuccess, setRegSuccess] = useState(false);
   
@@ -102,11 +103,21 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Automatic background database synchronization with Firebase on startup/mount
+  // Synchronize teacher active state with local database engine
+  useEffect(() => {
+    dbEngine.setTeacherActive(userRole === 'teacher');
+  }, [userRole]);
+
+  // Automatic background database synchronization with Firebase on startup/mount & user role change
   useEffect(() => {
     let active = true;
 
     const pullFromCloudOnStartup = async () => {
+      if (userRole !== 'teacher') {
+        setAutoSyncState('idle');
+        return;
+      }
+
       if (!dbEngine.isFirebaseEnabled()) {
         setAutoSyncState('idle');
         return;
@@ -170,7 +181,7 @@ export default function App() {
           }
         }
       } catch (err: any) {
-        console.warn("Pulling cloud data failed on startup:", err);
+        console.warn("Pulling cloud data failed on startup/login:", err);
         if (active) {
           setAutoSyncState('error');
           setAutoSyncMessage('تعذر تحديث البيانات أو الحصة مستنفذة');
@@ -192,7 +203,7 @@ export default function App() {
       active = false;
       window.removeEventListener('online', handleOnline);
     };
-  }, []);
+  }, [userRole]);
 
   // Listen to immediate operations sync events to show live feedback on any user operation
   useEffect(() => {
@@ -281,9 +292,9 @@ export default function App() {
     e.preventDefault();
     if (!regForm.name.trim()) return;
 
-    // Find first group of selected grade to initially link them (or leave empty if custom)
+    // Use selected groupId, otherwise find first group of selected grade to initially link them (or leave empty if custom)
     const gradeGroups = groups.filter(g => g.grade === regForm.grade);
-    const targetGroupId = gradeGroups.length > 0 ? gradeGroups[0].id : '';
+    const targetGroupId = regForm.groupId || (gradeGroups.length > 0 ? gradeGroups[0].id : '');
 
     dbEngine.addStudent({
       name: regForm.name.trim(),
@@ -306,7 +317,8 @@ export default function App() {
       parentPhone: '',
       grade: 'الصف الثالث الإعدادي',
       school: '',
-      address: ''
+      address: '',
+      groupId: ''
     });
 
     loadDatabase();
@@ -510,14 +522,17 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setGuestTab('register')}
-                  className={`flex-1 py-4 px-6 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2.5 cursor-pointer ${
+                  className={`flex-1 py-4 px-6 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2.5 cursor-pointer relative ${
                     guestTab === 'register'
-                      ? 'bg-white text-amber-900 shadow-md border border-slate-200'
-                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/60'
+                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-md shadow-amber-500/20 border-2 border-amber-400 scale-[1.03] z-10'
+                      : 'bg-amber-50/90 text-amber-900 border-2 border-dashed border-amber-300/80 hover:bg-amber-100/80 hover:border-amber-400 hover:scale-[1.01]'
                   }`}
                 >
-                  <BookOpen className={`w-5 h-5 ${guestTab === 'register' ? 'text-amber-600' : 'text-slate-400'}`} />
-                  <span>تسجيل جديد</span>
+                  <span className="absolute -top-2.5 -left-2 bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-xs animate-bounce select-none">
+                    متاح الآن 🔥
+                  </span>
+                  <BookOpen className={`w-5 h-5 ${guestTab === 'register' ? 'text-white' : 'text-amber-600'}`} />
+                  <span>تسجيل جديد بالمنصة</span>
                 </button>
               </div>
 
@@ -629,7 +644,15 @@ export default function App() {
                           <label className="block text-xs font-extrabold text-slate-700 mb-2">الصف الدراسي الحالي *</label>
                           <select
                             value={regForm.grade}
-                            onChange={(e) => setRegForm({...regForm, grade: e.target.value as any})}
+                            onChange={(e) => {
+                              const newGrade = e.target.value as any;
+                              const gradeGroups = groups.filter(g => g.grade === newGrade);
+                              setRegForm({
+                                ...regForm,
+                                grade: newGrade,
+                                groupId: gradeGroups.length > 0 ? gradeGroups[0].id : ''
+                              });
+                            }}
                             className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition font-sans"
                           >
                             <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
@@ -641,6 +664,52 @@ export default function App() {
                           </select>
                         </div>
                       </div>
+
+                      {/* Available Groups Selection Based on Selected Grade */}
+                      {(() => {
+                        const availableGroups = groups.filter(g => g.grade === regForm.grade);
+                        return (
+                          <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                            <label className="block text-xs font-extrabold text-slate-700 mb-1">المجموعة التعليمية المتاحة لمواعيدك *</label>
+                            {availableGroups.length > 0 ? (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {availableGroups.map((group) => {
+                                  const isSelected = regForm.groupId === group.id || (!regForm.groupId && availableGroups[0].id === group.id);
+                                  return (
+                                    <div
+                                      key={group.id}
+                                      onClick={() => setRegForm({ ...regForm, groupId: group.id })}
+                                      className={`p-3.5 rounded-xl border-2 text-right transition-all cursor-pointer flex items-start gap-3 select-none ${
+                                        isSelected
+                                          ? 'border-indigo-600 bg-indigo-50/40 ring-2 ring-indigo-500/5'
+                                          : 'border-slate-200/80 bg-white hover:bg-slate-50 hover:border-slate-300'
+                                      }`}
+                                    >
+                                      <div className={`w-4.5 h-4.5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${
+                                        isSelected ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300 bg-white'
+                                      }`}>
+                                        {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                      </div>
+                                      <div className="space-y-1">
+                                        <div className="font-extrabold text-xs text-slate-800">{group.name}</div>
+                                        <div className="text-[10px] text-slate-500 font-bold flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
+                                          <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md">🗓️ {group.day}</span>
+                                          <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md">⏰ {group.time}</span>
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 font-medium">📍 {group.location}</div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="p-4 bg-amber-50/50 text-amber-800 border border-amber-100/60 rounded-xl text-xs font-bold text-center">
+                                ⚠️ لا توجد مجموعات مجدولة حالياً لهذا الصف على النظام. يرجى المتابعة وسيقوم المعلم بتنسيق موعد مناسب وتوزيعك يدوياً.
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
