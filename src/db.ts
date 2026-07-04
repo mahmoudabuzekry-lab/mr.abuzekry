@@ -112,14 +112,6 @@ class LocalDatabase {
       this.set(STORAGE_KEYS.PAYMENTS, []);
       this.set(STORAGE_KEYS.ATTENDANCE, []);
       localStorage.setItem('abuzekry_demo_cleared_v2', 'true');
-      
-      if (this.isFirebaseEnabled()) {
-        try {
-          this.clearAllDemoData();
-        } catch (e) {
-          console.error('Failed to clear firebase demo data on migration:', e);
-        }
-      }
     }
 
     if (!localStorage.getItem(STORAGE_KEYS.GROUPS)) {
@@ -453,56 +445,56 @@ class LocalDatabase {
   public setStudents(students: Student[]): void {
     this.set(STORAGE_KEYS.STUDENTS, students);
     this.syncGroupCounts();
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('students', students);
     }
   }
 
   public setGroups(groups: Group[]): void {
     this.set(STORAGE_KEYS.GROUPS, groups);
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('groups', groups);
     }
   }
 
   public setPayments(payments: Payment[]): void {
     this.set(STORAGE_KEYS.PAYMENTS, payments);
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('payments', payments);
     }
   }
 
   public setAttendance(attendance: Attendance[]): void {
     this.set(STORAGE_KEYS.ATTENDANCE, attendance);
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('attendance', attendance);
     }
   }
 
   public setExams(exams: Exam[]): void {
     this.set(STORAGE_KEYS.EXAMS, exams);
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('exams', exams);
     }
   }
 
   public setExamScores(scores: ExamScore[]): void {
     this.set(STORAGE_KEYS.EXAM_SCORES, scores);
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('examScores', scores);
     }
   }
 
   public setTemplates(templates: WhatsAppTemplate[]): void {
     this.set(STORAGE_KEYS.WHATSAPP_TEMPLATES, templates);
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('templates', templates);
     }
   }
 
   public setPrices(prices: Record<GradeType, number>): void {
     this.set(STORAGE_KEYS.GRADE_PRICES, prices);
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('prices', prices);
     }
   }
@@ -518,7 +510,7 @@ class LocalDatabase {
     });
     
     this.set(STORAGE_KEYS.GROUPS, updatedGroups);
-    if (this.isFirebaseEnabled()) {
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('groups', updatedGroups);
     }
   }

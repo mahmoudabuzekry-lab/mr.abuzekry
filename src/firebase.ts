@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, getDocFromServer, collection, getDocs, deleteDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
 // Default Firebase configuration (AI Studio default project)
@@ -364,4 +364,47 @@ if (typeof window !== 'undefined') {
     }
   }, 45000);
 }
+
+// Public self-registration isolated helpers
+export async function submitPublicRegistration(registration: any): Promise<void> {
+  try {
+    const regId = `reg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const docRef = doc(db, "abuzekry_public_registrations", regId);
+    await setDoc(docRef, {
+      ...registration,
+      createdAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error("Failed to submit public registration to firestore:", err);
+    throw err;
+  }
+}
+
+export async function fetchPublicRegistrations(): Promise<any[]> {
+  try {
+    const colRef = collection(db, "abuzekry_public_registrations");
+    const querySnap = await getDocs(colRef);
+    const results: any[] = [];
+    querySnap.forEach((docSnap) => {
+      results.push({
+        _docId: docSnap.id,
+        ...docSnap.data()
+      });
+    });
+    return results;
+  } catch (err) {
+    console.error("Failed to fetch public registrations from firestore:", err);
+    return [];
+  }
+}
+
+export async function deletePublicRegistration(docId: string): Promise<void> {
+  try {
+    const docRef = doc(db, "abuzekry_public_registrations", docId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.error("Failed to delete public registration from firestore:", err);
+  }
+}
+
 

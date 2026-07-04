@@ -198,6 +198,56 @@ export default function App() {
           dbEngine.init(); // Recalculate states & repair duplicates
           loadDatabase();  // Update React active view states
 
+          // Automatically pull and import any public self-registrations if teacher is active
+          if (userRole === 'teacher') {
+            try {
+              const { fetchPublicRegistrations, deletePublicRegistration } = await import('./firebase');
+              const publicRegs = await fetchPublicRegistrations();
+              if (publicRegs && publicRegs.length > 0) {
+                console.log(`Found ${publicRegs.length} new public registrations! Importing...`);
+                let currentStudents = dbEngine.getStudents();
+                let changed = false;
+                
+                for (const reg of publicRegs) {
+                  const alreadyExists = currentStudents.some(s => s.phone === reg.phone && s.name === reg.name);
+                  if (!alreadyExists) {
+                    const nextIndex = currentStudents.length + 1001;
+                    const code = `S-${nextIndex}`;
+                    const uniqueId = `s_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                    
+                    const newStudent = {
+                      id: uniqueId,
+                      code,
+                      name: reg.name,
+                      phone: reg.phone,
+                      parentPhone: reg.parentPhone,
+                      grade: reg.grade,
+                      school: reg.school,
+                      address: reg.address,
+                      groupId: reg.groupId,
+                      exemptionType: reg.exemptionType || 'none',
+                      discountAmount: reg.discountAmount || 0,
+                      notes: reg.notes || 'تسجيل إلكتروني ذاتي بانتظار الاعتماد المالي',
+                      status: 'pending' as const,
+                      createdAt: reg.createdAt || new Date().toISOString()
+                    };
+                    currentStudents.push(newStudent);
+                    changed = true;
+                  }
+                  // Clean up the processed registration document in Firestore
+                  await deletePublicRegistration(reg._docId);
+                }
+                
+                if (changed) {
+                  dbEngine.setStudents(currentStudents);
+                  loadDatabase();
+                }
+              }
+            } catch (regErr) {
+              console.warn("Failed to automatically import public registrations on startup:", regErr);
+            }
+          }
+
           localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
 
           if (active) {
@@ -329,7 +379,7 @@ export default function App() {
     }
   };
 
-  const handlePublicRegisterSubmit = (e: React.FormEvent) => {
+  const handlePublicRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!regForm.name.trim()) return;
 
@@ -337,7 +387,7 @@ export default function App() {
     const gradeGroups = groups.filter(g => g.grade === regForm.grade);
     const targetGroupId = regForm.groupId || (gradeGroups.length > 0 ? gradeGroups[0].id : '');
 
-    dbEngine.addStudent({
+    const regData = {
       name: regForm.name.trim(),
       phone: regForm.phone.trim(),
       parentPhone: regForm.parentPhone.trim(),
@@ -345,11 +395,23 @@ export default function App() {
       school: regForm.school.trim() || 'عامة',
       address: regForm.address.trim() || 'أسيوط',
       groupId: targetGroupId,
-      exemptionType: 'none',
+      exemptionType: 'none' as const,
       discountAmount: 0,
       notes: 'تسجيل إلكتروني ذاتي بانتظار الاعتماد المالي',
-      status: 'pending' // pending until validated by teacher
-    });
+      status: 'pending' as const
+    };
+
+    if (dbEngine.isFirebaseEnabled()) {
+      try {
+        const { submitPublicRegistration } = await import('./firebase');
+        await submitPublicRegistration(regData);
+      } catch (err) {
+        console.error("Public registration upload failed, falling back to local:", err);
+        dbEngine.addStudent(regData);
+      }
+    } else {
+      dbEngine.addStudent(regData);
+    }
 
     setRegSuccess(true);
     setRegForm({
