@@ -35,7 +35,15 @@ export default function ReportsManager({
   onRefresh
 }: ReportsManagerProps) {
   // Tabs
-  const [activeTab, setActiveTab] = useState<'financial' | 'attendance' | 'exams' | 'studentCard'>('financial');
+  const [activeTab, setActiveTab] = useState<'financial' | 'revenues' | 'attendance' | 'exams' | 'studentCard'>('financial');
+
+  // Revenues filter state
+  const [revenueViewMode, setRevenueViewMode] = useState<'daily' | 'monthly'>('daily');
+  const [revenueDate, setRevenueDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [revenueMonth, setRevenueMonth] = useState<string>(getCurrentArabicMonthName());
+  const [revenueSearchQuery, setRevenueSearchQuery] = useState<string>('');
+  const [revenueGradeFilter, setRevenueGradeFilter] = useState<'all' | GradeType>('all');
+  const [revenueMethodFilter, setRevenueMethodFilter] = useState<string>('all');
 
   // General Filters
   const [selectedGrade, setSelectedGrade] = useState<'all' | GradeType>('all');
@@ -193,6 +201,114 @@ export default function ReportsManager({
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'تقرير_الاشتراكات');
     XLSX.writeFile(workbook, `التقرير_المالي_العلوم_${selectedMonth.replace(' ', '_')}.xlsx`);
+  };
+
+  // ==========================================
+  // 1.5 REVENUE REVIEW & INCOME REPORT ENGINE
+  // ==========================================
+  const revenueStats = useMemo(() => {
+    const isDaily = revenueViewMode === 'daily';
+    
+    const filteredPayments = payments.filter(p => {
+      // 1. Filter by Date or Month
+      if (isDaily) {
+        if (p.date !== revenueDate) return false;
+      } else {
+        if (p.month !== revenueMonth) return false;
+      }
+      
+      // 2. Filter by Search Query
+      if (revenueSearchQuery.trim() !== '') {
+        const query = revenueSearchQuery.toLowerCase();
+        const student = students.find(s => s.id === p.studentId);
+        const matchesName = p.studentName.toLowerCase().includes(query);
+        const matchesCode = student?.code.toLowerCase().includes(query) || false;
+        if (!matchesName && !matchesCode) return false;
+      }
+      
+      // 3. Filter by Grade
+      if (revenueGradeFilter !== 'all' && p.grade !== revenueGradeFilter) return false;
+      
+      // 4. Filter by Payment Method
+      if (revenueMethodFilter !== 'all' && p.paymentMethod !== revenueMethodFilter) return false;
+      
+      return true;
+    });
+
+    let totalCollected = 0;
+    let cashSum = 0;
+    let cashCount = 0;
+    let vodafoneSum = 0;
+    let vodafoneCount = 0;
+    let visaSum = 0;
+    let visaCount = 0;
+    let otherSum = 0;
+    let otherCount = 0;
+
+    filteredPayments.forEach(p => {
+      totalCollected += p.amountPaid;
+      if (p.paymentMethod === 'نقدي') {
+        cashSum += p.amountPaid;
+        cashCount++;
+      } else if (p.paymentMethod === 'فودافون كاش') {
+        vodafoneSum += p.amountPaid;
+        vodafoneCount++;
+      } else if (p.paymentMethod === 'فيزا') {
+        visaSum += p.amountPaid;
+        visaCount++;
+      } else {
+        otherSum += p.amountPaid;
+        otherCount++;
+      }
+    });
+
+    const averagePayment = filteredPayments.length > 0 ? Math.round(totalCollected / filteredPayments.length) : 0;
+
+    // Daily distribution map for monthly breakdown
+    const dailyBreakdownMap: Record<string, number> = {};
+    filteredPayments.forEach(p => {
+      dailyBreakdownMap[p.date] = (dailyBreakdownMap[p.date] || 0) + p.amountPaid;
+    });
+
+    const sortedDays = Object.entries(dailyBreakdownMap)
+      .map(([dayDate, sum]) => ({ date: dayDate, sum }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    return {
+      list: filteredPayments,
+      totalCollected,
+      cashSum,
+      cashCount,
+      vodafoneSum,
+      vodafoneCount,
+      visaSum,
+      visaCount,
+      otherSum,
+      otherCount,
+      averagePayment,
+      sortedDays
+    };
+  }, [payments, revenueViewMode, revenueDate, revenueMonth, revenueSearchQuery, revenueGradeFilter, revenueMethodFilter, students]);
+
+  const handleExportRevenuesToExcel = () => {
+    const isDaily = revenueViewMode === 'daily';
+    const data = revenueStats.list.map(item => {
+      const student = students.find(s => s.id === item.studentId);
+      return {
+        'كود الطالب': student?.code || '—',
+        'اسم الطالب': item.studentName,
+        'الصف الدراسي': item.grade,
+        'تاريخ التحصيل': item.date,
+        'المبلغ المحصل ج.م': item.amountPaid,
+        'طريقة التحصيل': item.paymentMethod,
+        'ملاحظات': item.notes || '—'
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, isDaily ? 'الإيرادات اليومية' : 'الإيرادات الشهرية');
+    XLSX.writeFile(workbook, isDaily ? `إيرادات_يوم_${revenueDate}.xlsx` : `إيرادات_شهر_${revenueMonth.replace(' ', '_')}.xlsx`);
   };
 
   // ==========================================
@@ -456,8 +572,103 @@ export default function ReportsManager({
     };
   }, [individualStudent, attendance, examScores, exams, payments]);
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrint = (elementId?: string) => {
+    if (elementId) {
+      const element = document.getElementById(elementId);
+      if (!element) {
+        window.print();
+        return;
+      }
+
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'absolute';
+      iframe.style.width = '0px';
+      iframe.style.height = '0px';
+      iframe.style.border = 'none';
+      iframe.style.left = '-9999px';
+      iframe.style.top = '-9999px';
+      document.body.appendChild(iframe);
+
+      const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument;
+      if (!iframeDoc) {
+        window.print();
+        return;
+      }
+
+      let stylesHtml = '';
+      document.querySelectorAll('style, link[rel="stylesheet"]').forEach((el) => {
+        stylesHtml += el.outerHTML;
+      });
+
+      iframeDoc.open();
+      iframeDoc.write(`
+        <!DOCTYPE html>
+        <html dir="rtl" lang="ar">
+          <head>
+            <title>طباعة التقرير</title>
+            ${stylesHtml}
+            <style>
+              @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap');
+              body {
+                background-color: white !important;
+                color: #0f172a !important;
+                padding: 20px !important;
+                font-family: 'Cairo', sans-serif !important;
+                direction: rtl !important;
+                text-align: right !important;
+              }
+              .no-print {
+                display: none !important;
+              }
+              .hidden.print\\:block {
+                display: block !important;
+              }
+              .print\\:block {
+                display: block !important;
+              }
+              table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+                margin-top: 15px !important;
+                font-size: 11px !important;
+              }
+              th, td {
+                border: 1px solid #cbd5e1 !important;
+                padding: 10px 12px !important;
+                text-align: right !important;
+              }
+              th {
+                background-color: #f8fafc !important;
+                font-weight: bold !important;
+                color: #1e293b !important;
+              }
+              td {
+                color: #334155 !important;
+              }
+            </style>
+          </head>
+          <body class="bg-white">
+            <div style="direction: rtl;">
+              ${element.innerHTML}
+            </div>
+            <script>
+              window.addEventListener('load', () => {
+                setTimeout(() => {
+                  window.focus();
+                  window.print();
+                  setTimeout(() => {
+                    window.parent.document.body.removeChild(window.frameElement);
+                  }, 100);
+                }, 500);
+              });
+            </script>
+          </body>
+        </html>
+      `);
+      iframeDoc.close();
+    } else {
+      window.print();
+    }
   };
 
   return (
@@ -472,6 +683,16 @@ export default function ReportsManager({
         >
           <DollarSign className="w-4 h-4" />
           تقرير سداد الاشتراكات والمديونيات
+        </button>
+
+        <button
+          onClick={() => setActiveTab('revenues')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'revenues' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" />
+          مراجعة وتفصيل الإيرادات (يومي/شهري)
         </button>
 
         <button
@@ -506,7 +727,7 @@ export default function ReportsManager({
       </div>
 
       {/* Primary Filters Panel (no-print) */}
-      {activeTab !== 'studentCard' && (
+      {activeTab !== 'studentCard' && activeTab !== 'revenues' && (
         <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 grid grid-cols-1 sm:grid-cols-3 gap-4 shadow-sm no-print">
           <div>
             <label className="block text-[11px] font-bold text-slate-500 mb-1.5">تصفية حسب الصف الدراسي</label>
@@ -626,7 +847,7 @@ export default function ReportsManager({
           </div>
 
           {/* Table List of Subscription Status */}
-          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+          <div id="printable-financial-report" className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
             <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 no-print">
               <div>
                 <h3 className="font-bold text-slate-800 text-sm">تفصيل سداد اشتراك {selectedMonth}</h3>
@@ -641,7 +862,7 @@ export default function ReportsManager({
                   تصدير كشف Excel
                 </button>
                 <button
-                  onClick={handlePrint}
+                  onClick={() => handlePrint('printable-financial-report')}
                   className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer border border-blue-200"
                 >
                   <Printer className="w-3.5 h-3.5" />
@@ -755,6 +976,390 @@ export default function ReportsManager({
       )}
 
       {/* ========================================================= */}
+      {/* 1.5. TAB: REVENUES REVIEW REPORT                          */}
+      {/* ========================================================= */}
+      {activeTab === 'revenues' && (
+        <div className="space-y-6">
+          {/* Header & Mode Switcher */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs no-print">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-sm flex items-center gap-1.5">
+                  <TrendingUp className="w-5 h-5 text-indigo-600" />
+                  تقرير مراجعة وتفصيل الإيرادات المحصلة
+                </h3>
+                <p className="text-xs text-slate-400 font-medium mt-1">
+                  تتبع وفحص التدفقات النقدية والتحصيلات على أساس يومي وتاريخ محدد أو بشكل شهري تراكمي.
+                </p>
+              </div>
+
+              {/* Toggle Mode */}
+              <div className="flex bg-slate-100 p-1 rounded-xl w-full md:w-auto self-stretch md:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setRevenueViewMode('daily')}
+                  className={`flex-1 md:flex-initial px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                    revenueViewMode === 'daily'
+                      ? 'bg-white text-indigo-750 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  التحصيل اليومي (يوم محدد)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRevenueViewMode('monthly')}
+                  className={`flex-1 md:flex-initial px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                    revenueViewMode === 'monthly'
+                      ? 'bg-white text-indigo-750 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  التقرير الشهري العام
+                </button>
+              </div>
+            </div>
+
+            {/* Selection Controls */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-5 pt-5 border-t border-slate-100">
+              {/* Date / Month Picker depending on view mode */}
+              <div className="sm:col-span-2">
+                {revenueViewMode === 'daily' ? (
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-500 mb-1.5">اختر التاريخ المحدد للمراجعة *</label>
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={revenueDate}
+                        onChange={(e) => setRevenueDate(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 rounded-lg text-xs outline-none text-right font-mono font-bold"
+                      />
+                      {revenueDate && (
+                        <span className="absolute left-3 top-2.5 text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-bold">
+                          {(() => {
+                            const days = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+                            const d = new Date(revenueDate);
+                            return isNaN(d.getTime()) ? '' : days[d.getDay()];
+                          })()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-500 mb-1.5">اختر الشهر المالي المطلوب *</label>
+                    <select
+                      value={revenueMonth}
+                      onChange={(e) => setRevenueMonth(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 rounded-lg text-xs outline-none font-bold text-right"
+                    >
+                      {availableMonths.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Search filter within selected revenues */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1.5">بحث بالاسم أو الكود</label>
+                <div className="relative">
+                  <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="اسم الطالب أو الكود..."
+                    value={revenueSearchQuery}
+                    onChange={(e) => setRevenueSearchQuery(e.target.value)}
+                    className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 rounded-lg text-xs outline-none text-right"
+                  />
+                </div>
+              </div>
+
+              {/* Class Grade filter */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1.5">الصف الدراسي</label>
+                <select
+                  value={revenueGradeFilter}
+                  onChange={(e) => setRevenueGradeFilter(e.target.value as any)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 rounded-lg text-xs outline-none text-right font-semibold"
+                >
+                  <option value="all">كل الصفوف</option>
+                  <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                  <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                  <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
+                  <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
+                  <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
+                  <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
+                </select>
+              </div>
+
+              {/* Payment Method filter */}
+              <div className="sm:col-start-4">
+                <label className="block text-[11px] font-bold text-slate-500 mb-1.5">طريقة التحصيل</label>
+                <select
+                  value={revenueMethodFilter}
+                  onChange={(e) => setRevenueMethodFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 rounded-lg text-xs outline-none text-right font-semibold"
+                >
+                  <option value="all">كل طرق التحصيل</option>
+                  <option value="نقدي">نقدي (في السنتر)</option>
+                  <option value="فودافون كاش">فودافون كاش (Vodafone Cash)</option>
+                  <option value="فيزا">بطاقة فيزا (Visa/Mastercard)</option>
+                  <option value="أخرى">أخرى</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Revenue KPIs Dashboard */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 no-print animate-in fade-in duration-350">
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">إجمالي المبالغ المحصلة</p>
+                <h4 className="text-xl font-black text-emerald-600 mt-1">{revenueStats.totalCollected} ج.م</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">عدد المقبوضات: {revenueStats.list.length} إيصالات</p>
+              </div>
+              <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl border border-emerald-100">
+                <DollarSign className="w-5 h-5 text-emerald-600" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">التحصيل النقدي (كاش)</p>
+                <h4 className="text-xl font-black text-slate-800 mt-1">{revenueStats.cashSum} ج.م</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">النسبة: {revenueStats.totalCollected > 0 ? Math.round((revenueStats.cashSum / revenueStats.totalCollected) * 100) : 0}% ({revenueStats.cashCount} دفعات)</p>
+              </div>
+              <div className="bg-slate-50 text-slate-600 p-3 rounded-xl border border-slate-150">
+                <CheckCircle2 className="w-5 h-5 text-blue-600" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">تحصيل فودافون كاش</p>
+                <h4 className="text-xl font-black text-indigo-600 mt-1">{revenueStats.vodafoneSum} ج.م</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">النسبة: {revenueStats.totalCollected > 0 ? Math.round((revenueStats.vodafoneSum / revenueStats.totalCollected) * 100) : 0}% ({revenueStats.vodafoneCount} دفعات)</p>
+              </div>
+              <div className="bg-indigo-50 text-indigo-700 p-3 rounded-xl border border-indigo-100">
+                <TrendingUp className="w-5 h-5 text-indigo-650" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">متوسط قيمة المقبوض</p>
+                <h4 className="text-xl font-black text-slate-700 mt-1">{revenueStats.averagePayment} ج.م</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">الفيزا والوسائل الأخرى: {revenueStats.visaSum + revenueStats.otherSum} ج.م</p>
+              </div>
+              <div className="bg-slate-50 text-slate-600 p-3 rounded-xl border border-slate-100">
+                <Users className="w-5 h-5 text-slate-500" />
+              </div>
+            </div>
+          </div>
+
+          {/* Main Layout Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* List of Payments */}
+            <div id="printable-revenues-report" className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+              <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 no-print">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm">
+                    {revenueViewMode === 'daily' ? `سجل مقبوضات وتحصيلات يوم: ${revenueDate}` : `سجل مقبوضات وتحصيلات شهر: ${revenueMonth}`}
+                  </h3>
+                  <p className="text-xs text-slate-400 font-medium mt-0.5">كشف المعاملات المحصلة ومصادرها لمطابقة الصندوق والبنك.</p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    onClick={handleExportRevenuesToExcel}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer border border-slate-200"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    تصدير Excel
+                  </button>
+                  <button
+                    onClick={() => handlePrint('printable-revenues-report')}
+                    className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer border border-blue-200"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    طباعة الكشف
+                  </button>
+                </div>
+              </div>
+
+              {/* Printable Header (Visible only on print layout) */}
+              <div className="hidden print:block p-6 text-center border-b-2 border-slate-800 font-sans space-y-2">
+                <h2 className="text-2xl font-black text-slate-900">مجموعة العلوم الحديثة — الأستاذ محمود أبوذكري</h2>
+                <h3 className="text-lg font-bold text-slate-700">
+                  {revenueViewMode === 'daily' 
+                    ? `تقرير الإيرادات اليومي التفصيلي لتاريخ: ${revenueDate} (${(() => {
+                        const days = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+                        const d = new Date(revenueDate);
+                        return isNaN(d.getTime()) ? '' : days[d.getDay()];
+                      })()})`
+                    : `تقرير الإيرادات الشهري التراكمي العام لشهر: ${revenueMonth}`
+                  }
+                </h3>
+                <p className="text-xs text-slate-500">تاريخ طباعة التقرير: {new Date().toLocaleDateString('ar-EG')}</p>
+                <div className="grid grid-cols-4 gap-4 max-w-2xl mx-auto mt-4 text-xs font-bold border p-3 rounded-lg bg-slate-50 text-right">
+                  <div>إجمالي المقبوضات: {revenueStats.totalCollected} ج.م</div>
+                  <div>نقداً (كاش السنتر): {revenueStats.cashSum} ج.م</div>
+                  <div>محفظة فودافون كاش: {revenueStats.vodafoneSum} ج.م</div>
+                  <div>عدد الإيصالات المحصلة: {revenueStats.list.length} إيصال</div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
+                      <th className="py-3.5 px-4">كود الطالب</th>
+                      <th className="py-3.5 px-4">اسم الطالب</th>
+                      <th className="py-3.5 px-4">الصف الدراسي</th>
+                      <th className="py-3.5 px-4">التاريخ واليوم</th>
+                      <th className="py-3.5 px-4">الشهر المالي</th>
+                      <th className="py-3.5 px-4">المبلغ المحصل</th>
+                      <th className="py-3.5 px-4">طريقة التحصيل</th>
+                      <th className="py-3.5 px-4">ملاحظات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {revenueStats.list.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="text-center py-12 text-slate-400 italic font-bold">
+                          لا توجد تحصيلات مالية مسجلة تطابق هذه المحددات حالياً.
+                        </td>
+                      </tr>
+                    ) : (
+                      revenueStats.list.map((payment) => {
+                        const student = students.find(s => s.id === payment.studentId);
+                        return (
+                          <tr key={payment.id} className="hover:bg-slate-50/40">
+                            <td className="py-3 px-4 font-mono font-bold text-slate-500">{student?.code || '—'}</td>
+                            <td className="py-3 px-4 font-bold text-slate-800">{payment.studentName}</td>
+                            <td className="py-3 px-4 font-medium text-slate-500">{payment.grade}</td>
+                            <td className="py-3 px-4 font-mono font-bold text-slate-600">
+                              {payment.date}
+                              <span className="text-[10px] text-slate-400 font-sans block">
+                                {(() => {
+                                  const days = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+                                  const d = new Date(payment.date);
+                                  return isNaN(d.getTime()) ? '' : days[d.getDay()];
+                                })()}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-semibold text-indigo-700">{payment.month}</td>
+                            <td className="py-3 px-4 font-mono font-black text-emerald-600">{payment.amountPaid} ج.م</td>
+                            <td className="py-3 px-4">
+                              <span className={`inline-block px-2.5 py-1 rounded-lg text-[10px] font-extrabold ${
+                                payment.paymentMethod === 'نقدي'
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-100'
+                                  : payment.paymentMethod === 'فودافون كاش'
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                                  : 'bg-slate-100 text-slate-600 border border-slate-200'
+                              }`}>
+                                {payment.paymentMethod}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-slate-500 max-w-[150px] truncate" title={payment.notes}>
+                              {payment.notes || '—'}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Daily Breakdown Sidebar / Quick info */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs h-fit space-y-4 no-print">
+              {revenueViewMode === 'daily' ? (
+                <div className="space-y-4">
+                  <h4 className="font-extrabold text-xs text-slate-800 border-b border-slate-100 pb-3 flex items-center gap-1">
+                    <Calendar className="w-4 h-4 text-indigo-650" />
+                    تحليل إحصائي سريع لليوم
+                  </h4>
+                  <div className="space-y-3">
+                    <div className="bg-slate-50 p-3 rounded-xl flex justify-between items-center text-xs">
+                      <span className="text-slate-500 font-bold">تاريخ اليوم المختار</span>
+                      <strong className="font-mono text-slate-800 font-extrabold">{revenueDate}</strong>
+                    </div>
+                    <div className="bg-indigo-50/40 p-3 rounded-xl flex justify-between items-center text-xs">
+                      <span className="text-indigo-800 font-bold">يوم الأسبوع</span>
+                      <strong className="text-indigo-900 font-black">
+                        {(() => {
+                          const days = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+                          const d = new Date(revenueDate);
+                          return isNaN(d.getTime()) ? 'غير صالح' : days[d.getDay()];
+                        })()}
+                      </strong>
+                    </div>
+                    <div className="bg-emerald-50/40 p-3 rounded-xl flex justify-between items-center text-xs">
+                      <span className="text-emerald-800 font-bold">إجمالي عمليات القبض</span>
+                      <strong className="font-mono text-emerald-900 font-black">{revenueStats.list.length} إيصالات</strong>
+                    </div>
+                    <div className="bg-amber-50/40 p-3 rounded-xl flex justify-between items-center text-xs">
+                      <span className="text-amber-800 font-bold">متوسط الدفع لليوم</span>
+                      <strong className="font-mono text-amber-900 font-black">{revenueStats.averagePayment} ج.م</strong>
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-3 text-[11px] text-slate-500 leading-relaxed text-right font-medium">
+                    💡 يمكنك فحص إجمالي دخل أي يوم آخر من خلال تغيير "تاريخ اليوم المحدد" في لوحة التحكم العلوية أو من خلال استعراض التقرير الشهري واختيار اليوم المناسب.
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="border-b border-slate-100 pb-3 flex justify-between items-center">
+                    <h4 className="font-extrabold text-xs text-slate-800 flex items-center gap-1">
+                      <Calendar className="w-4 h-4 text-indigo-600" />
+                      التحصيلات اليومية خلال الشهر
+                    </h4>
+                    <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-black">اضغط للتفصيل</span>
+                  </div>
+
+                  <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+                    {revenueStats.sortedDays.length === 0 ? (
+                      <p className="text-center text-xs text-slate-400 italic py-8">لم يتم تدوين أي تحصيل لليوم حتى الآن.</p>
+                    ) : (
+                      revenueStats.sortedDays.map((item) => {
+                        const dateDayName = (() => {
+                          const days = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+                          const d = new Date(item.date);
+                          return isNaN(d.getTime()) ? '' : days[d.getDay()];
+                        })();
+                        return (
+                          <div 
+                            key={item.date} 
+                            onClick={() => {
+                              setRevenueDate(item.date);
+                              setRevenueViewMode('daily');
+                            }}
+                            className="bg-slate-50 hover:bg-indigo-50/50 p-3 rounded-xl flex justify-between items-center text-xs border border-transparent hover:border-indigo-150 transition-all cursor-pointer group"
+                            title="اضغط للانتقال للتفاصيل اليومية لهذا التاريخ"
+                          >
+                            <div className="space-y-0.5 text-right">
+                              <span className="font-mono text-slate-800 font-bold group-hover:text-indigo-950 transition">{item.date}</span>
+                              <span className="text-[10px] text-slate-400 font-medium block">{dateDayName}</span>
+                            </div>
+                            <strong className="font-mono text-emerald-600 font-black bg-white px-2.5 py-1.5 rounded-lg border border-slate-100 group-hover:border-indigo-200 transition">
+                              {item.sum} ج.م
+                            </strong>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
       {/* 2. TAB: ATTENDANCE & ABSENCE REPORT                       */}
       {/* ========================================================= */}
       {activeTab === 'attendance' && (
@@ -861,7 +1466,7 @@ export default function ReportsManager({
             </div>
 
             {/* Complete roster list (right) */}
-            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm lg:col-span-2 overflow-hidden flex flex-col h-fit">
+            <div id="printable-attendance-report" className="bg-white border border-slate-200 rounded-2xl shadow-sm lg:col-span-2 overflow-hidden flex flex-col h-fit">
               <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 no-print">
                 <div>
                   <h4 className="font-bold text-slate-800 text-sm">كشف مواظبة الطلاب العام</h4>
@@ -876,7 +1481,7 @@ export default function ReportsManager({
                     تصدير الكشف
                   </button>
                   <button
-                    onClick={handlePrint}
+                    onClick={() => handlePrint('printable-attendance-report')}
                     className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer border border-blue-200"
                   >
                     <Printer className="w-3.5 h-3.5" />
@@ -1091,7 +1696,7 @@ export default function ReportsManager({
               </div>
 
               {/* Complete Exam results table */}
-              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+              <div id="printable-exam-report" className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                 <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 no-print">
                   <div>
                     <h3 className="font-bold text-slate-800 text-sm">بيان درجات امتحان ({selectedExam.title})</h3>
@@ -1106,7 +1711,7 @@ export default function ReportsManager({
                       تصدير الدرجات Excel
                     </button>
                     <button
-                      onClick={handlePrint}
+                      onClick={() => handlePrint('printable-exam-report')}
                       className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer border border-blue-200"
                     >
                       <Printer className="w-3.5 h-3.5" />
@@ -1242,7 +1847,7 @@ export default function ReportsManager({
               {/* Action bar (no-print) */}
               <div className="flex justify-end gap-2 no-print">
                 <button
-                  onClick={handlePrint}
+                  onClick={() => handlePrint('printable-student-certificate')}
                   className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
                 >
                   <Printer className="w-4 h-4" />
@@ -1251,7 +1856,7 @@ export default function ReportsManager({
               </div>
 
               {/* Stunning Printable Academic Certificate Card Layout */}
-              <div className="bg-white border-4 border-slate-900 rounded-3xl p-6 md:p-10 shadow-lg font-sans relative overflow-hidden text-right leading-relaxed print:border-2 print:shadow-none print:p-8">
+              <div id="printable-student-certificate" className="bg-white border-4 border-slate-900 rounded-3xl p-6 md:p-10 shadow-lg font-sans relative overflow-hidden text-right leading-relaxed print:border-2 print:shadow-none print:p-8">
                 {/* Vintage Frame Corner Lines (Aesthetic) */}
                 <div className="absolute top-3 right-3 w-12 h-12 border-t-2 border-r-2 border-slate-900/40 pointer-events-none" />
                 <div className="absolute top-3 left-3 w-12 h-12 border-t-2 border-l-2 border-slate-900/40 pointer-events-none" />

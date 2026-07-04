@@ -111,6 +111,21 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const [filterGrade, setFilterGrade] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Record Payment search and filter states
+  const [addSearchQuery, setAddSearchQuery] = useState('');
+  const [addFilterGrade, setAddFilterGrade] = useState<string>('all');
+  const [addFilterGroupId, setAddFilterGroupId] = useState<string>('all');
+  const [allGroups, setAllGroups] = useState<any[]>([]);
+
+  // Load groups on mount and when payments update
+  useEffect(() => {
+    try {
+      setAllGroups(dbEngine.getGroups());
+    } catch (e) {
+      console.error("Failed to load groups in FinanceManager", e);
+    }
+  }, [payments]);
+
   // Editing state for Receipt view
   const [selectedReceiptPayment, setSelectedReceiptPayment] = useState<Payment | null>(null);
   const [deletingPayment, setDeletingPayment] = useState<Payment | null>(null);
@@ -633,42 +648,229 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Select Student */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">اختر الطالب السادد *</label>
-                <select
-                  required
-                  value={paymentForm.studentId}
-                  onChange={(e) => {
-                    const student = students.find(s => s.id === e.target.value);
-                    if (student) {
-                      const basePrice = prices[student.grade];
-                      let due = basePrice;
-                      if (student.exemptionType === 'full') due = 0;
-                      else if (student.exemptionType === 'partial') due = Math.max(0, basePrice - student.discountAmount);
+              {/* Smart Student Selector Panel */}
+              <div className="md:col-span-2 bg-slate-50 border border-slate-200 rounded-2xl p-4 md:p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-200/60 pb-3">
+                  <div>
+                    <span className="text-[10px] bg-indigo-50 text-indigo-700 font-extrabold px-2.5 py-1 rounded-lg border border-indigo-100">البحث الذكي والتصفية</span>
+                    <h4 className="text-xs font-bold text-slate-800 mt-1.5">ابحث واقترن بالطالب المناسب لتسجيل اشتراكه</h4>
+                  </div>
+                  {paymentForm.studentId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentForm({ ...paymentForm, studentId: '', amountPaid: 0 });
+                        setAddSearchQuery('');
+                      }}
+                      className="text-xs font-bold text-red-600 hover:text-red-850 flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      إلغاء اختيار الطالب الحالي
+                    </button>
+                  )}
+                </div>
 
-                      setPaymentForm({ ...paymentForm, studentId: student.id, amountPaid: due });
-                    } else {
-                      setPaymentForm({ ...paymentForm, studentId: e.target.value });
-                    }
-                  }}
-                  className="w-full px-3 py-2 bg-slate-55 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all"
-                >
-                  <option value="">اختر من الطلاب النشطين بالمركز...</option>
-                  {students
-                    .filter(s => s.status === 'approved')
-                    .map(s => {
-                      const basePrice = prices[s.grade];
-                      let extra = `(المستحق الشهري: ${basePrice} ج.م)`;
-                      if (s.exemptionType === 'full') extra = '(معفى كليًا)';
-                      else if (s.exemptionType === 'partial') extra = `(خصم مسبق: ${Math.max(0, basePrice - s.discountAmount)} ج.م)`;
+                {/* If already selected, show beautiful Info Card */}
+                {paymentForm.studentId ? (
+                  (() => {
+                    const student = students.find(s => s.id === paymentForm.studentId);
+                    if (!student) return null;
+                    const group = allGroups.find(g => g.id === student.groupId);
+                    const basePrice = prices[student.grade];
+                    
+                    // Check if already paid this month
+                    const prevPaid = payments
+                      .filter(p => p.studentId === student.id && p.month === paymentForm.month)
+                      .reduce((sum, p) => sum + p.amountPaid, 0);
 
-                      return (
-                        <option key={s.id} value={s.id}>{s.name} - {s.grade} {extra}</option>
-                      );
-                    })
-                  }
-                </select>
+                    return (
+                      <div className="bg-white border-2 border-emerald-500 rounded-xl p-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 animate-in zoom-in-95 duration-150">
+                        <div className="flex items-center gap-3">
+                          <div className="bg-emerald-50 text-emerald-700 p-2.5 rounded-full border border-emerald-150">
+                            <User className="w-5 h-5" />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-extrabold text-slate-900 text-sm">{student.name}</span>
+                              <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-black">كود: {student.code}</span>
+                            </div>
+                            <div className="text-xs text-slate-500 font-semibold">
+                              <span>{student.grade}</span>
+                              <span className="mx-1.5">•</span>
+                              <span className="text-slate-700 font-bold">المجموعة: {group ? group.name : 'غير محددة'}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+                          {prevPaid > 0 && (
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 text-right space-y-0.5 shrink-0">
+                              <span className="text-[10px] text-amber-800 font-extrabold flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                تنبيه: مسدد مسبقًا لهذا الشهر
+                              </span>
+                              <span className="text-[11px] text-slate-600 font-bold block">قام بدفع: <strong className="font-mono text-amber-900">{prevPaid} ج.م</strong></span>
+                            </div>
+                          )}
+
+                          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-1.5 text-right shrink-0">
+                            <span className="text-[10px] text-slate-400 font-bold block">حالة الإعفاء/الخصم</span>
+                            <span className="text-xs font-black text-slate-700">
+                              {student.exemptionType === 'full' && '🎁 معفى كلياً (0 ج.م)'}
+                              {student.exemptionType === 'partial' && `📉 خصم جزئي (${student.discountAmount} ج.م)`}
+                              {student.exemptionType === 'none' && '💵 لا يوجد خصم (كامل)'}
+                            </span>
+                          </div>
+
+                          <div className="bg-emerald-50/50 border border-emerald-200 rounded-lg px-3.5 py-1.5 text-right shrink-0">
+                            <span className="text-[10px] text-emerald-800 font-bold block">القيمة الموصى بها</span>
+                            <strong className="text-sm font-black text-emerald-900 font-mono">
+                              {student.exemptionType === 'full' ? 0 : student.exemptionType === 'partial' ? Math.max(0, basePrice - student.discountAmount) : basePrice} ج.م
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  // Search & Selection Area
+                  <div className="space-y-4">
+                    {/* Filters Row */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {/* Search box */}
+                      <div className="relative">
+                        <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="ابحث باسم الطالب أو الكود..."
+                          value={addSearchQuery}
+                          onChange={(e) => setAddSearchQuery(e.target.value)}
+                          className="w-full pr-9 pl-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs outline-none text-right transition-all"
+                        />
+                      </div>
+
+                      {/* Grade Filter */}
+                      <div>
+                        <select
+                          value={addFilterGrade}
+                          onChange={(e) => {
+                            setAddFilterGrade(e.target.value);
+                            setAddFilterGroupId('all'); // Reset group when grade changes
+                          }}
+                          className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs outline-none text-right transition-all"
+                        >
+                          <option value="all">كل الصفوف الدراسية</option>
+                          <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                          <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                          <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
+                          <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
+                          <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
+                          <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
+                        </select>
+                      </div>
+
+                      {/* Group Filter */}
+                      <div>
+                        <select
+                          value={addFilterGroupId}
+                          onChange={(e) => setAddFilterGroupId(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs outline-none text-right transition-all"
+                        >
+                          <option value="all">كل المجموعات الدراسية</option>
+                          {allGroups
+                            .filter(g => addFilterGrade === 'all' || g.grade === addFilterGrade)
+                            .map(g => (
+                              <option key={g.id} value={g.id}>{g.name} ({g.grade})</option>
+                            ))
+                          }
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Results Selection Grid */}
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto divide-y divide-slate-100">
+                      {(() => {
+                        const activeStudents = students.filter(s => s.status === 'approved');
+                        const addFiltered = activeStudents.filter(s => {
+                          const matchesSearch = addSearchQuery === '' || 
+                            s.name.toLowerCase().includes(addSearchQuery.toLowerCase()) || 
+                            s.code.toLowerCase().includes(addSearchQuery.toLowerCase());
+                          const matchesGrade = addFilterGrade === 'all' || s.grade === addFilterGrade;
+                          const matchesGroup = addFilterGroupId === 'all' || s.groupId === addFilterGroupId;
+                          return matchesSearch && matchesGrade && matchesGroup;
+                        });
+
+                        if (addFiltered.length === 0) {
+                          return (
+                            <div className="text-center py-8 text-slate-400 italic text-xs">
+                              {addSearchQuery || addFilterGrade !== 'all' || addFilterGroupId !== 'all'
+                                ? 'لا توجد نتائج مطابقة لبحثك وتصفياتك الحالية.'
+                                : 'يرجى البدء بالبحث أو التصفية واختيار المتعلم...'}
+                            </div>
+                          );
+                        }
+
+                        return addFiltered.map(s => {
+                          const basePrice = prices[s.grade];
+                          let due = basePrice;
+                          if (s.exemptionType === 'full') due = 0;
+                          else if (s.exemptionType === 'partial') due = Math.max(0, basePrice - s.discountAmount);
+
+                          const group = allGroups.find(g => g.id === s.groupId);
+                          
+                          // Check month status
+                          const prevPaid = payments
+                            .filter(p => p.studentId === s.id && p.month === paymentForm.month)
+                            .reduce((sum, p) => sum + p.amountPaid, 0);
+
+                          return (
+                            <div 
+                              key={s.id} 
+                              onClick={() => {
+                                setPaymentForm({ ...paymentForm, studentId: s.id, amountPaid: due });
+                              }}
+                              className="p-3 hover:bg-indigo-50/40 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all cursor-pointer group/item"
+                            >
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-slate-900 group-hover/item:text-indigo-900 transition">{s.name}</span>
+                                  <span className="text-[9px] font-mono bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-black">كود: {s.code}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-semibold">
+                                  <span>{s.grade}</span>
+                                  <span className="mx-1">•</span>
+                                  <span>المجموعة: {group ? group.name : 'غير محددة'}</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                                {prevPaid > 0 ? (
+                                  <span className="text-[9px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-bold animate-pulse">
+                                    مسدد جزئياً/كلياً ({prevPaid} ج.م)
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">
+                                    لم يسدد بعد
+                                  </span>
+                                )}
+
+                                <span className="text-xs font-mono font-bold text-slate-700 bg-slate-50 border border-slate-200 px-2 py-1 rounded">
+                                  {due} ج.م
+                                </span>
+                                <button
+                                  type="button"
+                                  className="px-2.5 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded text-[11px] font-extrabold transition-colors cursor-pointer"
+                                >
+                                  اختيار الطالب
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Month */}
@@ -706,7 +908,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                   required
                   value={paymentForm.paymentMethod}
                   onChange={(e) => setPaymentForm({ ...paymentForm, paymentMethod: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right"
+                  className="w-full px-3 py-2 bg-slate-55 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right"
                 >
                   <option value="نقدي">نقدي (في السنتر)</option>
                   <option value="فودافون كاش">فودافون كاش (Vodafone Cash)</option>
@@ -731,7 +933,8 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
             <div className="flex justify-start">
               <button
                 type="submit"
-                className="px-6 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-slate-850 transition cursor-pointer"
+                disabled={!paymentForm.studentId}
+                className="px-6 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-slate-850 transition cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed"
               >
                 <Check className="w-4 h-4" />
                 تحصيل دفعة وإصدار سند الإيصال
