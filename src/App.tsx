@@ -69,6 +69,7 @@ export default function App() {
   const [activePortalParentStudents, setActivePortalParentStudents] = useState<Student[]>([]);
   const [activePortalParentSearchDone, setActivePortalParentSearchDone] = useState(false);
   const [guestTab, setGuestTab] = useState<'parent' | 'student' | 'register'>('register');
+  const [bannerError, setBannerError] = useState(false);
 
   // Active Teacher Panel Tab
   const [activeTeacherTab, setActiveTeacherTab] = useState<'dashboard' | 'students' | 'groups' | 'attendance' | 'finances' | 'exams' | 'whatsapp' | 'backup' | 'reports'>('dashboard');
@@ -511,89 +512,97 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] text-right" style={{ direction: 'rtl' }}>
-      {/* Visual Header / Brand no-print */}
-      <header className="bg-white border-b border-slate-200 py-4 px-6 sticky top-0 z-40 no-print shadow-sm">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <div 
-            onClick={handleLogoClick}
-            className="flex items-center gap-3 space-x-3 space-x-reverse cursor-pointer select-none active:scale-95 transition-transform"
-            title="انقر ٥ مرات للدخول السري للمشرف"
-          >
-            <div className="bg-[#0f172a] text-white p-2 rounded-xl shadow-xs">
-              <GraduationCap className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-[#0f172a] font-sans leading-tight flex items-center gap-1.5">
-                مجموعة العلوم الحديثة
-                {logoClicks > 0 && (
-                  <span className="text-[9px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded-md animate-bounce">
-                    {logoClicks}/5
-                  </span>
-                )}
-              </h1>
-              <p className="text-xs text-slate-500 font-medium">الأستاذ محمود أبوذكري — لتأسيس جيل علمي مبدع</p>
-            </div>
-          </div>
-
-          {/* Cloud Sync Status Badge */}
-          {dbEngine.isFirebaseEnabled() && autoSyncMessage && (
-            <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all duration-300 shadow-xs ${
-              autoSyncState === 'checking' || autoSyncState === 'syncing'
-                ? 'bg-blue-50/85 text-blue-800 border-blue-200/60 animate-pulse'
-                : autoSyncState === 'synced'
-                ? 'bg-emerald-50/85 text-emerald-800 border-emerald-200/60'
-                : autoSyncState === 'offline'
-                ? 'bg-amber-50/85 text-amber-850 border-amber-200/60'
-                : 'bg-red-50/85 text-red-800 border-red-200/60'
-            }`}>
-              {autoSyncState === 'checking' || autoSyncState === 'syncing' ? (
-                <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin" />
-              ) : autoSyncState === 'synced' ? (
-                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
-              ) : autoSyncState === 'offline' ? (
-                <WifiOff className="w-3.5 h-3.5 text-amber-600" />
-              ) : (
-                <CloudOff className="w-3.5 h-3.5 text-red-600" />
-              )}
-              <span>{autoSyncMessage}</span>
-            </div>
-          )}
-
-          {userRole !== 'guest' && (
-            <div className="flex items-center gap-3 space-x-3 space-x-reverse">
-              <span className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg inline-block">
-                حساب: {userRole === 'teacher' ? 'موجه المادة (الأدمن)' : userRole === 'parent' ? 'ولي الأمر' : 'بوابة الطالب'}
-              </span>
-              <button
-                onClick={handleLogout}
-                className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all border border-slate-200 cursor-pointer"
-              >
-                <LogOut className="w-4 h-4" />
-                تسجيل الخروج
-              </button>
-            </div>
-          )}
-        </div>
-      </header>
-
       <main className="max-w-7xl mx-auto p-4 md:p-6 pb-20">
+        {/* Sleek top status & account controller - ONLY shown when logged in */}
+        {userRole !== 'guest' && (
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white border border-slate-200/80 p-4 rounded-3xl shadow-xs mb-6 no-print">
+            <div className="flex items-center gap-3">
+              <div className="bg-[#0f172a] text-white p-2 rounded-xl shadow-xs">
+                <GraduationCap className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-[#0f172a] leading-tight">منصة الأستاذ محمود أبوذكري</h2>
+                <p className="text-[10px] text-slate-500">حساب: {userRole === 'teacher' ? 'موجه المادة (الأدمن)' : userRole === 'parent' ? 'بوابة ولي الأمر' : 'بوابة الطالب'}</p>
+              </div>
+            </div>
+
+            {/* Cloud Sync Status Badge */}
+            {dbEngine.isFirebaseEnabled() && autoSyncMessage && (
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all duration-300 shadow-xs ${
+                autoSyncState === 'checking' || autoSyncState === 'syncing'
+                  ? 'bg-blue-50/85 text-blue-800 border-blue-200/60 animate-pulse'
+                  : autoSyncState === 'synced'
+                  ? 'bg-emerald-50/85 text-emerald-800 border-emerald-200/60'
+                  : autoSyncState === 'offline'
+                  ? 'bg-amber-50/85 text-amber-850 border-amber-200/60'
+                  : 'bg-red-50/85 text-red-800 border-red-200/60'
+              }`}>
+                {autoSyncState === 'checking' || autoSyncState === 'syncing' ? (
+                  <RefreshCw className="w-3 h-3 text-blue-600 animate-spin" />
+                ) : autoSyncState === 'synced' ? (
+                  <Cloud className="w-3 h-3 text-emerald-600" />
+                ) : autoSyncState === 'offline' ? (
+                  <WifiOff className="w-3 h-3 text-amber-600" />
+                ) : (
+                  <CloudOff className="w-3 h-3 text-red-600" />
+                )}
+                <span>{autoSyncMessage}</span>
+              </div>
+            )}
+
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 text-xs font-bold rounded-2xl flex items-center gap-1.5 transition-all border border-rose-100/60 cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+              تسجيل الخروج من الحساب
+            </button>
+          </div>
+        )}
         
         {/* ========================================================= */}
         {/* GUEST MODE: ENTER / AUTH GATEWAY SCREEN                   */}
         {/* ========================================================= */}
         {userRole === 'guest' && (
           <div className="space-y-10 py-4 no-print animate-in fade-in duration-300">
-            {/* Center Hero statement */}
-            <div className="text-center max-w-2xl mx-auto space-y-4">
-              <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight">
-                منصة دروس العلوم
-              </h1>
-              <h2 className="text-2xl md:text-3xl font-extrabold text-indigo-600">
-                للأستاذ محمود أبوذكري
-              </h2>
-              <div className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 px-5 py-2 rounded-full text-sm md:text-base font-extrabold font-mono border border-slate-200/80 transition shadow-xs">
-                <span>📞</span>
-                <a href="tel:01110335245" className="hover:underline">01110335245</a>
+            {/* Centered Professional Image Banner with 5-Click Staff entryway */}
+            {!bannerError ? (
+              <div 
+                onClick={handleLogoClick}
+                className="w-full max-w-5xl mx-auto overflow-hidden rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-500 border border-slate-200/60 bg-gradient-to-tr from-slate-50 to-indigo-50/30 cursor-pointer relative group"
+              >
+                <img 
+                  src="/banner.png" 
+                  alt="منصة دروس العلوم مع الأستاذ محمود أبوذكري" 
+                  referrerPolicy="no-referrer"
+                  className="w-full h-auto object-cover block select-none group-hover:scale-[1.01] transition-transform duration-700"
+                  onError={() => {
+                    console.log("Custom banner not loaded yet. Showing text hero statement fallback.");
+                    setBannerError(true);
+                  }}
+                />
+              </div>
+            ) : null}
+
+            {/* Center Hero statement - Shown as subtitle or fallback if banner fails to load */}
+            <div className="text-center max-w-3xl mx-auto space-y-4">
+              {bannerError && (
+                <div 
+                  onClick={handleLogoClick}
+                  className="cursor-pointer select-none border border-dashed border-indigo-200/60 p-6 rounded-3xl bg-indigo-50/10 hover:bg-indigo-50/30 transition-all duration-300"
+                >
+                  <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight">
+                    منصة دروس العلوم
+                  </h1>
+                  <h2 className="text-2xl md:text-3xl font-extrabold text-indigo-600">
+                    للأستاذ محمود أبوذكري
+                  </h2>
+                </div>
+              )}
+              <div className="inline-flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-5 py-2.5 rounded-full text-xs md:text-sm font-extrabold border border-emerald-200/80 transition shadow-sm">
+                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
+                <span>للتواصل والاستفسار عبر الواتساب:</span>
+                <a href="https://wa.me/201110335245" target="_blank" rel="noreferrer" className="hover:underline tracking-wider font-mono font-black text-sm text-emerald-700">01110335245</a>
               </div>
             </div>
 
