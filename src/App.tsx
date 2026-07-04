@@ -146,7 +146,8 @@ export default function App() {
           cExams,
           cExamScores,
           cTemplates,
-          cPrices
+          cPrices,
+          cAdminSettings
         ] = await Promise.all([
           downloadBackupFromFirebase().catch(() => null),
           fetchEntityFromFirebase('students').catch(() => null),
@@ -156,10 +157,11 @@ export default function App() {
           fetchEntityFromFirebase('exams').catch(() => null),
           fetchEntityFromFirebase('examScores').catch(() => null),
           fetchEntityFromFirebase('templates').catch(() => null),
-          fetchEntityFromFirebase('prices').catch(() => null)
+          fetchEntityFromFirebase('prices').catch(() => null),
+          fetchEntityFromFirebase('admin_settings').catch(() => null)
         ]);
 
-        const hasAnyData = !!(backup || cStudents || cGroups || cPayments || cAttendance || cExams || cExamScores || cTemplates || cPrices);
+        const hasAnyData = !!(backup || cStudents || cGroups || cPayments || cAttendance || cExams || cExamScores || cTemplates || cPrices || cAdminSettings);
 
         if (hasAnyData) {
           if (active) {
@@ -188,6 +190,10 @@ export default function App() {
           if (cExamScores && cExamScores.items) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(cExamScores.items));
           if (cTemplates && cTemplates.items) localStorage.setItem('abuzekry_templates', JSON.stringify(cTemplates.items));
           if (cPrices && cPrices.items) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(cPrices.items));
+          
+          if (cAdminSettings && cAdminSettings.items && cAdminSettings.items.password) {
+            localStorage.setItem('abuzekry_admin_password', cAdminSettings.items.password);
+          }
 
           dbEngine.init(); // Recalculate states & repair duplicates
           loadDatabase();  // Update React active view states
@@ -306,7 +312,12 @@ export default function App() {
   const handleSecretLoginSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const storedPass = localStorage.getItem('abuzekry_admin_password') || '120';
-    if (secretInput === storedPass || secretInput === '120' || secretInput === 'admin') {
+    const isCustomPass = storedPass !== '120' && storedPass !== 'admin';
+    const isValid = isCustomPass 
+      ? secretInput === storedPass
+      : (secretInput === '120' || secretInput === 'admin');
+
+    if (isValid) {
       setUserRole('teacher');
       setIsPasswordError(false);
       setSecretInput('');
@@ -380,7 +391,12 @@ export default function App() {
   const handleTeacherLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const storedPass = localStorage.getItem('abuzekry_admin_password') || '120';
-    if (adminPassword === storedPass || adminPassword === '120' || adminPassword === 'admin') {
+    const isCustomPass = storedPass !== '120' && storedPass !== 'admin';
+    const isValid = isCustomPass 
+      ? adminPassword === storedPass
+      : (adminPassword === '120' || adminPassword === 'admin');
+
+    if (isValid) {
       setUserRole('teacher');
       setIsPasswordError(false);
       setAdminPassword('');

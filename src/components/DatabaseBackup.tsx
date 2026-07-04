@@ -27,7 +27,8 @@ import {
   testConnection, 
   getPendingQueue, 
   processSyncQueue, 
-  fetchEntityFromFirebase 
+  fetchEntityFromFirebase,
+  syncEntityToFirebase
 } from '../firebase';
 
 interface DatabaseBackupProps {
@@ -805,7 +806,7 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
         </p>
 
         <form 
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
             if (!newPassword.trim()) {
               setPwdStatus({ error: 'الرجاء إدخال كود سري جديد وصالح.' });
@@ -815,8 +816,21 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
               setPwdStatus({ error: 'عذراً، كلمة المرور الجديدة وتأكيدها غير متطابقتين.' });
               return;
             }
-            localStorage.setItem('abuzekry_admin_password', newPassword.trim());
-            setPwdStatus({ success: `تم حفظ وتفعيل الكود السري الجديد بنجاح! الرمز المعتمد الآن هو: ${newPassword.trim()}` });
+            const passwordValue = newPassword.trim();
+            localStorage.setItem('abuzekry_admin_password', passwordValue);
+            
+            let syncNotice = "";
+            if (dbEngine.isFirebaseEnabled()) {
+              try {
+                await syncEntityToFirebase('admin_settings', { password: passwordValue, changedAt: new Date().toISOString() });
+                syncNotice = " وتمت مزامنة الكود مع السحابة لجميع المتصفحات فوراً.";
+              } catch (err) {
+                console.warn("Failed to sync passcode to firebase directly, queued:", err);
+                syncNotice = " وتمت جدولة المزامنة السحابية تلقائياً.";
+              }
+            }
+
+            setPwdStatus({ success: `تم حفظ وتفعيل الكود السري الجديد بنجاح! الرمز المعتمد الآن هو: ${passwordValue}${syncNotice}` });
             setNewPassword('');
             setConfirmPassword('');
             setTimeout(() => setPwdStatus(null), 5000);
