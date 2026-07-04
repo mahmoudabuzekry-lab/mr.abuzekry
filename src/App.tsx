@@ -819,10 +819,10 @@ export default function App() {
         {/* TEACHER (ADMIN) WORKSPACE                                 */}
         {/* ========================================================= */}
         {userRole === 'teacher' && (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 no-print">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 print:block print:w-full">
             
             {/* Sidebar Navigation */}
-            <aside className="bg-[#0f172a] text-white rounded-2xl p-5 space-y-4 lg:col-span-1 h-fit shadow-md">
+            <aside className="bg-[#0f172a] text-white rounded-2xl p-5 space-y-4 lg:col-span-1 h-fit shadow-md no-print">
               <div className="border-b border-slate-800 pb-3 text-center lg:text-right font-sans">
                 <h3 className="font-bold text-white text-sm">لوحة إدارة الأستاذ محمود</h3>
                 <p className="text-[11px] text-slate-400">تحكم كامل بدفاتر ومستويات السنتر</p>
@@ -967,7 +967,7 @@ export default function App() {
             </aside>
 
             {/* Layout Content wrapper */}
-            <div className="lg:col-span-3 space-y-6">
+            <div className="lg:col-span-3 space-y-6 print:block print:w-full">
               
               {/* PANEL TAB 1: DASHBOARD STATS */}
               {activeTeacherTab === 'dashboard' && (
@@ -1183,15 +1183,15 @@ export default function App() {
         {/* PAR PORTAL (PORTAL FOR PARENTS)                           */}
         {/* ========================================================= */}
         {userRole === 'parent' && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 md:p-8 space-y-6 no-print shadow-sm">
-            <div className="border-b border-slate-100 pb-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 md:p-8 space-y-6 shadow-sm print:border-none print:p-0">
+            <div className="border-b border-slate-100 pb-4 no-print">
               <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-100 px-3 py-1 rounded-md font-bold inline-block">بوابة أولياء الأمور لمتابعة مستويات الطلاب</span>
               <h3 className="text-xl font-bold text-slate-900 font-sans mt-2">كشف درجات وسجلات حضور مادة العلوم للأبناء</h3>
               <p className="text-xs text-slate-500 mt-1">يمكنك الاستعلام والاطلاع الفوري على تفاصيل حضور طفلك وغيابه، وسداد اشتراكه، ونقاط علاماته بالمركز.</p>
             </div>
 
             {/* If parent entered, show lookup box or show results */}
-            <form onSubmit={handleParentSearchSubmit} className="flex flex-col sm:flex-row gap-3 max-w-xl">
+            <form onSubmit={handleParentSearchSubmit} className="flex flex-col sm:flex-row gap-3 max-w-xl no-print">
               <input
                 type="tel"
                 required
@@ -1357,14 +1357,14 @@ export default function App() {
         {/* STUDENT PORTAL (PORTAL FOR STUDENTS)                     */}
         {/* ========================================================= */}
         {userRole === 'student' && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 md:p-8 space-y-6 shadow-sm no-print">
-            <div className="border-b border-slate-100 pb-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 md:p-8 space-y-6 shadow-sm print:border-none print:p-0">
+            <div className="border-b border-slate-100 pb-4 no-print">
               <span className="text-[10px] bg-blue-50 text-blue-800 border border-blue-100 px-3 py-1 rounded-md font-bold inline-block font-sans">بوابة الطالب الأكاديمية لمادة العلوم</span>
               <h3 className="text-xl font-bold text-slate-900 mt-2 font-sans">أهلاً بك يا بطل العلوم المستقبلي! 🎓</h3>
               <p className="text-xs text-slate-500 mt-1">تتبع كود عضويتك ومواعيد حصصك، وقم باستخراج وطباعة كارت الباركود الرقمي للدخول السريع للسنتر.</p>
             </div>
 
-            <form onSubmit={handleStudentSearchSubmit} className="flex flex-col sm:flex-row gap-3 max-w-xl">
+            <form onSubmit={handleStudentSearchSubmit} className="flex flex-col sm:flex-row gap-3 max-w-xl no-print">
               <input
                 type="text"
                 required
