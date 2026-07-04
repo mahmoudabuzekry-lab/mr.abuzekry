@@ -4,7 +4,7 @@
  */
 
 import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType } from './types';
-import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase } from './firebase';
+import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase } from './firebase';
 
 // Price mapping for each grade
 export const DEFAULT_GRADE_PRICES: Record<GradeType, number> = {
@@ -297,19 +297,59 @@ class LocalDatabase {
   }
 
   public async syncAllFromFirebase(): Promise<boolean> {
-    const backup = await downloadBackupFromFirebase();
-    if (backup) {
-      if (backup.students) this.setStudentsDirect(backup.students);
-      if (backup.groups) this.setGroupsDirect(backup.groups);
-      if (backup.payments) this.setPaymentsDirect(backup.payments);
-      if (backup.attendance) this.setAttendanceDirect(backup.attendance);
-      if (backup.exams) this.setExamsDirect(backup.exams);
-      if (backup.examScores) this.setExamScoresDirect(backup.examScores);
-      if (backup.templates) this.setTemplatesDirect(backup.templates);
-      if (backup.prices) this.setPricesDirect(backup.prices);
-      this.syncGroupCounts();
-      localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
-      return true;
+    try {
+      const [
+        backup,
+        cStudents,
+        cGroups,
+        cPayments,
+        cAttendance,
+        cExams,
+        cExamScores,
+        cTemplates,
+        cPrices
+      ] = await Promise.all([
+        downloadBackupFromFirebase().catch(() => null),
+        fetchEntityFromFirebase('students').catch(() => null),
+        fetchEntityFromFirebase('groups').catch(() => null),
+        fetchEntityFromFirebase('payments').catch(() => null),
+        fetchEntityFromFirebase('attendance').catch(() => null),
+        fetchEntityFromFirebase('exams').catch(() => null),
+        fetchEntityFromFirebase('examScores').catch(() => null),
+        fetchEntityFromFirebase('templates').catch(() => null),
+        fetchEntityFromFirebase('prices').catch(() => null)
+      ]);
+
+      let hasData = false;
+
+      if (backup) {
+        hasData = true;
+        if (backup.students) this.setStudentsDirect(backup.students);
+        if (backup.groups) this.setGroupsDirect(backup.groups);
+        if (backup.payments) this.setPaymentsDirect(backup.payments);
+        if (backup.attendance) this.setAttendanceDirect(backup.attendance);
+        if (backup.exams) this.setExamsDirect(backup.exams);
+        if (backup.examScores) this.setExamScoresDirect(backup.examScores);
+        if (backup.templates) this.setTemplatesDirect(backup.templates);
+        if (backup.prices) this.setPricesDirect(backup.prices);
+      }
+
+      if (cStudents && cStudents.items) { hasData = true; this.setStudentsDirect(cStudents.items); }
+      if (cGroups && cGroups.items) { hasData = true; this.setGroupsDirect(cGroups.items); }
+      if (cPayments && cPayments.items) { hasData = true; this.setPaymentsDirect(cPayments.items); }
+      if (cAttendance && cAttendance.items) { hasData = true; this.setAttendanceDirect(cAttendance.items); }
+      if (cExams && cExams.items) { hasData = true; this.setExamsDirect(cExams.items); }
+      if (cExamScores && cExamScores.items) { hasData = true; this.setExamScoresDirect(cExamScores.items); }
+      if (cTemplates && cTemplates.items) { hasData = true; this.setTemplatesDirect(cTemplates.items); }
+      if (cPrices && cPrices.items) { hasData = true; this.setPricesDirect(cPrices.items); }
+
+      if (hasData) {
+        this.syncGroupCounts();
+        localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
+        return true;
+      }
+    } catch (err) {
+      console.error("Error pulling full firebase data:", err);
     }
     return false;
   }
@@ -409,6 +449,9 @@ class LocalDatabase {
     });
     
     this.set(STORAGE_KEYS.GROUPS, updatedGroups);
+    if (this.isFirebaseEnabled()) {
+      syncEntityToFirebase('groups', updatedGroups);
+    }
   }
 
   // Business Logic operations helper

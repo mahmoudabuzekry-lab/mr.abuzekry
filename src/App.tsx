@@ -122,7 +122,7 @@ export default function App() {
       setAutoSyncMessage('جاري جلب أحدث البيانات من السحابة...');
 
       try {
-        const { testConnection, downloadBackupFromFirebase } = await import('./firebase');
+        const { testConnection, downloadBackupFromFirebase, fetchEntityFromFirebase } = await import('./firebase');
         const isOnline = await testConnection();
 
         if (!isOnline) {
@@ -136,28 +136,62 @@ export default function App() {
           return;
         }
 
-        const backup = await downloadBackupFromFirebase();
+        const [
+          backup,
+          cStudents,
+          cGroups,
+          cPayments,
+          cAttendance,
+          cExams,
+          cExamScores,
+          cTemplates,
+          cPrices
+        ] = await Promise.all([
+          downloadBackupFromFirebase().catch(() => null),
+          fetchEntityFromFirebase('students').catch(() => null),
+          fetchEntityFromFirebase('groups').catch(() => null),
+          fetchEntityFromFirebase('payments').catch(() => null),
+          fetchEntityFromFirebase('attendance').catch(() => null),
+          fetchEntityFromFirebase('exams').catch(() => null),
+          fetchEntityFromFirebase('examScores').catch(() => null),
+          fetchEntityFromFirebase('templates').catch(() => null),
+          fetchEntityFromFirebase('prices').catch(() => null)
+        ]);
 
-        if (backup) {
+        const hasAnyData = !!(backup || cStudents || cGroups || cPayments || cAttendance || cExams || cExamScores || cTemplates || cPrices);
+
+        if (hasAnyData) {
           if (active) {
             setAutoSyncState('syncing');
             setAutoSyncMessage('✨ جاري تطبيق السجلات السحابية على جهازك...');
           }
 
-          // Apply backup payload to localStorage safely
-          if (backup.students) localStorage.setItem('abuzekry_students', JSON.stringify(backup.students));
-          if (backup.groups) localStorage.setItem('abuzekry_groups', JSON.stringify(backup.groups));
-          if (backup.payments) localStorage.setItem('abuzekry_payments', JSON.stringify(backup.payments));
-          if (backup.attendance) localStorage.setItem('abuzekry_attendance', JSON.stringify(backup.attendance));
-          if (backup.exams) localStorage.setItem('abuzekry_exams', JSON.stringify(backup.exams));
-          if (backup.examScores) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(backup.examScores));
-          if (backup.templates) localStorage.setItem('abuzekry_templates', JSON.stringify(backup.templates));
-          if (backup.prices) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(backup.prices));
+          // Apply backup payload as the base configuration first
+          if (backup) {
+            if (backup.students) localStorage.setItem('abuzekry_students', JSON.stringify(backup.students));
+            if (backup.groups) localStorage.setItem('abuzekry_groups', JSON.stringify(backup.groups));
+            if (backup.payments) localStorage.setItem('abuzekry_payments', JSON.stringify(backup.payments));
+            if (backup.attendance) localStorage.setItem('abuzekry_attendance', JSON.stringify(backup.attendance));
+            if (backup.exams) localStorage.setItem('abuzekry_exams', JSON.stringify(backup.exams));
+            if (backup.examScores) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(backup.examScores));
+            if (backup.templates) localStorage.setItem('abuzekry_templates', JSON.stringify(backup.templates));
+            if (backup.prices) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(backup.prices));
+          }
+
+          // Apply separate collections which represent individual operations for 100% data freshness
+          if (cStudents && cStudents.items) localStorage.setItem('abuzekry_students', JSON.stringify(cStudents.items));
+          if (cGroups && cGroups.items) localStorage.setItem('abuzekry_groups', JSON.stringify(cGroups.items));
+          if (cPayments && cPayments.items) localStorage.setItem('abuzekry_payments', JSON.stringify(cPayments.items));
+          if (cAttendance && cAttendance.items) localStorage.setItem('abuzekry_attendance', JSON.stringify(cAttendance.items));
+          if (cExams && cExams.items) localStorage.setItem('abuzekry_exams', JSON.stringify(cExams.items));
+          if (cExamScores && cExamScores.items) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(cExamScores.items));
+          if (cTemplates && cTemplates.items) localStorage.setItem('abuzekry_templates', JSON.stringify(cTemplates.items));
+          if (cPrices && cPrices.items) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(cPrices.items));
 
           dbEngine.init(); // Recalculate states & repair duplicates
           loadDatabase();  // Update React active view states
 
-          localStorage.setItem('abuzekry_last_firebase_sync', backup.updatedAt || new Date().toISOString());
+          localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
 
           if (active) {
             setAutoSyncState('synced');
