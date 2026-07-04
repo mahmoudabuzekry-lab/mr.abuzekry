@@ -68,7 +68,7 @@ export default function App() {
   const [parentPhoneInput, setParentPhoneInput] = useState('');
   const [activePortalParentStudents, setActivePortalParentStudents] = useState<Student[]>([]);
   const [activePortalParentSearchDone, setActivePortalParentSearchDone] = useState(false);
-  const [guestTab, setGuestTab] = useState<'parent' | 'student' | 'register'>('parent');
+  const [guestTab, setGuestTab] = useState<'parent' | 'student' | 'register'>('register');
 
   // Active Teacher Panel Tab
   const [activeTeacherTab, setActiveTeacherTab] = useState<'dashboard' | 'students' | 'groups' | 'attendance' | 'finances' | 'exams' | 'whatsapp' | 'backup' | 'reports'>('dashboard');
@@ -603,6 +603,22 @@ export default function App() {
               <div className="flex border-b border-slate-100 bg-slate-50/70 p-2.5 gap-2">
                 <button
                   type="button"
+                  onClick={() => setGuestTab('register')}
+                  className={`flex-1 py-4 px-6 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2.5 cursor-pointer relative ${
+                    guestTab === 'register'
+                      ? 'bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white shadow-xl shadow-amber-500/30 border-2 border-amber-300 scale-[1.04] z-10'
+                      : 'bg-amber-50/90 text-amber-950 border-2 border-dashed border-amber-300/80 hover:bg-amber-100/90 hover:border-amber-400 hover:scale-[1.02] shadow-xs animate-pulse duration-1000'
+                  }`}
+                >
+                  <span className="absolute -top-2.5 -left-2 bg-red-500 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-md animate-bounce select-none z-20">
+                    متاح الآن 🔥
+                  </span>
+                  <BookOpen className={`w-5 h-5 ${guestTab === 'register' ? 'text-white' : 'text-amber-600'}`} />
+                  <span>تسجيل جديد بالمنصة (التسجيل الذاتي)</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setGuestTab('parent')}
                   className={`flex-1 py-4 px-6 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2.5 cursor-pointer ${
                     guestTab === 'parent'
@@ -625,22 +641,6 @@ export default function App() {
                 >
                   <GraduationCap className={`w-5 h-5 ${guestTab === 'student' ? 'text-indigo-600' : 'text-slate-400'}`} />
                   <span>بوابة الطالب</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setGuestTab('register')}
-                  className={`flex-1 py-4 px-6 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center justify-center gap-2.5 cursor-pointer relative ${
-                    guestTab === 'register'
-                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-md shadow-amber-500/20 border-2 border-amber-400 scale-[1.03] z-10'
-                      : 'bg-amber-50/90 text-amber-900 border-2 border-dashed border-amber-300/80 hover:bg-amber-100/80 hover:border-amber-400 hover:scale-[1.01]'
-                  }`}
-                >
-                  <span className="absolute -top-2.5 -left-2 bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-xs animate-bounce select-none">
-                    متاح الآن 🔥
-                  </span>
-                  <BookOpen className={`w-5 h-5 ${guestTab === 'register' ? 'text-white' : 'text-amber-600'}`} />
-                  <span>تسجيل جديد بالمنصة</span>
                 </button>
               </div>
 
@@ -832,11 +832,17 @@ export default function App() {
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-extrabold text-slate-700 mb-2">رقم هاتف ولي الأمر / الوالد *</label>
+                          <label className="text-xs font-extrabold text-slate-700 mb-2 flex flex-col xs:flex-row xs:items-center justify-between gap-1">
+                            <span>رقم هاتف ولي الأمر / الوالد *</span>
+                            <span className="text-[10px] text-emerald-700 bg-emerald-50/80 px-2 py-0.5 rounded-md font-bold border border-emerald-100/60 inline-flex items-center gap-1 self-start xs:self-auto">
+                              <span className="inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                              يجب أن يكون عليه واتساب نشط لضمان وصول الإشعارات 💬
+                            </span>
+                          </label>
                           <input
                             type="tel"
                             required
-                            placeholder="موبايل الوالد لإرسال الإشعارات والتقارير..."
+                            placeholder="موبايل الوالد (عليه واتساب فعال)..."
                             value={regForm.parentPhone}
                             onChange={(e) => setRegForm({...regForm, parentPhone: e.target.value})}
                             className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold font-mono outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition"
