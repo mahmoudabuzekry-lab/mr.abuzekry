@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { dbEngine } from '../db';
-import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate } from '../types';
+import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName } from '../types';
 import { 
   DollarSign, Landmark, Filter, Search, Plus, Trash2, Printer, X, Download, 
   Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle,
@@ -107,7 +107,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   };
   
   // Filters
-  const [filterMonth, setFilterMonth] = useState<string>('يونيو 2026');
+  const [filterMonth, setFilterMonth] = useState<string>(getCurrentArabicMonthName());
   const [filterGrade, setFilterGrade] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -122,14 +122,27 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   // Record Payment Form State
   const [paymentForm, setPaymentForm] = useState({
     studentId: '',
-    month: 'يونيو 2026',
+    month: getCurrentArabicMonthName(),
     amountPaid: 0,
     paymentMethod: 'نقدي',
     notes: ''
   });
 
-  // Available Months representation
-  const MONTHS = ['مايو 2026', 'يونيو 2026', 'يوليو 2026', 'أغسطس 2026', 'سبتمبر 2026'];
+  // Available Months representation (من شهر أغسطس حتى يوليو)
+  const MONTHS = [
+    'أغسطس',
+    'سبتمبر',
+    'أكتوبر',
+    'نوفمبر',
+    'ديسمبر',
+    'يناير',
+    'فبراير',
+    'مارس',
+    'أبريل',
+    'مايو',
+    'يونيو',
+    'يوليو'
+  ];
 
   const handlePriceUpdate = (e: React.FormEvent) => {
     e.preventDefault();

@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { dbEngine } from './db';
-import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, doesMonthPrecedeDate } from './types';
+import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, doesMonthPrecedeDate, getCurrentArabicMonthName } from './types';
 import StudentManager from './components/StudentManager';
 import GroupsManager from './components/GroupsManager';
 import AttendanceManager from './components/AttendanceManager';
@@ -113,11 +113,6 @@ export default function App() {
     let active = true;
 
     const pullFromCloudOnStartup = async () => {
-      if (userRole !== 'teacher') {
-        setAutoSyncState('idle');
-        return;
-      }
-
       if (!dbEngine.isFirebaseEnabled()) {
         setAutoSyncState('idle');
         return;
@@ -392,9 +387,9 @@ export default function App() {
   const pendingRequestsCount = students.filter(s => s.status === 'pending').length;
   const totalGroupsCount = groups.length;
   
-  const currentMonthName = new Date().toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' });
+  const currentMonthName = getCurrentArabicMonthName();
   const totalRevenueForMonth = payments
-    .filter(p => p.month.includes(currentMonthName.split(' ')[0]))
+    .filter(p => p.month === currentMonthName)
     .reduce((acc, p) => acc + p.amountPaid, 0);
 
   const bestPerformingStudents = [...examScores]
@@ -1174,8 +1169,8 @@ export default function App() {
                     const studentScores = examScores.filter(s => s.studentId === student.id);
 
                     // payment month check
-                    const currentMonth = new Date().toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' });
-                    const studentPayments = payments.filter(p => p.studentId === student.id && p.month.includes(currentMonth.split(' ')[0]));
+                    const currentMonth = getCurrentArabicMonthName();
+                    const studentPayments = payments.filter(p => p.studentId === student.id && p.month === currentMonth);
                     const precedesReg = doesMonthPrecedeDate(currentMonth, student.createdAt);
                     const balanceOwed = precedesReg ? 0 : (student.exemptionType === 'full' ? 0 : Math.max(0, prices[student.grade] - (student.exemptionType === 'partial' ? student.discountAmount : 0)));
                     const totalPaidThisMonth = studentPayments.reduce((acc, p) => acc + p.amountPaid, 0);
@@ -1274,7 +1269,7 @@ export default function App() {
                               </div>
 
                               <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-150">
-                                <span className="font-bold text-slate-600">حالة شهر {currentMonthName.split(' ')[0]}:</span>
+                                <span className="font-bold text-slate-600">حالة شهر {currentMonth}:</span>
                                 {precedesReg ? (
                                   <span className="text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200 px-2 py-0.5 rounded">يسبق تاريخ التسجيل 🔒</span>
                                 ) : isFullyPaid ? (

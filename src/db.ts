@@ -260,9 +260,6 @@ class LocalDatabase {
 
   // Firebase configuration toggle
   public isFirebaseEnabled(): boolean {
-    if (!this.isTeacherActive) {
-      return false;
-    }
     return localStorage.getItem('abuzekry_firebase_enabled') !== 'false';
   }
 

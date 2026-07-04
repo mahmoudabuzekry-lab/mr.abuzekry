@@ -121,6 +121,7 @@ export function doesMonthPrecedeDate(monthStr: string, dateIsoStr: string): bool
   
   let targetMonth = 1;
   let targetYear = 2026;
+  let yearFound = false;
   
   for (const part of parts) {
     for (const [mName, mVal] of Object.entries(ARABIC_MONTHS_MAP)) {
@@ -133,6 +134,16 @@ export function doesMonthPrecedeDate(monthStr: string, dateIsoStr: string): bool
     const parsedNum = parseInt(part, 10);
     if (!isNaN(parsedNum) && parsedNum > 1900) {
       targetYear = parsedNum;
+      yearFound = true;
+    }
+  }
+
+  // If year is not found explicitly, infer it based on academic session (August to December -> 2025, others -> 2026)
+  if (!yearFound) {
+    if (targetMonth >= 8) {
+      targetYear = 2025;
+    } else {
+      targetYear = 2026;
     }
   }
   
@@ -151,4 +162,14 @@ export function doesMonthPrecedeDate(monthStr: string, dateIsoStr: string): bool
   
   return false;
 }
+
+export function getCurrentArabicMonthName(): string {
+  const ALL_ARABIC_MONTHS = [
+    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+  ];
+  const currentMonthIndex = new Date().getMonth();
+  return ALL_ARABIC_MONTHS[currentMonthIndex];
+}
+
 
