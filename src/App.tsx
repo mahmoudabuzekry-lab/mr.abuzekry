@@ -13,6 +13,7 @@ import FinanceManager from './components/FinanceManager';
 import ExamsManager from './components/ExamsManager';
 import WhatsAppSender from './components/WhatsAppSender';
 import DatabaseBackup from './components/DatabaseBackup';
+import ReportsManager from './components/ReportsManager';
 import { QRCodeSVG } from 'qrcode.react';
 
 // Icons
@@ -21,7 +22,7 @@ import {
   BookOpen, LogOut, CheckCircle, Clock, Search, ShieldAlert, Award as AwardIcon, User, 
   MapPin, Phone, HelpCircle, GraduationCap, DollarSign, ListOrdered, CheckCircle2,
   Lock, Unlock, KeyRound, ShieldAlert as ShieldIcon,
-  Cloud, CloudOff, RefreshCw, Wifi, WifiOff
+  Cloud, CloudOff, RefreshCw, Wifi, WifiOff, TrendingUp
 } from 'lucide-react';
 
 export default function App() {
@@ -70,7 +71,7 @@ export default function App() {
   const [guestTab, setGuestTab] = useState<'parent' | 'student' | 'register'>('parent');
 
   // Active Teacher Panel Tab
-  const [activeTeacherTab, setActiveTeacherTab] = useState<'dashboard' | 'students' | 'groups' | 'attendance' | 'finances' | 'exams' | 'whatsapp' | 'backup'>('dashboard');
+  const [activeTeacherTab, setActiveTeacherTab] = useState<'dashboard' | 'students' | 'groups' | 'attendance' | 'finances' | 'exams' | 'whatsapp' | 'backup' | 'reports'>('dashboard');
 
   // Background Auto-Sync state
   const [autoSyncState, setAutoSyncState] = useState<'idle' | 'checking' | 'syncing' | 'synced' | 'offline' | 'error'>('idle');
@@ -930,6 +931,20 @@ export default function App() {
                 </button>
 
                 <button
+                  onClick={() => setActiveTeacherTab('reports')}
+                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                    activeTeacherTab === 'reports' 
+                      ? 'bg-blue-600 text-white shadow-xs' 
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" />
+                    قسم التقارير والتحليلات
+                  </span>
+                </button>
+
+                <button
                   onClick={() => setActiveTeacherTab('backup')}
                   className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
                     activeTeacherTab === 'backup' 
@@ -1137,6 +1152,19 @@ export default function App() {
               {activeTeacherTab === 'whatsapp' && (
                 <WhatsAppSender 
                   templates={templates} 
+                  onRefresh={loadDatabase} 
+                />
+              )}
+
+              {activeTeacherTab === 'reports' && (
+                <ReportsManager 
+                  students={students} 
+                  groups={groups} 
+                  payments={payments} 
+                  attendance={attendance}
+                  exams={exams} 
+                  examScores={examScores}
+                  prices={prices}
                   onRefresh={loadDatabase} 
                 />
               )}

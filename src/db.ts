@@ -65,6 +65,12 @@ const INITIAL_TEMPLATES: WhatsAppTemplate[] = [
     title: 'إعلان عام للمجموعة 📢',
     type: 'announcement',
     text: 'أبنائي الطلبة وأولياء الأمور الأفاضل بمجموعة *[اسم_المجموعة]*، نحيطكم علماً بأن الحصة القادمة ستشمل مراجعة شاملة وحل أسئلة بنك المعرفة على الوحدة السابقة، يرجى الاستعداد الجيد وإحضار كراسة التدريبات. الأستاذ محمود أبوذكري.'
+  },
+  {
+    id: 't6',
+    title: 'إشعار انصراف الطالب بنجاح 🚶‍♂️',
+    type: 'checkout',
+    text: 'ولي الأمر العزيز، نحيطكم علماً بأن الطالب/الطالبة *[اسم_الطالب]* قد انصرف وغادر اليوم من درس العلوم لمجموعة *[اسم_المجموعة]* في تمام الساعة *[الوقت]*. مع تمنياتنا له بسلامة الوصول. الأستاذ محمود أبوذكري.'
   }
 ];
 
@@ -222,6 +228,69 @@ class LocalDatabase {
         }
       }
       this.syncGroupCounts();
+    }
+
+    // Repair Grade values missing 'الصف' prefix
+    const gradeRepairMap: Record<string, string> = {
+      'الرابع الابتدائي': 'الصف الرابع الابتدائي',
+      'الخامس الابتدائي': 'الصف الخامس الابتدائي',
+      'السادس الابتدائي': 'الصف السادس الابتدائي',
+    };
+
+    // 1. Students grade repair
+    let studentsRepaired = false;
+    const currentStudents = this.getStudents();
+    const updatedStudentsForGrade = currentStudents.map(s => {
+      if (s.grade && gradeRepairMap[s.grade]) {
+        studentsRepaired = true;
+        return { ...s, grade: gradeRepairMap[s.grade] as any };
+      }
+      return s;
+    });
+    if (studentsRepaired) {
+      this.set(STORAGE_KEYS.STUDENTS, updatedStudentsForGrade);
+    }
+
+    // 2. Groups grade repair
+    let groupsRepaired = false;
+    const currentGroups = this.getGroups();
+    const updatedGroupsForGrade = currentGroups.map(g => {
+      if (g.grade && gradeRepairMap[g.grade]) {
+        groupsRepaired = true;
+        return { ...g, grade: gradeRepairMap[g.grade] as any };
+      }
+      return g;
+    });
+    if (groupsRepaired) {
+      this.set(STORAGE_KEYS.GROUPS, updatedGroupsForGrade);
+    }
+
+    // 3. Exams grade repair
+    let examsRepaired = false;
+    const currentExams = this.getExams();
+    const updatedExamsForGrade = currentExams.map(e => {
+      if (e.grade && gradeRepairMap[e.grade]) {
+        examsRepaired = true;
+        return { ...e, grade: gradeRepairMap[e.grade] as any };
+      }
+      return e;
+    });
+    if (examsRepaired) {
+      this.set(STORAGE_KEYS.EXAMS, updatedExamsForGrade);
+    }
+
+    // 4. Payments grade repair
+    let paymentsRepaired = false;
+    const currentPayments = this.getPayments();
+    const updatedPaymentsForGrade = currentPayments.map(p => {
+      if (p.grade && gradeRepairMap[p.grade]) {
+        paymentsRepaired = true;
+        return { ...p, grade: gradeRepairMap[p.grade] as any };
+      }
+      return p;
+    });
+    if (paymentsRepaired) {
+      this.set(STORAGE_KEYS.PAYMENTS, updatedPaymentsForGrade);
     }
   }
 

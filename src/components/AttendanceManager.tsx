@@ -8,7 +8,8 @@ import { dbEngine } from '../db';
 import { Student, Group, Attendance } from '../types';
 import { 
   Calendar, Users, QrCode, Camera, CheckCircle2, AlertTriangle, 
-  Clock, X, Search, Check, AlertCircle, HelpCircle, LogIn, LogOut
+  Clock, X, Search, Check, AlertCircle, HelpCircle, LogIn, LogOut,
+  MessageSquare, Sparkles, Send, Info
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
@@ -23,6 +24,110 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
   const [selectedGroupId, setSelectedGroupId] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // State for WhatsApp Notification Modal
+  const [notificationModal, setNotificationModal] = useState<{
+    isOpen: boolean;
+    student: Student | null;
+    templateType: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom';
+    messageText: string;
+  }>({
+    isOpen: false,
+    student: null,
+    templateType: 'attendance',
+    messageText: '',
+  });
+
+  const formatNotificationTemplate = (
+    templateText: string, 
+    student: Student, 
+    todayRecord?: any
+  ) => {
+    let result = templateText;
+    const group = groups.find(g => g.id === student.groupId);
+    
+    // Prepare values
+    const timeNow = todayRecord?.checkInTime || todayRecord?.checkOutTime || new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const currentMonth = new Date().toLocaleDateString('ar-EG', { month: 'long' });
+    const formattedDate = new Date(selectedDate).toLocaleDateString('ar-EG', { year: 'numeric', month: '2-digit', day: '2-digit' });
+
+    const replacements: Record<string, string> = {
+      '[اسم_الطالب]': student.name,
+      '[اسم_المجموعة]': group ? group.name : 'مجموعة العلوم',
+      '[الدرجة]': '—',
+      '[الدرجة_النهائية]': '—',
+      '[التقييم]': '—',
+      '[اسم_الاختبار]': '—',
+      '[الشهر]': currentMonth,
+      '[التاريخ]': formattedDate,
+      '[الصف_الدراسي]': student.grade,
+      '[المبلغ]': String(dbEngine.getPrices()[student.grade] || '0'),
+      '[الوقت]': timeNow
+    };
+
+    Object.entries(replacements).forEach(([placeholder, value]) => {
+      result = result.replaceAll(placeholder, value);
+    });
+
+    return result;
+  };
+
+  const handleOpenNotificationModal = (student: Student) => {
+    // Determine the logical default template type based on attendance status
+    let defaultType: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom' = 'attendance';
+    
+    const todayRecord = attendance.find(a => a.studentId === student.id && a.date === selectedDate);
+    if (todayRecord?.status === 'absent') {
+      defaultType = 'absence';
+    } else if (todayRecord?.checkOutTime) {
+      defaultType = 'checkout';
+    } else if (todayRecord?.status === 'late' || todayRecord?.status === 'present') {
+      defaultType = 'attendance';
+    }
+
+    // Load templates
+    const templates = dbEngine.getTemplates();
+    const tpl = templates.find(t => t.type === defaultType) || templates.find(t => t.type === 'custom') || { text: 'السلام عليكم ورحمة الله وبركاته' };
+    
+    const formattedText = formatNotificationTemplate(tpl.text, student, todayRecord);
+
+    setNotificationModal({
+      isOpen: true,
+      student,
+      templateType: defaultType,
+      messageText: formattedText
+    });
+  };
+
+  const handleTemplateTypeChange = (type: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom') => {
+    if (!notificationModal.student) return;
+    
+    const templates = dbEngine.getTemplates();
+    const tpl = templates.find(t => t.type === type) || { text: '' };
+    const todayRecord = attendance.find(a => a.studentId === notificationModal.student!.id && a.date === selectedDate);
+    
+    const formattedText = formatNotificationTemplate(tpl.text, notificationModal.student, todayRecord);
+    
+    setNotificationModal(prev => ({
+      ...prev,
+      templateType: type,
+      messageText: formattedText
+    }));
+  };
+
+  const handleSendWhatsAppNotification = () => {
+    if (!notificationModal.student) return;
+    
+    let cleanPhone = notificationModal.student.parentPhone.replace(/\D/g, '');
+    if (cleanPhone.startsWith('01')) {
+      cleanPhone = `20${cleanPhone}`; // Egypt country code
+    }
+
+    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(notificationModal.messageText)}`;
+    window.open(waUrl, '_blank');
+    
+    setNotificationModal(prev => ({ ...prev, isOpen: false }));
+  };
   
   // Custom QR Scan Overlay state
   const [scanResult, setScanResult] = useState<{
@@ -388,12 +493,13 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                   <th className="py-3 px-5">توقيت الرصد الرقمي</th>
                   <th className="py-3 px-5">الحالة المالية</th>
                   <th className="py-3 px-5 text-center">رصد الحضور الفوري واليدوي</th>
+                  <th className="py-3 px-5 text-center">الإشعارات والتواصل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredGroupStudents.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center py-12 text-slate-400">
+                    <td colSpan={6} className="text-center py-12 text-slate-400">
                       لا يوجد متعلمين مسجلي المجموعات متطابقين.
                     </td>
                   </tr>
@@ -487,6 +593,17 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                               مستأذن
                             </button>
                           </div>
+                        </td>
+                        <td className="py-3.5 px-5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenNotificationModal(s)}
+                            className="p-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 rounded-lg inline-flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs hover:shadow-sm"
+                            title="إرسال إشعار ولي الأمر"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5 text-emerald-650" />
+                            <span className="text-[10px] font-bold">إرسال إشعار</span>
+                          </button>
                         </td>
                       </tr>
                     );
@@ -608,6 +725,91 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
             >
               الرجوع والمحاولة مرة أخرى
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* UNIVERSAL WHATSAPP NOTIFICATION MODAL */}
+      {notificationModal.isOpen && notificationModal.student && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-center justify-center p-4 text-right">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 border border-slate-200">
+            <button 
+              onClick={() => setNotificationModal(prev => ({ ...prev, isOpen: false, student: null }))}
+              className="absolute left-4 top-4 p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 rounded-lg cursor-pointer transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="space-y-1 pb-3 border-b border-slate-100">
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2 justify-end">
+                <Sparkles className="w-5 h-5 text-emerald-600 animate-pulse" />
+                إرسال إشعار ولي الأمر الذكي (WhatsApp)
+              </h3>
+              <p className="text-slate-500 text-[11px]">
+                إرسال إشعارات مخصصة أو عامة ببيانات الطالب: <strong className="text-slate-800">{notificationModal.student.name}</strong>
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5 text-right">
+                <label className="text-xs font-bold text-slate-600 block">اختر قالب التنبيه المطلوب</label>
+                <select
+                  value={notificationModal.templateType}
+                  onChange={(e) => handleTemplateTypeChange(e.target.value as any)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl text-xs font-bold outline-none transition cursor-pointer"
+                >
+                  <option value="attendance">✅ حضور الطالب اليوم</option>
+                  <option value="checkout">🚶‍♂️ انصراف وخروج الطالب</option>
+                  <option value="absence">⚠️ غياب الطالب عن الحصة</option>
+                  <option value="payment_reminder">🧾 تذكير بالمصروفات الشهرية</option>
+                  <option value="announcement">📢 إعلان عام للمجموعة</option>
+                  <option value="custom">✍️ إشعار مخصص حر (مخصوص)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5 text-right">
+                <label className="text-xs font-bold text-slate-600 block">رقم هاتف المستلم (ولي الأمر)</label>
+                <input
+                  type="text"
+                  readOnly
+                  value={notificationModal.student.parentPhone}
+                  className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-mono font-bold outline-none text-left cursor-not-allowed"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5 text-right">
+              <label className="text-xs font-bold text-slate-600 block">محتوى رسالة الـ WhatsApp التنبيهية</label>
+              <textarea
+                rows={5}
+                value={notificationModal.messageText}
+                onChange={(e) => setNotificationModal(prev => ({ ...prev, messageText: e.target.value }))}
+                className="w-full p-3.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl text-xs outline-none transition text-right leading-relaxed font-sans"
+              />
+            </div>
+
+            <div className="bg-emerald-50/50 border border-emerald-100 p-3 rounded-xl text-[10.5px] leading-relaxed flex items-start gap-2 text-emerald-900 font-medium">
+              <Info className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+              <div>
+                تلقائياً، يتم ملء المتغيرات بسجلات الطالب مثل الاسم والمجموعة والتاريخ والوقت لتسهيل صياغة الإشعار قبل إرساله.
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={handleSendWhatsAppNotification}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Send className="w-4 h-4" />
+                توجيه وإرسال عبر WhatsApp
+              </button>
+              <button
+                onClick={() => setNotificationModal(prev => ({ ...prev, isOpen: false, student: null }))}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء وإغلاق
+              </button>
+            </div>
           </div>
         </div>
       )}

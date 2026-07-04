@@ -290,9 +290,9 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
                 onChange={(e) => setExamForm({ ...examForm, grade: e.target.value as GradeType })}
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-404 rounded-lg text-xs text-right outline-none transition-all"
               >
-                <option value="الرابع الابتدائي">الصف الرابع الابتدائي</option>
-                <option value="الخامس الابتدائي">الصف الخامس الابتدائي</option>
-                <option value="السادس الابتدائي">الصف السادس الابتدائي</option>
+                <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
                 <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
                 <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
                 <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>

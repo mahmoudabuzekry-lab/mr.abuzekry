@@ -3,10 +3,61 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Group, GradeType } from '../types';
 import { dbEngine } from '../db';
 import { Plus, Users, Calendar, Clock, MapPin, Trash2, Edit2, ShieldAlert, CheckCircle } from 'lucide-react';
+
+// Scheduler Helpers
+const parseSchedule = (dayStr: string, timeStr: string): { day: string; time: string }[] => {
+  if (!dayStr) return [{ day: 'السبت', time: '04:00 م' }];
+
+  // 1. Check if time has multiple different times separated by '|'
+  if (timeStr && timeStr.includes('|')) {
+    const segments = timeStr.split('|');
+    const schedule: { day: string; time: string }[] = [];
+    
+    for (const seg of segments) {
+      const parts = seg.split(':');
+      if (parts.length >= 2) {
+        const day = parts[0].trim();
+        const time = parts.slice(1).join(':').trim();
+        schedule.push({ day, time });
+      }
+    }
+    if (schedule.length > 0) return schedule;
+  }
+
+  // 2. Otherwise, parse day string into individual days, and apply the single timeStr to all of them
+  const days = dayStr
+    .split(/ و |,|،|and/)
+    .map(d => d.trim())
+    .filter(Boolean);
+
+  if (days.length > 0) {
+    return days.map(day => ({
+      day,
+      time: timeStr || '04:00 م'
+    }));
+  }
+
+  return [{ day: dayStr, time: timeStr || '04:00 م' }];
+};
+
+const compileSchedule = (schedule: { day: string; time: string }[]) => {
+  const days = schedule.map(s => s.day).join(' و ');
+  
+  const firstTime = schedule[0]?.time || '';
+  const allSame = schedule.every(s => s.time === firstTime);
+  
+  let compiledTime = '';
+  if (allSame) {
+    compiledTime = firstTime;
+  } else {
+    compiledTime = schedule.map(s => `${s.day}: ${s.time}`).join(' | ');
+  }
+  return { day: days, time: compiledTime };
+};
 
 interface GroupsManagerProps {
   groups: Group[];
@@ -22,21 +73,35 @@ export default function GroupsManager({ groups, onRefresh }: GroupsManagerProps)
   const [groupForm, setGroupForm] = useState({
     name: '',
     grade: 'الصف الثالث الإعدادي' as GradeType,
-    day: 'السبت والثلاثاء',
-    time: '04:00 م',
     maxCapacity: 25,
     location: 'السنتر الرئيسي'
   });
 
+  const [createSchedule, setCreateSchedule] = useState<{ day: string; time: string }[]>([
+    { day: 'السبت', time: '04:00 م' }
+  ]);
+
+  const [editSchedule, setEditSchedule] = useState<{ day: string; time: string }[]>([]);
+
+  useEffect(() => {
+    if (editingGroup) {
+      setEditSchedule(parseSchedule(editingGroup.day, editingGroup.time));
+    } else {
+      setEditSchedule([]);
+    }
+  }, [editingGroup]);
+
   const handleCreateGroup = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!groupForm.name.trim()) return;
+    if (!groupForm.name.trim() || createSchedule.length === 0) return;
+
+    const { day, time } = compileSchedule(createSchedule);
 
     dbEngine.addGroup({
       name: groupForm.name,
       grade: groupForm.grade,
-      day: groupForm.day,
-      time: groupForm.time,
+      day,
+      time,
       maxCapacity: Number(groupForm.maxCapacity),
       location: groupForm.location
     });
@@ -45,20 +110,27 @@ export default function GroupsManager({ groups, onRefresh }: GroupsManagerProps)
     setGroupForm({
       name: '',
       grade: 'الصف الثالث الإعدادي',
-      day: 'السبت والثلاثاء',
-      time: '04:00 م',
       maxCapacity: 25,
       location: 'السنتر الرئيسي'
     });
+    setCreateSchedule([
+      { day: 'السبت', time: '04:00 م' }
+    ]);
     setShowAddForm(false);
     onRefresh();
   };
 
   const handleUpdateGroup = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingGroup) return;
+    if (!editingGroup || editSchedule.length === 0) return;
 
-    dbEngine.updateGroup(editingGroup);
+    const { day, time } = compileSchedule(editSchedule);
+
+    dbEngine.updateGroup({
+      ...editingGroup,
+      day,
+      time
+    });
     setEditingGroup(null);
     onRefresh();
   };
@@ -99,7 +171,7 @@ export default function GroupsManager({ groups, onRefresh }: GroupsManagerProps)
             <span className="text-[10px] bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-0.5 rounded font-bold">بناء هيكل مجموعة</span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {/* Name */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">اسم المجموعة (أو الوصف)</label>
@@ -121,39 +193,13 @@ export default function GroupsManager({ groups, onRefresh }: GroupsManagerProps)
                 onChange={(e) => setGroupForm({ ...groupForm, grade: e.target.value as GradeType })}
                 className="w-full px-2 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none"
               >
-                <option value="الرابع الابتدائي">الصف الرابع الابتدائي</option>
-                <option value="الخامس الابتدائي">الصف الخامس الابتدائي</option>
-                <option value="السادس الابتدائي">الصف السادس الابتدائي</option>
+                <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
                 <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
                 <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
                 <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
               </select>
-            </div>
-
-            {/* Days */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">يوم الحضور الأسبوعي</label>
-              <input
-                type="text"
-                required
-                value={groupForm.day}
-                onChange={(e) => setGroupForm({ ...groupForm, day: e.target.value })}
-                placeholder="مثال: السبت والأربعاء"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none transition"
-              />
-            </div>
-
-            {/* Timings */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">موعد الوقت والبداية</label>
-              <input
-                type="text"
-                required
-                value={groupForm.time}
-                onChange={(e) => setGroupForm({ ...groupForm, time: e.target.value })}
-                placeholder="مثال: 04:00 مساءً"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none transition"
-              />
             </div>
 
             {/* Max Capacity */}
@@ -181,6 +227,78 @@ export default function GroupsManager({ groups, onRefresh }: GroupsManagerProps)
                 placeholder="مثال: سنتر المعلمين القاعة رقم 1"
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none"
               />
+            </div>
+          </div>
+
+          {/* Schedule Builder */}
+          <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-3">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-slate-500" />
+                مواعيد الحضور الأسبوعية (يمكنك تحديد موعد مختلف لكل يوم)
+              </span>
+              <button
+                type="button"
+                onClick={() => setCreateSchedule([...createSchedule, { day: 'الأحد', time: '04:00 م' }])}
+                className="px-2.5 py-1 bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                إضافة يوم حضور آخر
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {createSchedule.map((entry, index) => (
+                <div key={index} className="flex gap-2 items-center bg-white p-3 rounded-lg border border-slate-200 animate-in fade-in duration-100">
+                  <div className="flex-1 text-right">
+                    <label className="block text-[10px] text-slate-500 mb-1">اليوم</label>
+                    <select
+                      value={entry.day}
+                      onChange={(e) => {
+                        const newSchedule = [...createSchedule];
+                        newSchedule[index].day = e.target.value;
+                        setCreateSchedule(newSchedule);
+                      }}
+                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 focus:border-slate-400 rounded-md text-xs outline-none text-right"
+                    >
+                      <option value="السبت">السبت</option>
+                      <option value="الأحد">الأحد</option>
+                      <option value="الاثنين">الاثنين</option>
+                      <option value="الثلاثاء">الثلاثاء</option>
+                      <option value="الأربعاء">الأربعاء</option>
+                      <option value="الخميس">الخميس</option>
+                      <option value="الجمعة">الجمعة</option>
+                    </select>
+                  </div>
+                  <div className="flex-1 text-right">
+                    <label className="block text-[10px] text-slate-500 mb-1">الموعد (مثال: 04:00 م)</label>
+                    <input
+                      type="text"
+                      required
+                      value={entry.time}
+                      onChange={(e) => {
+                        const newSchedule = [...createSchedule];
+                        newSchedule[index].time = e.target.value;
+                        setCreateSchedule(newSchedule);
+                      }}
+                      placeholder="04:00 م"
+                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 focus:border-slate-400 rounded-md text-xs text-right outline-none font-mono"
+                    />
+                  </div>
+                  {createSchedule.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreateSchedule(createSchedule.filter((_, i) => i !== index));
+                      }}
+                      className="mt-4 p-1.5 text-red-500 hover:bg-red-50 rounded-md transition cursor-pointer"
+                      title="حذف هذا الموعد"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -317,37 +435,86 @@ export default function GroupsManager({ groups, onRefresh }: GroupsManagerProps)
               </div>
 
               <div>
-                <label className="block text-slate-700 mb-1.5">أيام الحضور (مثال: الأحد والثلاثاء)</label>
+                <label className="block text-slate-700 mb-1.5">السعة القصوى (المرجوة بالعدد)</label>
                 <input
-                  type="text"
+                  type="number"
+                  min={5}
                   required
-                  value={editingGroup.day}
-                  onChange={(e) => setEditingGroup({ ...editingGroup, day: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none"
+                  value={editingGroup.maxCapacity}
+                  onChange={(e) => setEditingGroup({ ...editingGroup, maxCapacity: Number(e.target.value) })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right font-mono outline-none"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-700 mb-1.5">موعد الحصة اليومي</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingGroup.time}
-                    onChange={(e) => setEditingGroup({ ...editingGroup, time: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-405 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right font-mono outline-none"
-                  />
+              {/* Edit Schedule Builder */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-750 flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-slate-500" />
+                    جدول مواعيد الحضور الأسبوعية (موعد مخصص لكل يوم)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEditSchedule([...editSchedule, { day: 'الأحد', time: '04:00 م' }])}
+                    className="px-2.5 py-1 bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    إضافة يوم حضور آخر
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-slate-700 mb-1.5">السعة القصوى (المرجوة بالعدد)</label>
-                  <input
-                    type="number"
-                    min={5}
-                    required
-                    value={editingGroup.maxCapacity}
-                    onChange={(e) => setEditingGroup({ ...editingGroup, maxCapacity: Number(e.target.value) })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right font-mono outline-none"
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {editSchedule.map((entry, index) => (
+                    <div key={index} className="flex gap-2 items-center bg-white p-3 rounded-lg border border-slate-200 animate-in fade-in duration-100">
+                      <div className="flex-1 text-right">
+                        <label className="block text-[10px] text-slate-500 mb-1">اليوم</label>
+                        <select
+                          value={entry.day}
+                          onChange={(e) => {
+                            const newSchedule = [...editSchedule];
+                            newSchedule[index].day = e.target.value;
+                            setEditSchedule(newSchedule);
+                          }}
+                          className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 focus:border-slate-400 rounded-md text-xs outline-none text-right"
+                        >
+                          <option value="السبت">السبت</option>
+                          <option value="الأحد">الأحد</option>
+                          <option value="الاثنين">الاثنين</option>
+                          <option value="الثلاثاء">الثلاثاء</option>
+                          <option value="الأربعاء">الأربعاء</option>
+                          <option value="الخميس">الخميس</option>
+                          <option value="الجمعة">الجمعة</option>
+                        </select>
+                      </div>
+                      <div className="flex-1 text-right">
+                        <label className="block text-[10px] text-slate-500 mb-1">الموعد (مثال: 04:00 م)</label>
+                        <input
+                          type="text"
+                          required
+                          value={entry.time}
+                          onChange={(e) => {
+                            const newSchedule = [...editSchedule];
+                            newSchedule[index].time = e.target.value;
+                            setEditSchedule(newSchedule);
+                          }}
+                          placeholder="04:00 م"
+                          className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 focus:border-slate-400 rounded-md text-xs text-right outline-none font-mono"
+                        />
+                      </div>
+                      {editSchedule.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditSchedule(editSchedule.filter((_, i) => i !== index));
+                          }}
+                          className="mt-4 p-1.5 text-red-500 hover:bg-red-50 rounded-md transition cursor-pointer"
+                          title="حذف هذا الموعد"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 
