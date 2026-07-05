@@ -736,6 +736,16 @@ class LocalDatabase {
     this.setAttendance(list);
   }
 
+  public deleteAttendance(id: string, studentId?: string, date?: string): void {
+    const list = this.getAttendance().filter(a => {
+      if (a.id === id) return false;
+      if (studentId && date && a.studentId === studentId && a.date === date) return false;
+      if (a.studentId && a.date && `${a.studentId}_${a.date}` === id) return false;
+      return true;
+    });
+    this.setAttendance(list);
+  }
+
   public addExam(examData: Omit<Exam, 'id'>): Exam {
     const exams = this.getExams();
     let uniqueId = `e_${Date.now()}`;

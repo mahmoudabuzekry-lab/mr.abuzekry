@@ -60,6 +60,7 @@ export default function WhatsAppSender({ templates, onRefresh }: WhatsAppSenderP
 
   // Copy success indicator
   const [copiedTemplateId, setCopiedTemplateId] = useState<string | null>(null);
+  const [confirmDeleteTemplateId, setConfirmDeleteTemplateId] = useState<string | null>(null);
 
   const triggerToast = (msg: string) => {
     setSuccessMsg(msg);
@@ -121,13 +122,11 @@ export default function WhatsAppSender({ templates, onRefresh }: WhatsAppSenderP
   };
 
   const handleDelete = (id: string) => {
-    if (confirm(`هل أنت متأكد من رغبتك في حذف قالب "${templates.find(t => t.id === id)?.title}" نهائياً؟`)) {
-      const list = dbEngine.getTemplates();
-      const updated = list.filter(t => t.id !== id);
-      dbEngine.setTemplates(updated);
-      triggerToast('تم حذف القالب المختار بنجاح!');
-      onRefresh();
-    }
+    const list = dbEngine.getTemplates();
+    const updated = list.filter(t => t.id !== id);
+    dbEngine.setTemplates(updated);
+    triggerToast('تم حذف القالب المختار بنجاح!');
+    onRefresh();
   };
 
   const handleResetToDefaults = () => {
@@ -401,13 +400,34 @@ export default function WhatsAppSender({ templates, onRefresh }: WhatsAppSenderP
                       >
                         تعديل
                       </button>
-                      <button
-                        onClick={() => handleDelete(tpl.id)}
-                        className="p-1.5 bg-red-50 hover:bg-red-100 text-red-650 border border-red-100 rounded-lg transition cursor-pointer"
-                        title="حذف القالب"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {confirmDeleteTemplateId === tpl.id ? (
+                        <div className="flex items-center gap-1 bg-red-50 border border-red-200 p-1 rounded-lg">
+                          <span className="text-[10px] text-red-700 font-bold px-1">حذف؟</span>
+                          <button
+                            onClick={() => {
+                              handleDelete(tpl.id);
+                              setConfirmDeleteTemplateId(null);
+                            }}
+                            className="px-1.5 py-0.5 bg-red-600 text-white rounded font-bold text-[10px] hover:bg-red-700 cursor-pointer transition-colors"
+                          >
+                            نعم
+                          </button>
+                          <button
+                            onClick={() => setConfirmDeleteTemplateId(null)}
+                            className="px-1.5 py-0.5 bg-slate-200 text-slate-800 rounded font-bold text-[10px] hover:bg-slate-300 cursor-pointer transition-colors"
+                          >
+                            لا
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDeleteTemplateId(tpl.id)}
+                          className="p-1.5 bg-red-50 hover:bg-red-100 text-red-650 border border-red-100 rounded-lg transition cursor-pointer"
+                          title="حذف القالب"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="flex space-x-1.5 space-x-reverse">
