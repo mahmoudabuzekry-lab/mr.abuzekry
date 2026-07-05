@@ -1711,20 +1711,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 <div className="pt-2 flex flex-col sm:flex-row gap-2.5 w-full max-w-[320px]">
                   <button
                     onClick={() => {
-                      window.dispatchEvent(new Event('beforeprint'));
-                      setTimeout(() => {
-                        const printContents = document.getElementById('student-id-card')?.outerHTML;
-                        if (printContents) {
-                          const originalContents = document.body.innerHTML;
-                          document.body.innerHTML = `
-                            <div class="print-only flex items-center justify-center min-h-screen bg-white" style="direction: rtl !important;">
-                              ${printContents}
-                            </div>
-                          `;
-                          window.print();
-                          window.location.reload();
-                        }
-                      }, 100);
+                      window.print();
                     }}
                     className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer"
                   >
@@ -2054,7 +2041,15 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
               <div className="text-xs text-slate-500 font-bold font-sans">
                 عدد الطلاب المحددين للطباعة حالياً: <span className="text-indigo-600 font-black text-sm">{selectedForBatch.length}</span> طالب
               </div>
-              <div className="flex gap-2.5 w-full sm:w-auto">
+              <div className="flex flex-wrap gap-2.5 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handlePrintBatchA4}
+                  className="flex-1 sm:flex-initial px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span id="pdf-btn-text">تصدير وتحميل كصورة (JPG)</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -2082,132 +2077,254 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
         </div>
       )}
 
-      {/* PRINT SHEET WORKSPACE (HIDDEN ON SCREEN, ONLY VISIBLE IN PRINT MODE) */}
-      <div className="hidden print:block print-sheets-container bg-white" dir="rtl">
-        {printPages.map((pageStudents, pageIdx) => (
-          <div 
-            key={pageIdx} 
-            className="a4-print-page"
-            dir="rtl"
-            style={{ fontFamily: "'Cairo', 'Tahoma', 'Arial', sans-serif" }}
-          >
-            {/* Top tiny label helper */}
-            <div className="flex justify-between items-center text-[10px] text-slate-500 border-b border-slate-200 pb-1.5 mb-4 select-none" dir="rtl">
-              <span className="font-bold">نظام الأستاذ محمود أبوذكري لإدارة مادة العلوم - كروت الحضور والغياب الذكية</span>
-              <span className="font-bold font-mono">صفحة {pageIdx + 1} من {printPages.length}</span>
-            </div>
+      {/* PRINT SHEET WORKSPACE (PORTALED TO BODY FOR FLAWLESS PRINTING) */}
+      {createPortal(
+        <div 
+          id="batch-print-layout-raw"
+          className="print-sheets-container bg-white" 
+          dir="rtl"
+          style={{
+            position: 'absolute',
+            top: '-9999px',
+            left: '-9999px',
+            width: '794px',
+            opacity: 0,
+            pointerEvents: 'none'
+          }}
+        >
+          {printPages.map((pageStudents, pageIdx) => (
+            <div 
+              key={pageIdx} 
+              className="a4-print-page"
+              dir="rtl"
+              style={{ fontFamily: "'Cairo', 'Tahoma', 'Arial', sans-serif" }}
+            >
+              {/* Top tiny label helper */}
+              <div className="flex justify-between items-center text-[10px] text-slate-500 border-b border-slate-200 pb-1.5 mb-4 select-none" dir="rtl">
+                <span className="font-bold">نظام الأستاذ محمود أبوذكري لإدارة مادة العلوم - كروت الحضور والغياب الذكية</span>
+                <span className="font-bold font-mono">صفحة {pageIdx + 1} من {printPages.length}</span>
+              </div>
 
-            {/* Grid 2x4 Layout */}
-            <div className="grid grid-cols-2 gap-x-4 gap-y-5 justify-center items-start">
-              {pageStudents.map(student => {
-                const group = groups.find(g => g.id === student.groupId);
-                const groupName = group ? group.name : 'غير مخصص';
-                return (
-                  <div 
-                    key={student.id}
-                    className={`p-3 bg-white flex flex-row items-center justify-between relative overflow-hidden ${
-                      cutBorders 
-                        ? 'border-2 border-dashed border-slate-400' 
-                        : `border-4 ${themeConfig[cardTheme].cardBorder}`
-                    }`}
-                    dir="rtl"
-                    style={{ 
-                      width: '92mm', 
-                      height: '62mm', 
-                      boxSizing: 'border-box',
-                      pageBreakInside: 'avoid',
-                      breakInside: 'avoid',
-                      borderRadius: '16px',
-                      fontFamily: "'Cairo', 'Tahoma', 'Arial', sans-serif",
-                      textAlign: 'right'
-                    }}
-                  >
-                    {/* Background decor watermark specifically for printed sheet */}
-                    <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-blue-600/5 rounded-full select-none pointer-events-none"></div>
-
-                    {/* Left side: QR code column (35% width approx) */}
+              {/* Grid 2x4 Layout */}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-5 justify-center items-start">
+                {pageStudents.map(student => {
+                  const group = groups.find(g => g.id === student.groupId);
+                  const groupName = group ? group.name : 'غير مخصص';
+                  return (
                     <div 
-                      className={`flex flex-col items-center justify-center h-full pl-2 select-none border-l-2 border-dashed ${themeConfig[cardTheme].footerBorder}`}
-                      style={{ width: '31mm', boxSizing: 'border-box' }}
+                      key={student.id}
+                      className={`p-3 bg-white flex flex-row items-center justify-between relative overflow-hidden ${
+                        cutBorders 
+                          ? 'border-2 border-dashed border-slate-400' 
+                          : `border-4 ${themeConfig[cardTheme].cardBorder}`
+                      }`}
                       dir="rtl"
+                      style={{ 
+                        width: '92mm', 
+                        height: '62mm', 
+                        boxSizing: 'border-box',
+                        pageBreakInside: 'avoid',
+                        breakInside: 'avoid',
+                        borderRadius: '16px',
+                        fontFamily: "'Cairo', 'Tahoma', 'Arial', sans-serif",
+                        textAlign: 'right'
+                      }}
                     >
-                      <div className={`bg-white p-2 rounded-xl border-2 ${themeConfig[cardTheme].qrBorder} flex items-center justify-center shadow-sm`}>
-                        <QRCodeCanvas 
-                          value={student.id} 
-                          size={280} // 280px in internal buffer for extreme HD resolution
-                          bgColor={"#FFFFFF"}
-                          fgColor={"#000000"} // Pure black for perfect high-contrast printing & lightning-fast scanner reading
-                          level={"H"}
-                          includeMargin={false}
-                          style={{ width: '70px', height: '70px' }} // scaled down
-                        />
-                      </div>
-                      <div className={`text-[11px] font-mono font-black ${themeConfig[cardTheme].textMain} tracking-wider mt-1.5 px-2 py-0.5 ${themeConfig[cardTheme].badgeBg} border rounded`}>
-                        {student.code}
-                      </div>
-                    </div>
+                      {/* Background decor watermark specifically for printed sheet */}
+                      <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-blue-600/5 rounded-full select-none pointer-events-none"></div>
 
-                    {/* Right side: Student detail labels and info (65% width approx) */}
-                    <div 
-                      className="flex-1 pr-3 flex flex-col justify-between h-full text-right"
-                      dir="rtl"
-                      style={{ width: '51mm', boxSizing: 'border-box' }}
-                    >
-                      {/* Brand and Logo Header of Center */}
-                      <div className={`border-b-2 border-dashed ${themeConfig[cardTheme].footerBorder} pb-1 ${themeConfig[cardTheme].headerBg} -mr-3 -mt-3 p-2 rounded-tr-lg`}>
-                        <div className="flex items-center gap-1 justify-start">
-                          <span className="w-2 h-2 rounded-full bg-red-600"></span>
-                          <span className={`text-[10.5px] font-black ${themeConfig[cardTheme].textMain} tracking-tight`}>
-                            {cardTitle}
-                          </span>
+                      {/* Left side: QR code column (35% width approx) */}
+                      <div 
+                        className={`flex flex-col items-center justify-center h-full pl-2 select-none border-l-2 border-dashed ${themeConfig[cardTheme].footerBorder}`}
+                        style={{ width: '31mm', boxSizing: 'border-box' }}
+                        dir="rtl"
+                      >
+                        <div className={`bg-white p-2 rounded-xl border-2 ${themeConfig[cardTheme].qrBorder} flex items-center justify-center shadow-sm`}>
+                          <QRCodeCanvas 
+                            value={student.id} 
+                            size={280} 
+                            bgColor={"#FFFFFF"}
+                            fgColor={"#000000"} 
+                            level={"H"}
+                            includeMargin={false}
+                            style={{ width: '70px', height: '70px' }} 
+                          />
                         </div>
-                        <div className="text-[8.5px] text-slate-500 font-black -mt-0.5">
-                          {cardTeacher}
+                        <div className={`text-[11px] font-mono font-black ${themeConfig[cardTheme].textMain} tracking-wider mt-1.5 px-2 py-0.5 ${themeConfig[cardTheme].badgeBg} border rounded`}>
+                          {student.code}
                         </div>
                       </div>
 
-                      {/* Student name */}
-                      <div className="py-1">
-                        <div className={`text-[8.5px] ${themeConfig[cardTheme].labelColor} font-black leading-none`}>اسم الطالب المنتسب:</div>
-                        <div className="text-[12.5px] font-black text-black leading-tight mt-1 truncate max-w-[155px]" title={student.name}>
-                          {student.name}
+                      {/* Right side: Student detail labels and info (65% width approx) */}
+                      <div 
+                        className="flex-1 pr-3 flex flex-col justify-between h-full text-right"
+                        dir="rtl"
+                        style={{ width: '51mm', boxSizing: 'border-box' }}
+                      >
+                        {/* Brand and Logo Header of Center */}
+                        <div className={`border-b-2 border-dashed ${themeConfig[cardTheme].footerBorder} pb-1 ${themeConfig[cardTheme].headerBg} -mr-3 -mt-3 p-2 rounded-tr-lg`}>
+                          <div className="flex items-center gap-1 justify-start">
+                            <span className="w-2 h-2 rounded-full bg-red-600"></span>
+                            <span className={`text-[10.5px] font-black ${themeConfig[cardTheme].textMain} tracking-tight`}>
+                              {cardTitle}
+                            </span>
+                          </div>
+                          <div className="text-[8.5px] text-slate-500 font-black -mt-0.5">
+                            {cardTeacher}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Detail metadata list */}
-                      <div className="space-y-0.5 text-[9.5px]">
-                        <div className="text-black leading-none">
-                          <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>الصف:</span> <span className="text-black font-black">{student.grade}</span>
+                        {/* Student name */}
+                        <div className="py-1">
+                          <div className={`text-[8.5px] ${themeConfig[cardTheme].labelColor} font-black leading-none`}>اسم الطالب المنتسب:</div>
+                          <div className="text-[12.5px] font-black text-black leading-tight mt-1 truncate max-w-[155px]" title={student.name}>
+                            {student.name}
+                          </div>
                         </div>
-                        <div className="text-black leading-none truncate max-w-[155px]">
-                          <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>المجموعة:</span> <span className="text-black font-black">{groupName}</span>
-                        </div>
-                        {cardShowPhone && (
+
+                        {/* Detail metadata list */}
+                        <div className="space-y-0.5 text-[9.5px]">
                           <div className="text-black leading-none">
-                            <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>موبايل الوالد:</span> <span className={`font-mono font-black ${themeConfig[cardTheme].phoneColor}`}>{student.parentPhone}</span>
+                            <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>الصف:</span> <span className="text-black font-black">{student.grade}</span>
                           </div>
-                        )}
-                        {cardShowAddress && (
                           <div className="text-black leading-none truncate max-w-[155px]">
-                            <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>منطقة السنتر:</span> <span className="text-black font-bold">{student.address || 'أسيوط'}</span>
+                            <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>المجموعة:</span> <span className="text-black font-black">{groupName}</span>
                           </div>
-                        )}
+                          {cardShowPhone && (
+                            <div className="text-black leading-none">
+                              <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>موبايل الوالد:</span> <span className={`font-mono font-black ${themeConfig[cardTheme].phoneColor}`}>{student.parentPhone}</span>
+                            </div>
+                          )}
+                          {cardShowAddress && (
+                            <div className="text-black leading-none truncate max-w-[155px]">
+                              <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>منطقة السنتر:</span> <span className="text-black font-bold">{student.address || 'أسيوط'}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Warning line at card bottom */}
+                        <div className={`border-t border-dashed ${themeConfig[cardTheme].footerBorder} pt-1 text-[8px] ${themeConfig[cardTheme].footerText} text-center font-black`}>
+                          * {cardFooter} *
+                        </div>
                       </div>
 
-                      {/* Warning line at card bottom */}
-                      <div className={`border-t border-dashed ${themeConfig[cardTheme].footerBorder} pt-1 text-[8px] ${themeConfig[cardTheme].footerText} text-center font-black`}>
-                        * {cardFooter} *
+                    </div>
+                  );
+                })}
+              </div>
+              
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+
+      {/* SINGLE CARD PRINT CONTAINER (PORTALED TO BODY FOR FLAWLESS PRINTING) */}
+      {selectedStudentForCard && createPortal(
+        <div 
+          className="print-single-card-container" 
+          dir="rtl"
+          style={{
+            position: 'absolute',
+            top: '-9999px',
+            left: '-9999px',
+            opacity: 0,
+            pointerEvents: 'none'
+          }}
+        >
+          <div 
+            className={`bg-white p-5 rounded-3xl border-4 ${themeConfig[cardTheme].cardBorder} text-right relative shadow-none overflow-hidden space-y-3.5`}
+            dir="rtl"
+            style={{ 
+              width: '92mm', 
+              height: '62mm', 
+              boxSizing: 'border-box',
+              fontFamily: "'Cairo', 'Tahoma', 'Arial', sans-serif" 
+            }}
+          >
+            {/* Background decoration */}
+            <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-blue-600/5 rounded-full pointer-events-none"></div>
+
+            {/* Header */}
+            <div className={`border-b-2 border-dashed ${themeConfig[cardTheme].footerBorder} pb-2.5 flex justify-between items-center ${themeConfig[cardTheme].headerBg} -mx-5 -mt-5 p-3.5`}>
+              <div>
+                <h4 className={`font-black ${themeConfig[cardTheme].textMain} ${fontSizeConfig[cardFontSize].brandTitle} tracking-tight`}>
+                  {cardTitle}
+                </h4>
+                <p className={`font-black ${fontSizeConfig[cardFontSize].teacherName} ${themeConfig[cardTheme].footerText} mt-0.5`}>
+                  {cardTeacher}
+                </p>
+              </div>
+              <div className={`px-2.5 py-0.5 rounded-full ${fontSizeConfig[cardFontSize].codeText} font-mono font-black border ${themeConfig[cardTheme].badgeBg}`}>
+                {selectedStudentForCard.code}
+              </div>
+            </div>
+
+            {/* Student info */}
+            <div className="space-y-2.5 pt-1.5">
+              <div>
+                <div className={`${fontSizeConfig[cardFontSize].studentNameLabel} ${themeConfig[cardTheme].labelColor} font-black`}>اسم الطالب المنتسب:</div>
+                <div className={`font-black text-black ${fontSizeConfig[cardFontSize].studentNameVal} leading-tight mt-0.5 truncate max-w-[210px]`} title={selectedStudentForCard.name}>
+                  {selectedStudentForCard.name}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-0.5">
+                <div>
+                  <div className={`${fontSizeConfig[cardFontSize].detailsLabel} ${themeConfig[cardTheme].labelColor} font-black`}>الصف الملحق به:</div>
+                  <div className={`${fontSizeConfig[cardFontSize].detailsText} font-black text-black leading-tight mt-0.5`}>{selectedStudentForCard.grade}</div>
+                </div>
+                <div>
+                  <div className={`${fontSizeConfig[cardFontSize].detailsLabel} ${themeConfig[cardTheme].labelColor} font-black`}>اسم المجموعة:</div>
+                  <div className={`${fontSizeConfig[cardFontSize].detailsText} font-black text-black leading-tight mt-0.5 truncate max-w-[100px]`}>
+                    {groups.find(g => g.id === selectedStudentForCard.groupId)?.name || 'غير مخصص'}
+                  </div>
+                </div>
+              </div>
+
+              {(cardShowPhone || cardShowAddress) && (
+                <div className={`pt-2 border-t ${themeConfig[cardTheme].footerBorder} flex justify-between items-center gap-1`}>
+                  {cardShowPhone ? (
+                    <div>
+                      <div className={`${fontSizeConfig[cardFontSize].studentNameLabel} ${themeConfig[cardTheme].labelColor} font-black`}>موبايل ولي الأمر:</div>
+                      <div className={`${fontSizeConfig[cardFontSize].phoneText} font-mono font-black ${themeConfig[cardTheme].phoneColor} tracking-wider mt-0.5`}>
+                        {selectedStudentForCard.parentPhone}
                       </div>
                     </div>
-
-                  </div>
-                );
-              })}
+                  ) : <div />}
+                  {cardShowAddress ? (
+                    <div className="text-[9px] text-slate-500 text-left leading-relaxed">
+                      منطقة السنتر<br/>
+                      <span className="font-bold text-black">{selectedStudentForCard.address || 'أسيوط'}</span>
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
-            
+
+            {/* QR Code Container */}
+            <div className={`bg-white p-2.5 rounded-2xl border-2 ${themeConfig[cardTheme].qrBorder} flex items-center justify-center`}>
+              <div className="relative">
+                <QRCodeCanvas 
+                  value={selectedStudentForCard.id} 
+                  size={300}
+                  bgColor={"#FFFFFF"}
+                  fgColor={"#000000"}
+                  level={"H"}
+                  includeMargin={false}
+                  style={{ width: '84px', height: '84px' }}
+                />
+              </div>
+            </div>
+
+            {/* Footer text */}
+            <div className={`${fontSizeConfig[cardFontSize].footerText} ${themeConfig[cardTheme].footerText} text-center font-black pt-1 border-t border-dashed ${themeConfig[cardTheme].footerBorder}`}>
+              * {cardFooter} *
+            </div>
           </div>
-        ))}
-      </div>
+        </div>,
+        document.body
+      )}
 
       {/* DELETE STUDENT CONFIRMATION MODAL */}
       {deletingStudent && (

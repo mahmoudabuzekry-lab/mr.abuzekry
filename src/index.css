@@ -24,9 +24,32 @@
     color: black !important;
     direction: rtl !important;
   }
-  .no-print {
+  
+  /* Hide the entire React application and all screen elements */
+  #root, .no-print {
     display: none !important;
   }
+
+  /* Display the portalized print containers perfectly */
+  .print-sheets-container {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  .print-single-card-container {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-height: 100vh !important;
+    background-color: white !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
   .print-only {
     display: block !important;
   }
