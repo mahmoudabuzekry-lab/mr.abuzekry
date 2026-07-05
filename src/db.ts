@@ -357,6 +357,59 @@ class LocalDatabase {
     ]);
   }
 
+  private safeMerge(key: string, cloudItems: any[] | undefined, entityName: string): void {
+    const localItems = this.get<any[]>(key, []);
+    if (!cloudItems || !Array.isArray(cloudItems)) {
+      // Cloud has no data, but local has data -> self-heal by uploading local to cloud
+      if (localItems.length > 0 && this.isFirebaseEnabled()) {
+        console.log(`Cloud is empty for ${entityName}, healing cloud database...`);
+        syncEntityToFirebase(entityName as any, localItems).catch((e) => console.error("Self-healing sync failed:", e));
+      }
+      return;
+    }
+
+    if (localItems.length === 0) {
+      // Local has nothing, cloud has items, safe to overwrite local
+      this.set(key, cloudItems);
+      return;
+    }
+
+    // Both have data -> Merge by ID to prevent ANY data loss!
+    const merged = [...localItems];
+    let updated = false;
+
+    cloudItems.forEach(cloudItem => {
+      if (cloudItem && cloudItem.id) {
+        const idx = merged.findIndex(item => item.id === cloudItem.id);
+        if (idx === -1) {
+          merged.push(cloudItem);
+          updated = true;
+        } else {
+          // If cloud has changes, we merge them, but make sure not to lose local fields
+          const localStr = JSON.stringify(merged[idx]);
+          const cloudStr = JSON.stringify(cloudItem);
+          if (localStr !== cloudStr) {
+            merged[idx] = { ...merged[idx], ...cloudItem };
+            updated = true;
+          }
+        }
+      }
+    });
+
+    if (updated) {
+      this.set(key, merged);
+    }
+
+    // If local has items not in cloud, push them back to cloud to self-heal
+    const hasLocalOnlyItems = localItems.some(localItem => 
+      !cloudItems.some(cloudItem => cloudItem.id === localItem.id)
+    );
+    if (hasLocalOnlyItems && this.isFirebaseEnabled()) {
+      console.log(`Local has items for ${entityName} not in cloud, healing cloud...`);
+      syncEntityToFirebase(entityName as any, merged).catch((e) => console.error("Self-healing push failed:", e));
+    }
+  }
+
   public async syncAllFromFirebase(): Promise<boolean> {
     try {
       const [
@@ -385,24 +438,24 @@ class LocalDatabase {
 
       if (backup) {
         hasData = true;
-        if (backup.students) this.setStudentsDirect(backup.students);
-        if (backup.groups) this.setGroupsDirect(backup.groups);
-        if (backup.payments) this.setPaymentsDirect(backup.payments);
-        if (backup.attendance) this.setAttendanceDirect(backup.attendance);
-        if (backup.exams) this.setExamsDirect(backup.exams);
-        if (backup.examScores) this.setExamScoresDirect(backup.examScores);
-        if (backup.templates) this.setTemplatesDirect(backup.templates);
-        if (backup.prices) this.setPricesDirect(backup.prices);
+        if (backup.students) this.safeMerge(STORAGE_KEYS.STUDENTS, backup.students, 'students');
+        if (backup.groups) this.safeMerge(STORAGE_KEYS.GROUPS, backup.groups, 'groups');
+        if (backup.payments) this.safeMerge(STORAGE_KEYS.PAYMENTS, backup.payments, 'payments');
+        if (backup.attendance) this.safeMerge(STORAGE_KEYS.ATTENDANCE, backup.attendance, 'attendance');
+        if (backup.exams) this.safeMerge(STORAGE_KEYS.EXAMS, backup.exams, 'exams');
+        if (backup.examScores) this.safeMerge(STORAGE_KEYS.EXAM_SCORES, backup.examScores, 'examScores');
+        if (backup.templates) this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, backup.templates, 'templates');
+        if (backup.prices) this.safeMerge(STORAGE_KEYS.GRADE_PRICES, backup.prices, 'prices');
       }
 
-      if (cStudents && cStudents.items) { hasData = true; this.setStudentsDirect(cStudents.items); }
-      if (cGroups && cGroups.items) { hasData = true; this.setGroupsDirect(cGroups.items); }
-      if (cPayments && cPayments.items) { hasData = true; this.setPaymentsDirect(cPayments.items); }
-      if (cAttendance && cAttendance.items) { hasData = true; this.setAttendanceDirect(cAttendance.items); }
-      if (cExams && cExams.items) { hasData = true; this.setExamsDirect(cExams.items); }
-      if (cExamScores && cExamScores.items) { hasData = true; this.setExamScoresDirect(cExamScores.items); }
-      if (cTemplates && cTemplates.items) { hasData = true; this.setTemplatesDirect(cTemplates.items); }
-      if (cPrices && cPrices.items) { hasData = true; this.setPricesDirect(cPrices.items); }
+      if (cStudents && cStudents.items) { hasData = true; this.safeMerge(STORAGE_KEYS.STUDENTS, cStudents.items, 'students'); }
+      if (cGroups && cGroups.items) { hasData = true; this.safeMerge(STORAGE_KEYS.GROUPS, cGroups.items, 'groups'); }
+      if (cPayments && cPayments.items) { hasData = true; this.safeMerge(STORAGE_KEYS.PAYMENTS, cPayments.items, 'payments'); }
+      if (cAttendance && cAttendance.items) { hasData = true; this.safeMerge(STORAGE_KEYS.ATTENDANCE, cAttendance.items, 'attendance'); }
+      if (cExams && cExams.items) { hasData = true; this.safeMerge(STORAGE_KEYS.EXAMS, cExams.items, 'exams'); }
+      if (cExamScores && cExamScores.items) { hasData = true; this.safeMerge(STORAGE_KEYS.EXAM_SCORES, cExamScores.items, 'examScores'); }
+      if (cTemplates && cTemplates.items) { hasData = true; this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, cTemplates.items, 'templates'); }
+      if (cPrices && cPrices.items) { hasData = true; this.safeMerge(STORAGE_KEYS.GRADE_PRICES, cPrices.items, 'prices'); }
 
       if (hasData) {
         this.syncGroupCounts();

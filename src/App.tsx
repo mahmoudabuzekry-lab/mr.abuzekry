@@ -124,7 +124,7 @@ export default function App() {
       setAutoSyncMessage('جاري جلب أحدث البيانات من السحابة...');
 
       try {
-        const { testConnection, downloadBackupFromFirebase, fetchEntityFromFirebase } = await import('./firebase');
+        const { testConnection, fetchEntityFromFirebase } = await import('./firebase');
         const isOnline = await testConnection();
 
         if (!isOnline) {
@@ -138,134 +138,82 @@ export default function App() {
           return;
         }
 
-        const [
-          backup,
-          cStudents,
-          cGroups,
-          cPayments,
-          cAttendance,
-          cExams,
-          cExamScores,
-          cTemplates,
-          cPrices,
-          cAdminSettings
-        ] = await Promise.all([
-          downloadBackupFromFirebase().catch(() => null),
-          fetchEntityFromFirebase('students').catch(() => null),
-          fetchEntityFromFirebase('groups').catch(() => null),
-          fetchEntityFromFirebase('payments').catch(() => null),
-          fetchEntityFromFirebase('attendance').catch(() => null),
-          fetchEntityFromFirebase('exams').catch(() => null),
-          fetchEntityFromFirebase('examScores').catch(() => null),
-          fetchEntityFromFirebase('templates').catch(() => null),
-          fetchEntityFromFirebase('prices').catch(() => null),
-          fetchEntityFromFirebase('admin_settings').catch(() => null)
-        ]);
+        if (active) {
+          setAutoSyncState('syncing');
+          setAutoSyncMessage('✨ جاري تطبيق السجلات السحابية على جهازك...');
+        }
 
-        const hasAnyData = !!(backup || cStudents || cGroups || cPayments || cAttendance || cExams || cExamScores || cTemplates || cPrices || cAdminSettings);
+        // Fetch Admin Settings separately
+        const cAdminSettings = await fetchEntityFromFirebase('admin_settings').catch(() => null);
+        if (cAdminSettings && cAdminSettings.items && cAdminSettings.items.password) {
+          localStorage.setItem('abuzekry_admin_password', cAdminSettings.items.password);
+        }
 
-        if (hasAnyData) {
-          if (active) {
-            setAutoSyncState('syncing');
-            setAutoSyncMessage('✨ جاري تطبيق السجلات السحابية على جهازك...');
-          }
+        // Call the unified, safe syncAllFromFirebase method!
+        const hasData = await dbEngine.syncAllFromFirebase();
 
-          // Apply backup payload as the base configuration first
-          if (backup) {
-            if (backup.students) localStorage.setItem('abuzekry_students', JSON.stringify(backup.students));
-            if (backup.groups) localStorage.setItem('abuzekry_groups', JSON.stringify(backup.groups));
-            if (backup.payments) localStorage.setItem('abuzekry_payments', JSON.stringify(backup.payments));
-            if (backup.attendance) localStorage.setItem('abuzekry_attendance', JSON.stringify(backup.attendance));
-            if (backup.exams) localStorage.setItem('abuzekry_exams', JSON.stringify(backup.exams));
-            if (backup.examScores) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(backup.examScores));
-            if (backup.templates) localStorage.setItem('abuzekry_templates', JSON.stringify(backup.templates));
-            if (backup.prices) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(backup.prices));
-          }
-
-          // Apply separate collections which represent individual operations for 100% data freshness
-          if (cStudents && cStudents.items) localStorage.setItem('abuzekry_students', JSON.stringify(cStudents.items));
-          if (cGroups && cGroups.items) localStorage.setItem('abuzekry_groups', JSON.stringify(cGroups.items));
-          if (cPayments && cPayments.items) localStorage.setItem('abuzekry_payments', JSON.stringify(cPayments.items));
-          if (cAttendance && cAttendance.items) localStorage.setItem('abuzekry_attendance', JSON.stringify(cAttendance.items));
-          if (cExams && cExams.items) localStorage.setItem('abuzekry_exams', JSON.stringify(cExams.items));
-          if (cExamScores && cExamScores.items) localStorage.setItem('abuzekry_exam_scores', JSON.stringify(cExamScores.items));
-          if (cTemplates && cTemplates.items) localStorage.setItem('abuzekry_templates', JSON.stringify(cTemplates.items));
-          if (cPrices && cPrices.items) localStorage.setItem('abuzekry_grade_prices', JSON.stringify(cPrices.items));
-          
-          if (cAdminSettings && cAdminSettings.items && cAdminSettings.items.password) {
-            localStorage.setItem('abuzekry_admin_password', cAdminSettings.items.password);
-          }
-
-          dbEngine.init(); // Recalculate states & repair duplicates
+        if (hasData) {
           loadDatabase();  // Update React active view states
+        }
 
-          // Automatically pull and import any public self-registrations if teacher is active
-          if (userRole === 'teacher') {
-            try {
-              const { fetchPublicRegistrations, deletePublicRegistration } = await import('./firebase');
-              const publicRegs = await fetchPublicRegistrations();
-              if (publicRegs && publicRegs.length > 0) {
-                console.log(`Found ${publicRegs.length} new public registrations! Importing...`);
-                let currentStudents = dbEngine.getStudents();
-                let changed = false;
-                
-                for (const reg of publicRegs) {
-                  const alreadyExists = currentStudents.some(s => s.phone === reg.phone && s.name === reg.name);
-                  if (!alreadyExists) {
-                    const nextIndex = currentStudents.length + 1001;
-                    const code = `S-${nextIndex}`;
-                    const uniqueId = `s_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-                    
-                    const newStudent = {
-                      id: uniqueId,
-                      code,
-                      name: reg.name,
-                      phone: reg.phone,
-                      parentPhone: reg.parentPhone,
-                      grade: reg.grade,
-                      school: reg.school,
-                      address: reg.address,
-                      groupId: reg.groupId,
-                      exemptionType: reg.exemptionType || 'none',
-                      discountAmount: reg.discountAmount || 0,
-                      notes: reg.notes || 'تسجيل إلكتروني ذاتي بانتظار الاعتماد المالي',
-                      status: 'pending' as const,
-                      createdAt: reg.createdAt || new Date().toISOString()
-                    };
-                    currentStudents.push(newStudent);
-                    changed = true;
-                  }
-                  // Clean up the processed registration document in Firestore
-                  await deletePublicRegistration(reg._docId);
+        // Automatically pull and import any public self-registrations if teacher is active
+        if (userRole === 'teacher') {
+          try {
+            const { fetchPublicRegistrations, deletePublicRegistration } = await import('./firebase');
+            const publicRegs = await fetchPublicRegistrations();
+            if (publicRegs && publicRegs.length > 0) {
+              console.log(`Found ${publicRegs.length} new public registrations! Importing...`);
+              let currentStudents = dbEngine.getStudents();
+              let changed = false;
+              
+              for (const reg of publicRegs) {
+                const alreadyExists = currentStudents.some(s => s.phone === reg.phone && s.name === reg.name);
+                if (!alreadyExists) {
+                  const nextIndex = currentStudents.length + 1001;
+                  const code = `S-${nextIndex}`;
+                  const uniqueId = `s_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                  
+                  const newStudent = {
+                    id: uniqueId,
+                    code,
+                    name: reg.name,
+                    phone: reg.phone,
+                    parentPhone: reg.parentPhone,
+                    grade: reg.grade,
+                    school: reg.school,
+                    address: reg.address,
+                    groupId: reg.groupId,
+                    exemptionType: reg.exemptionType || 'none',
+                    discountAmount: reg.discountAmount || 0,
+                    notes: reg.notes || 'تسجيل إلكتروني ذاتي بانتظار الاعتماد المالي',
+                    status: 'pending' as const,
+                    createdAt: reg.createdAt || new Date().toISOString()
+                  };
+                  currentStudents.push(newStudent);
+                  changed = true;
                 }
-                
-                if (changed) {
-                  dbEngine.setStudents(currentStudents);
-                  loadDatabase();
-                }
+                // Clean up the processed registration document in Firestore
+                await deletePublicRegistration(reg._docId);
               }
-            } catch (regErr) {
-              console.warn("Failed to automatically import public registrations on startup:", regErr);
+              
+              if (changed) {
+                dbEngine.setStudents(currentStudents);
+                loadDatabase();
+              }
             }
+          } catch (regErr) {
+            console.error("Error importing registrations:", regErr);
           }
+        }
 
-          localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
+        localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
 
-          if (active) {
-            setAutoSyncState('synced');
-            setAutoSyncMessage('✅ تم استيراد السجلات وتحديث جهازك بنجاح!');
-            setTimeout(() => {
-              if (active) setAutoSyncMessage('');
-            }, 4000);
-          }
-        } else {
-          if (active) {
-            setAutoSyncState('idle');
-            setAutoSyncMessage('لا توجد نسخة احتياطية سابقة على السحابة.');
-            setTimeout(() => {
-              if (active) setAutoSyncMessage('');
-            }, 4000);
-          }
+        if (active) {
+          setAutoSyncState('synced');
+          setAutoSyncMessage('✅ تم استيراد السجلات وتحديث جهازك بنجاح!');
+          setTimeout(() => {
+            if (active) setAutoSyncMessage('');
+          }, 4000);
         }
       } catch (err: any) {
         console.warn("Pulling cloud data failed on startup/login:", err);

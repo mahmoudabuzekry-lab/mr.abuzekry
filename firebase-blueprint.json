@@ -25,6 +25,25 @@
         "items": { "type": "array" },
         "updatedAt": { "type": "string" }
       }
+    },
+    "PublicRegistration": {
+      "title": "PublicRegistration",
+      "description": "Information provided by self-registering students pending teacher approval",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "parentPhone": { "type": "string" },
+        "grade": { "type": "string" },
+        "school": { "type": "string" },
+        "address": { "type": "string" },
+        "groupId": { "type": "string" },
+        "exemptionType": { "type": "string" },
+        "discountAmount": { "type": "number" },
+        "notes": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -35,6 +54,10 @@
     "abuzekry_realtime/{entityKey}": {
       "schema": "RealtimeCollection",
       "description": "Real-time list collections updated on-the-fly"
+    },
+    "abuzekry_public_registrations/{docId}": {
+      "schema": "PublicRegistration",
+      "description": "Public student registration records"
     }
   }
 }
