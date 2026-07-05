@@ -141,10 +141,16 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 // Validate Connection to Firestore
 export async function testConnection(): Promise<boolean> {
   try {
-    await withTimeout(getDocFromServer(doc(db, 'test', 'connection')), 2500, "اختبار الاتصال");
+    // We use a collection that we have permission to read (abuzekry_realtime) to avoid Permission Denied errors
+    await withTimeout(getDocFromServer(doc(db, 'abuzekry_realtime', 'connection_test')), 2500, "اختبار الاتصال");
     localStorage.setItem('abuzekry_firebase_offline_state', 'false');
     return true;
-  } catch (error) {
+  } catch (error: any) {
+    // If the error code is permission-denied or unauthenticated, it means we successfully reached the server (so we are online)
+    if (error && (error.code === 'permission-denied' || error.code === 'unauthenticated' || String(error).includes('permission'))) {
+      localStorage.setItem('abuzekry_firebase_offline_state', 'false');
+      return true;
+    }
     console.warn("Firebase testing failed:", error);
     localStorage.setItem('abuzekry_firebase_offline_state', 'true');
     return false;
