@@ -37,3 +37,18 @@
     margin: 10px !important;
   }
 }
+
+/* Styling for A4 print pages used in exporting cards as images */
+.a4-print-page {
+  width: 794px; /* 210mm at 96 DPI */
+  height: 1123px; /* 297mm at 96 DPI */
+  padding: 15mm 10mm;
+  box-sizing: border-box;
+  background-color: white !important;
+  position: relative;
+  page-break-after: always;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+

@@ -80,6 +80,9 @@ class LocalDatabase {
 
   public setTeacherActive(active: boolean): void {
     this.isTeacherActive = active;
+    if (active) {
+      this.sanitizeAndRepairDuplicates();
+    }
   }
 
   private get<T>(key: string, defaultValue: T): T {
@@ -168,8 +171,44 @@ class LocalDatabase {
       return student;
     });
 
-    if (hasChanges) {
-      this.set(STORAGE_KEYS.STUDENTS, sanitizedStudents);
+    // Ensure all students have a unique S-XXXX code
+    const seenCodes = new Set<string>();
+    let codeChanges = false;
+    const finalSanitizedStudents = sanitizedStudents.map((student) => {
+      let currentCode = student.code;
+      if (!currentCode || typeof currentCode !== 'string' || !currentCode.startsWith('S-') || seenCodes.has(currentCode)) {
+        // Find the next available unique code number
+        let maxCodeNumber = 1000;
+        // Check all existing students' codes
+        students.forEach(s => {
+          if (s.code && typeof s.code === 'string' && s.code.startsWith('S-')) {
+            const numPart = s.code.substring(2);
+            const parsed = parseInt(numPart, 10);
+            if (!isNaN(parsed) && parsed > maxCodeNumber) {
+              maxCodeNumber = parsed;
+            }
+          }
+        });
+        // Also check seenCodes to avoid duplicate within current mapping
+        seenCodes.forEach(code => {
+          if (code.startsWith('S-')) {
+            const numPart = code.substring(2);
+            const parsed = parseInt(numPart, 10);
+            if (!isNaN(parsed) && parsed > maxCodeNumber) {
+              maxCodeNumber = parsed;
+            }
+          }
+        });
+        
+        currentCode = `S-${maxCodeNumber + 1}`;
+        codeChanges = true;
+      }
+      seenCodes.add(currentCode);
+      return { ...student, code: currentCode };
+    });
+
+    if (hasChanges || codeChanges) {
+      this.setStudents(finalSanitizedStudents);
       
       if (repairs.length > 0) {
         // Repair Payments
@@ -184,7 +223,7 @@ class LocalDatabase {
           return p;
         });
         if (paymentsChanged) {
-          this.set(STORAGE_KEYS.PAYMENTS, updatedPayments);
+          this.setPayments(updatedPayments);
         }
 
         // Repair Attendance
@@ -200,7 +239,7 @@ class LocalDatabase {
           return a;
         });
         if (attendanceChanged) {
-          this.set(STORAGE_KEYS.ATTENDANCE, updatedAttendance);
+          this.setAttendance(updatedAttendance);
         }
 
         // Repair ExamScores
@@ -216,10 +255,9 @@ class LocalDatabase {
           return es;
         });
         if (examScoresChanged) {
-          this.set(STORAGE_KEYS.EXAM_SCORES, updatedExamScores);
+          this.setExamScores(updatedExamScores);
         }
       }
-      this.syncGroupCounts();
     }
 
     // Repair Grade values missing 'الصف' prefix
@@ -240,7 +278,7 @@ class LocalDatabase {
       return s;
     });
     if (studentsRepaired) {
-      this.set(STORAGE_KEYS.STUDENTS, updatedStudentsForGrade);
+      this.setStudents(updatedStudentsForGrade);
     }
 
     // 2. Groups grade repair
@@ -254,7 +292,7 @@ class LocalDatabase {
       return g;
     });
     if (groupsRepaired) {
-      this.set(STORAGE_KEYS.GROUPS, updatedGroupsForGrade);
+      this.setGroups(updatedGroupsForGrade);
     }
 
     // 3. Exams grade repair
@@ -268,7 +306,7 @@ class LocalDatabase {
       return e;
     });
     if (examsRepaired) {
-      this.set(STORAGE_KEYS.EXAMS, updatedExamsForGrade);
+      this.setExams(updatedExamsForGrade);
     }
 
     // 4. Payments grade repair
@@ -282,7 +320,7 @@ class LocalDatabase {
       return p;
     });
     if (paymentsRepaired) {
-      this.set(STORAGE_KEYS.PAYMENTS, updatedPaymentsForGrade);
+      this.setPayments(updatedPaymentsForGrade);
     }
   }
 
@@ -458,6 +496,7 @@ class LocalDatabase {
       if (cPrices && cPrices.items) { hasData = true; this.safeMerge(STORAGE_KEYS.GRADE_PRICES, cPrices.items, 'prices'); }
 
       if (hasData) {
+        this.sanitizeAndRepairDuplicates();
         this.syncGroupCounts();
         localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
         return true;
@@ -568,13 +607,26 @@ class LocalDatabase {
     }
   }
 
+  public generateNextStudentCode(students: Student[]): string {
+    let maxCodeNumber = 1000;
+    students.forEach(s => {
+      if (s.code && typeof s.code === 'string' && s.code.startsWith('S-')) {
+        const numPart = s.code.substring(2);
+        const parsed = parseInt(numPart, 10);
+        if (!isNaN(parsed) && parsed > maxCodeNumber) {
+          maxCodeNumber = parsed;
+        }
+      }
+    });
+    return `S-${maxCodeNumber + 1}`;
+  }
+
   // Business Logic operations helper
   public addStudent(studentData: Omit<Student, 'id' | 'code' | 'createdAt'>): Student {
     const students = this.getStudents();
     
-    // Generate sequential S code based on grade
-    const gradeIndex = students.length + 1001;
-    const code = `S-${gradeIndex}`;
+    // Generate sequential unique S code
+    const code = this.generateNextStudentCode(students);
     
     let uniqueId = `s_${Date.now()}`;
     let counter = 0;

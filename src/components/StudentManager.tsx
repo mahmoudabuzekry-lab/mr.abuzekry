@@ -12,8 +12,164 @@ import {
   Upload, Download, FileSpreadsheet, CheckCircle, AlertCircle, Save, ShieldAlert,
   MessageSquare, Sparkles, Send, Info
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
+import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
 import * as XLSX from 'xlsx';
+import { toJpeg } from 'html-to-image';
+
+export type CardThemeType = 'navy-red' | 'blue-solid' | 'red-solid' | 'black-solid' | 'blue-red' | 'black-red';
+export type CardFontSizeType = 'normal' | 'medium' | 'large' | 'xlarge';
+
+export const themeConfig = {
+  'navy-red': {
+    primary: '#1e3a8a',
+    accent: '#dc2626',
+    cardBorder: 'border-blue-900',
+    headerBg: 'bg-blue-50',
+    badgeBg: 'bg-blue-900 border-blue-850',
+    badgeText: 'text-white',
+    labelColor: 'text-blue-900',
+    valColor: 'text-black',
+    phoneColor: 'text-red-600',
+    footerText: 'text-red-600',
+    footerBorder: 'border-red-200',
+    qrBorder: 'border-blue-900',
+    tagColor: 'text-blue-900',
+    dotBg: 'bg-blue-600',
+    textMain: 'text-blue-800',
+  },
+  'blue-solid': {
+    primary: '#1d4ed8',
+    accent: '#1e40af',
+    cardBorder: 'border-blue-700',
+    headerBg: 'bg-blue-50/50',
+    badgeBg: 'bg-blue-700 border-blue-650',
+    badgeText: 'text-white',
+    labelColor: 'text-blue-800',
+    valColor: 'text-black',
+    phoneColor: 'text-blue-700',
+    footerText: 'text-blue-700',
+    footerBorder: 'border-blue-200',
+    qrBorder: 'border-blue-700',
+    tagColor: 'text-blue-800',
+    dotBg: 'bg-blue-600',
+    textMain: 'text-blue-700',
+  },
+  'red-solid': {
+    primary: '#b91c1c',
+    accent: '#991b1b',
+    cardBorder: 'border-red-700',
+    headerBg: 'bg-red-50/50',
+    badgeBg: 'bg-red-700 border-red-650',
+    badgeText: 'text-white',
+    labelColor: 'text-red-800',
+    valColor: 'text-black',
+    phoneColor: 'text-red-700',
+    footerText: 'text-red-700',
+    footerBorder: 'border-red-200',
+    qrBorder: 'border-red-700',
+    tagColor: 'text-red-800',
+    dotBg: 'bg-red-600',
+    textMain: 'text-red-750',
+  },
+  'black-solid': {
+    primary: '#000000',
+    accent: '#1f2937',
+    cardBorder: 'border-black border-4',
+    headerBg: 'bg-slate-100',
+    badgeBg: 'bg-black border-slate-850',
+    badgeText: 'text-white',
+    labelColor: 'text-slate-900',
+    valColor: 'text-black',
+    phoneColor: 'text-black',
+    footerText: 'text-black',
+    footerBorder: 'border-slate-300',
+    qrBorder: 'border-black',
+    tagColor: 'text-black',
+    dotBg: 'bg-black',
+    textMain: 'text-black',
+  },
+  'blue-red': {
+    primary: '#2563eb',
+    accent: '#dc2626',
+    cardBorder: 'border-blue-600',
+    headerBg: 'bg-blue-50/50',
+    badgeBg: 'bg-blue-600 border-blue-550',
+    badgeText: 'text-white',
+    labelColor: 'text-blue-800',
+    valColor: 'text-black',
+    phoneColor: 'text-red-600',
+    footerText: 'text-red-600',
+    footerBorder: 'border-red-200',
+    qrBorder: 'border-blue-600',
+    tagColor: 'text-blue-700',
+    dotBg: 'bg-blue-500',
+    textMain: 'text-blue-800',
+  },
+  'black-red': {
+    primary: '#000000',
+    accent: '#dc2626',
+    cardBorder: 'border-black',
+    headerBg: 'bg-slate-100',
+    badgeBg: 'bg-black border-slate-900',
+    badgeText: 'text-white',
+    labelColor: 'text-slate-900',
+    valColor: 'text-black',
+    phoneColor: 'text-red-600',
+    footerText: 'text-red-600',
+    footerBorder: 'border-red-200',
+    qrBorder: 'border-black',
+    tagColor: 'text-black',
+    dotBg: 'bg-red-600',
+    textMain: 'text-black',
+  },
+};
+
+export const fontSizeConfig = {
+  'normal': {
+    brandTitle: 'text-[9.5px]',
+    teacherName: 'text-[8.5px]',
+    studentNameLabel: 'text-[8.5px]',
+    studentNameVal: 'text-[12px]',
+    detailsLabel: 'text-[8.5px]',
+    detailsText: 'text-[9.5px]',
+    footerText: 'text-[8px]',
+    codeText: 'text-[10px]',
+    phoneText: 'text-[10.5px]',
+  },
+  'medium': {
+    brandTitle: 'text-[10.5px]',
+    teacherName: 'text-[9.5px]',
+    studentNameLabel: 'text-[9px]',
+    studentNameVal: 'text-[13px]',
+    detailsLabel: 'text-[9px]',
+    detailsText: 'text-[10px]',
+    footerText: 'text-[8.5px]',
+    codeText: 'text-[11px]',
+    phoneText: 'text-[11.5px]',
+  },
+  'large': {
+    brandTitle: 'text-[11.5px]',
+    teacherName: 'text-[10px]',
+    studentNameLabel: 'text-[9.5px]',
+    studentNameVal: 'text-[14px]',
+    detailsLabel: 'text-[9.5px]',
+    detailsText: 'text-[10.5px]',
+    footerText: 'text-[9px]',
+    codeText: 'text-[11.5px]',
+    phoneText: 'text-[12.5px]',
+  },
+  'xlarge': {
+    brandTitle: 'text-[13px]',
+    teacherName: 'text-[11.5px]',
+    studentNameLabel: 'text-[10.5px]',
+    studentNameVal: 'text-[15.5px]',
+    detailsLabel: 'text-[10.5px]',
+    detailsText: 'text-[11.5px]',
+    footerText: 'text-[10px]',
+    codeText: 'text-[12.5px]',
+    phoneText: 'text-[13.5px]',
+  },
+};
 
 interface StudentManagerProps {
   students: Student[];
@@ -44,6 +200,15 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
   const [batchFilterGrade, setBatchFilterGrade] = useState<string>('all');
   const [batchFilterGroup, setBatchFilterGroup] = useState<string>('all');
   const [cutBorders, setCutBorders] = useState(true);
+
+  // Card customization state
+  const [cardTitle, setCardTitle] = useState('مجموعات العلوم المتكاملة');
+  const [cardTeacher, setCardTeacher] = useState('الأستاذ محمود أبوذكري');
+  const [cardFooter, setCardFooter] = useState('يرجى إبراز الكارت عند الحضور والمغادرة');
+  const [cardTheme, setCardTheme] = useState<CardThemeType>('navy-red');
+  const [cardFontSize, setCardFontSize] = useState<CardFontSizeType>('large');
+  const [cardShowPhone, setCardShowPhone] = useState(true);
+  const [cardShowAddress, setCardShowAddress] = useState(true);
 
   // Form states
   const [newStudentForm, setNewStudentForm] = useState({
@@ -393,12 +558,6 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
       return;
     }
 
-    const html2canvas = (window as any).html2canvas;
-    if (!html2canvas) {
-      setErrorMessage('مكتبة تصدير الصور ما زالت قيد التحميل من السيرفر، يرجى المحاولة مرة أخرى بعد ثانيتين.');
-      return;
-    }
-
     // Disable button or update text while exporting
     const exportButtonText = document.getElementById('pdf-btn-text');
     const originalText = exportButtonText ? exportButtonText.innerText : 'تصدير وتحميل الكروت كصور (JPG)';
@@ -409,8 +568,8 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
     // Keep track of original style
     const originalStyle = rawElement.getAttribute('style') || '';
 
-    // Temporarily position it within the viewport underneath everything (so html2canvas can measure & render perfectly)
-    rawElement.setAttribute('style', 'position: fixed; left: 0; top: 0; width: 210mm; background-color: #ffffff; z-index: -9999; opacity: 1; pointer-events: none;');
+    // Temporarily position it within the viewport underneath everything (so html-to-image can measure & render perfectly)
+    rawElement.setAttribute('style', 'position: fixed; left: 0; top: 0; width: 794px; background-color: #ffffff; z-index: -9999; opacity: 1; pointer-events: none;');
 
     // Find all rendered printable card pages
     const pages = rawElement.querySelectorAll('.a4-print-page');
@@ -437,17 +596,22 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
 
       const pageEl = pages[currentIndex] as HTMLElement;
 
-      // Render the page element to a Canvas with high-density scale (2.5x) for crisp QR codes & text
-      html2canvas(pageEl, {
-        scale: 2.5,
-        useCORS: true,
-        logging: false,
-        allowTaint: true,
-        backgroundColor: '#ffffff'
-      }).then((canvas: HTMLCanvasElement) => {
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      // Render the page element to a high-quality JPEG using html-to-image for flawless Arabic text rendering
+      toJpeg(pageEl, {
+        quality: 0.98,
+        pixelRatio: 3, // 3x pixel density for super crisp text and QR codes
+        backgroundColor: '#ffffff',
+        width: 794,
+        height: 1123,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left',
+          width: '794px',
+          height: '1123px'
+        }
+      }).then((dataUrl: string) => {
         const link = document.createElement('a');
-        link.href = imgData;
+        link.href = dataUrl;
         link.download = `كروت_الطلاب_صفحة_${currentIndex + 1}.jpg`;
         document.body.appendChild(link);
         link.click();
@@ -457,7 +621,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
         currentIndex++;
         setTimeout(exportNextPage, 300);
       }).catch((err: any) => {
-        console.error('Error generating image page:', err);
+        console.error('Error generating image page with html-to-image:', err);
         currentIndex++;
         exportNextPage();
       });
@@ -1304,122 +1468,310 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
 
       {/* QR SMART CARD VISUAL MODAL */}
       {selectedStudentForCard && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/55 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 text-center space-y-6 shadow-2xl relative animate-in zoom-in-95 duration-150 no-print">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-4xl w-full p-6 md:p-8 space-y-6 shadow-2xl relative animate-in zoom-in-95 duration-150 no-print text-right">
+            {/* Close Button */}
             <button 
               onClick={() => setSelectedStudentForCard(null)}
-              className="absolute left-4 top-4 p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 transition-all"
+              className="absolute left-6 top-6 p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-500 transition-all cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
 
-            <div>
-              <span className="text-xs bg-sky-50 text-sky-700 px-3 py-1 rounded-full font-bold">هوية الطالب الرقمية</span>
-              <h3 className="text-xl font-extrabold text-slate-800 mt-2 font-sans">بطاقة العضوية الذكية QR</h3>
-              <p className="text-xs text-gray-400 mt-1">تستخدم لمسح الحضور الفوري والغياب وتتبع الحسابات في السنتر.</p>
+            {/* Title Block */}
+            <div className="border-b border-slate-100 pb-4">
+              <span className="text-xs bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full font-bold">هوية الطالب الرقمية الذكية</span>
+              <h3 className="text-xl font-extrabold text-slate-900 mt-2 font-sans">تخصيص وتصميم بطاقة العضوية QR</h3>
+              <p className="text-xs text-slate-500 mt-1">قم بتعديل النصوص، اختيار نظام الألوان وتكبير حجم الخطوط لضمان دقة ووضوح الطباعة التامة.</p>
             </div>
 
-            {/* CARD TARGETING EMBED FOR PRINT */}
-            <div 
-              id="student-id-card"
-              className="bg-radial from-sky-50 to-white print-card p-6 rounded-3xl border-2 border-sky-450 text-right relative shadow-xl overflow-hidden max-w-[340px] mx-auto space-y-4"
-            >
-              {/* Header */}
-              <div className="border-b-2 border-dashed border-sky-200 pb-3 flex justify-between items-center bg-sky-600/5 -mx-6 -mt-6 p-4">
+            {/* 2-Column workspace for customization + preview */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start" dir="rtl">
+              
+              {/* Customization controls: 5 cols */}
+              <div className="md:col-span-5 bg-slate-50 p-5 rounded-2xl border border-slate-200/60 space-y-4">
+                <h4 className="text-xs font-black text-slate-800 border-b border-slate-200 pb-2.5 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-indigo-600" />
+                  خيارات تصميم الكارت والنصوص
+                </h4>
+                
+                {/* Text Title */}
                 <div>
-                  <h4 className="font-extrabold text-[#0369a1] text-sm tracking-tight">إدارة مجموعات مادة العلوم</h4>
-                  <p className="text-[10px] text-gray-500 font-bold mt-0.5">الأستاذ محمود أبوذكري</p>
-                </div>
-                <div className="bg-sky-600 text-white px-2 py-0.5 rounded-full text-[9px] font-mono font-bold">
-                  {selectedStudentForCard.code}
-                </div>
-              </div>
-
-              {/* Student info */}
-              <div className="space-y-2 pt-2">
-                <div>
-                  <div className="text-[10px] text-gray-404 font-bold">اسم الطالب:</div>
-                  <div className="font-bold text-gray-800 text-base leading-tight">{selectedStudentForCard.name}</div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <div>
-                    <div className="text-[9px] text-gray-404 font-bold">الصف الملحق به:</div>
-                    <div className="text-xs font-semibold text-slate-700 leading-tight">{selectedStudentForCard.grade}</div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] text-gray-404 font-bold">اسم المجموعة:</div>
-                    <div className="text-xs font-bold text-sky-700 leading-tight">
-                      {groups.find(g => g.id === selectedStudentForCard.groupId)?.name || 'غير مخصص'}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-1.5 border-t border-slate-100 flex justify-between items-center gap-1">
-                  <div>
-                    <div className="text-[8px] text-gray-404 font-bold">موبايل ولي الأمر:</div>
-                    <div className="text-[11.5px] font-mono font-semibold text-slate-800 tracking-wider">
-                      {selectedStudentForCard.parentPhone}
-                    </div>
-                  </div>
-                  <div className="text-[8px] text-gray-404 text-left leading-relaxed">
-                    منطقة السنتر<br/>
-                    <span className="font-medium text-slate-600">{selectedStudentForCard.address || 'أسيوط'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* QR Code Container */}
-              <div className="bg-white p-3.5 rounded-2xl border border-sky-100 shadow-inner flex items-center justify-center">
-                <div className="relative">
-                  <QRCodeSVG 
-                    value={selectedStudentForCard.id} 
-                    size={110}
-                    bgColor={"#FFFFFF"}
-                    fgColor={"#0369a1"}
-                    level={"H"}
-                    includeMargin={false}
+                  <label className="block text-[10px] font-black text-slate-500 mb-1">العنوان الرئيسي للبطاقة</label>
+                  <input 
+                    type="text" 
+                    value={cardTitle} 
+                    onChange={(e) => setCardTitle(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-slate-400 rounded-xl text-xs outline-none font-bold"
                   />
-                  <div className="absolute top-[40%] left-[40%] bg-white w-5 h-5 rounded-md flex items-center justify-center shadow-xs">
-                    <span className="text-[7px] font-extrabold text-sky-700">Abz</span>
+                </div>
+
+                {/* Teacher name */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 mb-1">اسم المعلم / الجهة</label>
+                  <input 
+                    type="text" 
+                    value={cardTeacher} 
+                    onChange={(e) => setCardTeacher(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-slate-400 rounded-xl text-xs outline-none font-bold"
+                  />
+                </div>
+
+                {/* Footer text */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 mb-1">ملاحظة التذييل الإرشادية</label>
+                  <input 
+                    type="text" 
+                    value={cardFooter} 
+                    onChange={(e) => setCardFooter(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-slate-400 rounded-xl text-xs outline-none font-bold"
+                  />
+                </div>
+
+                {/* Theme Selector */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 mb-1.5">نظام الألوان للبطاقة</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { id: 'navy-red', label: 'كحلي وأحمر' },
+                      { id: 'blue-solid', label: 'أزرق ملكي' },
+                      { id: 'red-solid', label: 'أحمر ياقوتي' },
+                      { id: 'black-solid', label: 'أسود داكن' },
+                      { id: 'blue-red', label: 'أزرق وأحمر' },
+                      { id: 'black-red', label: 'أسود وأحمر' },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setCardTheme(item.id as CardThemeType)}
+                        className={`px-2 py-2 rounded-xl text-[10px] font-black border text-center transition cursor-pointer ${
+                          cardTheme === item.id 
+                            ? 'bg-slate-900 text-white border-slate-900 ring-2 ring-slate-200' 
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
                   </div>
+                </div>
+
+                {/* Font Size Selector */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 mb-1.5">حجم خطوط البطاقة (لضمان وضوح الطباعة)</label>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[
+                      { id: 'normal', label: 'عادي' },
+                      { id: 'medium', label: 'متوسط' },
+                      { id: 'large', label: 'كبير' },
+                      { id: 'xlarge', label: 'ضخم' },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setCardFontSize(item.id as CardFontSizeType)}
+                        className={`py-1.5 rounded-xl text-[10px] font-bold border text-center transition cursor-pointer ${
+                          cardFontSize === item.id 
+                            ? 'bg-indigo-600 text-white border-indigo-600' 
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Toggle Controls */}
+                <div className="space-y-2.5 pt-3 border-t border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="checkbox" 
+                      id="show-phone-toggle"
+                      checked={cardShowPhone}
+                      onChange={(e) => setCardShowPhone(e.target.checked)}
+                      className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                    />
+                    <label htmlFor="show-phone-toggle" className="text-xs font-bold text-slate-700 select-none cursor-pointer">إظهار هاتف ولي الأمر في الكارت</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="checkbox" 
+                      id="show-address-toggle"
+                      checked={cardShowAddress}
+                      onChange={(e) => setCardShowAddress(e.target.checked)}
+                      className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                    />
+                    <label htmlFor="show-address-toggle" className="text-xs font-bold text-slate-700 select-none cursor-pointer">إظهار العنوان / السنتر في الكارت</label>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Preview and Actions: 7 cols */}
+              <div className="md:col-span-7 flex flex-col items-center justify-center space-y-5">
+                <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-50/70 border border-indigo-150 px-3 py-1 rounded-full">
+                  معاينة حية وتفاعلية لتصميم الكارت الفوري
+                </span>
+
+                {/* Live Card Preview Box */}
+                <div className="border border-slate-200 p-6 bg-slate-50 rounded-2xl w-full flex justify-center shadow-inner select-none">
+                  <div 
+                    id="student-id-card"
+                    className={`bg-white p-5 rounded-3xl border-4 ${themeConfig[cardTheme].cardBorder} text-right relative shadow-lg overflow-hidden w-full max-w-[320px] space-y-3.5`}
+                    dir="rtl"
+                    style={{ fontFamily: "'Cairo', 'Tahoma', 'Arial', sans-serif" }}
+                  >
+                    {/* Background decoration */}
+                    <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-blue-600/5 rounded-full pointer-events-none"></div>
+
+                    {/* Header */}
+                    <div className={`border-b-2 border-dashed ${themeConfig[cardTheme].footerBorder} pb-2.5 flex justify-between items-center ${themeConfig[cardTheme].headerBg} -mx-5 -mt-5 p-3.5`}>
+                      <div>
+                        <h4 className={`font-black ${themeConfig[cardTheme].textMain} ${fontSizeConfig[cardFontSize].brandTitle} tracking-tight`}>
+                          {cardTitle}
+                        </h4>
+                        <p className={`font-black ${fontSizeConfig[cardFontSize].teacherName} ${themeConfig[cardTheme].footerText} mt-0.5`}>
+                          {cardTeacher}
+                        </p>
+                      </div>
+                      <div className={`px-2.5 py-0.5 rounded-full ${fontSizeConfig[cardFontSize].codeText} font-mono font-black border ${themeConfig[cardTheme].badgeBg}`}>
+                        {selectedStudentForCard.code}
+                      </div>
+                    </div>
+
+                    {/* Student info */}
+                    <div className="space-y-2.5 pt-1.5">
+                      <div>
+                        <div className={`${fontSizeConfig[cardFontSize].studentNameLabel} ${themeConfig[cardTheme].labelColor} font-black`}>اسم الطالب المنتسب:</div>
+                        <div className={`font-black text-black ${fontSizeConfig[cardFontSize].studentNameVal} leading-tight mt-0.5 truncate max-w-[210px]`} title={selectedStudentForCard.name}>
+                          {selectedStudentForCard.name}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-0.5">
+                        <div>
+                          <div className={`${fontSizeConfig[cardFontSize].detailsLabel} ${themeConfig[cardTheme].labelColor} font-black`}>الصف الملحق به:</div>
+                          <div className={`${fontSizeConfig[cardFontSize].detailsText} font-black text-black leading-tight mt-0.5`}>{selectedStudentForCard.grade}</div>
+                        </div>
+                        <div>
+                          <div className={`${fontSizeConfig[cardFontSize].detailsLabel} ${themeConfig[cardTheme].labelColor} font-black`}>اسم المجموعة:</div>
+                          <div className={`${fontSizeConfig[cardFontSize].detailsText} font-black text-black leading-tight mt-0.5 truncate max-w-[100px]`}>
+                            {groups.find(g => g.id === selectedStudentForCard.groupId)?.name || 'غير مخصص'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {(cardShowPhone || cardShowAddress) && (
+                        <div className={`pt-2 border-t ${themeConfig[cardTheme].footerBorder} flex justify-between items-center gap-1`}>
+                          {cardShowPhone ? (
+                            <div>
+                              <div className={`${fontSizeConfig[cardFontSize].studentNameLabel} ${themeConfig[cardTheme].labelColor} font-black`}>موبايل ولي الأمر:</div>
+                              <div className={`${fontSizeConfig[cardFontSize].phoneText} font-mono font-black ${themeConfig[cardTheme].phoneColor} tracking-wider mt-0.5`}>
+                                {selectedStudentForCard.parentPhone}
+                              </div>
+                            </div>
+                          ) : <div />}
+                          {cardShowAddress ? (
+                            <div className="text-[9px] text-slate-500 text-left leading-relaxed">
+                              منطقة السنتر<br/>
+                              <span className="font-bold text-black">{selectedStudentForCard.address || 'أسيوط'}</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* QR Code Container */}
+                    <div className={`bg-white p-2.5 rounded-2xl border-2 ${themeConfig[cardTheme].qrBorder} flex items-center justify-center`}>
+                      <div className="relative">
+                        <QRCodeCanvas 
+                          value={selectedStudentForCard.id} 
+                          size={300}
+                          bgColor={"#FFFFFF"}
+                          fgColor={"#000000"}
+                          level={"H"}
+                          includeMargin={false}
+                          style={{ width: '84px', height: '84px' }}
+                        />
+                        <div className={`absolute top-[40%] left-[40%] bg-white w-5 h-5 rounded-md flex items-center justify-center shadow-xs border ${themeConfig[cardTheme].cardBorder}`}>
+                          <span className={`text-[7.5px] font-black ${themeConfig[cardTheme].textMain}`}>Abz</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer text */}
+                    <div className={`${fontSizeConfig[cardFontSize].footerText} ${themeConfig[cardTheme].footerText} text-center font-black pt-1 border-t border-dashed ${themeConfig[cardTheme].footerBorder}`}>
+                      * {cardFooter} *
+                    </div>
+                  </div>
+                </div>
+
+                {/* Print/Download Actions */}
+                <div className="pt-2 flex flex-col sm:flex-row gap-2.5 w-full max-w-[320px]">
+                  <button
+                    onClick={() => {
+                      window.dispatchEvent(new Event('beforeprint'));
+                      setTimeout(() => {
+                        const printContents = document.getElementById('student-id-card')?.outerHTML;
+                        if (printContents) {
+                          const originalContents = document.body.innerHTML;
+                          document.body.innerHTML = `
+                            <div class="print-only flex items-center justify-center min-h-screen bg-white" style="direction: rtl !important;">
+                              ${printContents}
+                            </div>
+                          `;
+                          window.print();
+                          window.location.reload();
+                        }
+                      }, 100);
+                    }}
+                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" />
+                    طباعة الكارت
+                  </button>
+                  <button
+                    onClick={() => {
+                      const cardEl = document.getElementById('student-id-card');
+                      if (!cardEl) return;
+                      const btn = document.getElementById('download-single-btn');
+                      const originalText = btn ? btn.innerText : '';
+                      if (btn) btn.innerText = 'جاري التوليد...';
+                      toJpeg(cardEl, {
+                        quality: 0.98,
+                        pixelRatio: 3.5, // Ultra HD
+                        backgroundColor: '#ffffff'
+                      })
+                      .then((dataUrl) => {
+                        const link = document.createElement('a');
+                        link.download = `كارت_${selectedStudentForCard.name}.jpg`;
+                        link.href = dataUrl;
+                        link.click();
+                        if (btn) btn.innerText = originalText;
+                      })
+                      .catch(() => {
+                        if (btn) btn.innerText = 'فشل التحميل';
+                      });
+                    }}
+                    id="download-single-btn"
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    تحميل كصورة (JPG)
+                  </button>
                 </div>
               </div>
 
-              <div className="text-[8.5px] text-gray-400 text-center italic-none uppercase font-mono tracking-widest pt-1 border-t border-dashed">
-                * يرجى إبراز الكارت عند بوابة السنتر لتسجيل الدخول *
-              </div>
             </div>
 
-            {/* Print Action button */}
-            <div className="pt-4 flex justify-between gap-3">
-              <button
-                onClick={() => {
-                  window.dispatchEvent(new Event('beforeprint'));
-                  setTimeout(() => {
-                    const printContents = document.getElementById('student-id-card')?.outerHTML;
-                    const originalContents = document.body.innerHTML;
-                    if (printContents) {
-                      document.body.innerHTML = `
-                        <div class="print-only flex items-center justify-center min-h-screen bg-white" style="direction: rtl !important;">
-                          ${printContents}
-                        </div>
-                      `;
-                      window.print();
-                      window.location.reload(); // Refresh to restore App react bindings!
-                    }
-                  }, 100);
-                }}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm"
-              >
-                <Printer className="w-4 h-4" />
-                طباعة الكارت QR المزدوج
-              </button>
+            {/* Modal General footer button */}
+            <div className="pt-4 border-t border-slate-150 flex justify-end">
               <button
                 onClick={() => setSelectedStudentForCard(null)}
-                className="px-4 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-sm font-semibold transition hover:bg-gray-200"
+                className="px-6 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold transition hover:bg-slate-200 cursor-pointer"
               >
-                إغلاق
+                إغلاق النافذة
               </button>
             </div>
           </div>
@@ -1494,6 +1846,97 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                     ))
                   }
                 </select>
+              </div>
+            </div>
+
+            {/* DESIGN CUSTOMIZATION FOR BATCH PRINTING */}
+            <div className="bg-indigo-50/45 p-4 rounded-2xl border border-indigo-150 space-y-3.5">
+              <h4 className="text-xs font-black text-indigo-900 flex items-center gap-1.5 pb-2 border-b border-indigo-100/60">
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                تخصيص وتعديل تصميم ونصوص الكروت الجماعية قبل التصدير والطباعة
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-right">
+                {/* Title */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 mb-1">عنوان الكارت الرئيسي</label>
+                  <input
+                    type="text"
+                    value={cardTitle}
+                    onChange={(e) => setCardTitle(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 focus:border-slate-400 rounded-xl text-xs outline-none font-bold"
+                  />
+                </div>
+                {/* Teacher name */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 mb-1">اسم المعلم / الجهة</label>
+                  <input
+                    type="text"
+                    value={cardTeacher}
+                    onChange={(e) => setCardTeacher(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 focus:border-slate-400 rounded-xl text-xs outline-none font-bold"
+                  />
+                </div>
+                {/* Footer text */}
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 mb-1">ملاحظة التذييل الإرشادية</label>
+                  <input
+                    type="text"
+                    value={cardFooter}
+                    onChange={(e) => setCardFooter(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 focus:border-slate-400 rounded-xl text-xs outline-none font-bold"
+                  />
+                </div>
+                {/* Theme & size options */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 mb-1">نظام الألوان</label>
+                    <select
+                      value={cardTheme}
+                      onChange={(e) => setCardTheme(e.target.value as CardThemeType)}
+                      className="w-full px-2 py-1.5 bg-white border border-slate-250 rounded-xl text-[11px] font-black outline-none cursor-pointer"
+                    >
+                      <option value="navy-red">كحلي وأحمر</option>
+                      <option value="blue-solid">أزرق ملكي</option>
+                      <option value="red-solid">أحمر ياقوتي</option>
+                      <option value="black-solid">أسود داكن</option>
+                      <option value="blue-red">أزرق وأحمر</option>
+                      <option value="black-red">أسود وأحمر</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 mb-1">حجم الخط</label>
+                    <select
+                      value={cardFontSize}
+                      onChange={(e) => setCardFontSize(e.target.value as CardFontSizeType)}
+                      className="w-full px-2 py-1.5 bg-white border border-slate-250 rounded-xl text-[11px] font-bold outline-none cursor-pointer"
+                    >
+                      <option value="normal">عادي</option>
+                      <option value="medium">متوسط</option>
+                      <option value="large">كبير</option>
+                      <option value="xlarge">ضخم</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-4 pt-1 text-[11px] text-slate-650 font-black">
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={cardShowPhone}
+                    onChange={(e) => setCardShowPhone(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                  />
+                  إظهار هاتف ولي الأمر في الكارت
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={cardShowAddress}
+                    onChange={(e) => setCardShowAddress(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                  />
+                  إظهار العنوان / منطقة السنتر
+                </label>
               </div>
             </div>
 
@@ -1585,13 +2028,19 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                             type="checkbox"
                             checked={isSelected}
                             readOnly
-                            className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 accent-indigo-600 flex-shrink-0 cursor-pointer"
+                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer accent-indigo-600 flex-shrink-0"
                           />
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-slate-800 truncate">{student.name}</div>
-                            <div className="text-[10px] text-slate-500 font-mono mt-0.5">{student.code} — {student.grade}</div>
-                            <div className="text-[10px] text-indigo-700 font-bold truncate mt-0.5">{group?.name || 'مجموعة غير محددة'}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-black text-slate-800 truncate" title={student.name}>{student.name}</div>
+                            <div className="text-[10px] text-slate-400 font-bold mt-0.5 flex flex-wrap gap-x-2">
+                              <span>الصف: {student.grade}</span>
+                              <span className="text-slate-300">|</span>
+                              <span>المجموعة: {group?.name || 'غير مخصص'}</span>
+                            </div>
                           </div>
+                        </div>
+                        <div className="text-[10px] font-mono font-black text-slate-500 bg-slate-100/80 px-2 py-0.5 rounded border border-slate-150 flex-shrink-0">
+                          {student.code}
                         </div>
                       </div>
                     );
@@ -1600,162 +2049,164 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
               )}
             </div>
 
-            {/* Print Settings Guidance */}
-            <div className="bg-amber-50/70 border border-amber-200/50 rounded-2xl p-4 text-right space-y-1.5 text-[11px] text-amber-900 leading-relaxed font-sans shadow-inner">
-              <div className="font-extrabold flex items-center gap-1.5 mb-1 text-slate-850">
-                <span>⚡ إعدادات بالغة الأهمية قبل الضغط على طباعة:</span>
+            {/* Modal Actions */}
+            <div className="pt-5 border-t border-slate-150 flex flex-col sm:flex-row justify-between items-center gap-4">
+              <div className="text-xs text-slate-500 font-bold font-sans">
+                عدد الطلاب المحددين للطباعة حالياً: <span className="text-indigo-600 font-black text-sm">{selectedForBatch.length}</span> طالب
               </div>
-              <ul className="list-disc list-inside space-y-1 font-medium text-slate-700 pl-2">
-                <li>يرجى تعيين اتجاه الصفحة داخل لوحة خيارات المتصفح على <span className="font-bold text-slate-900">رأسي (Portrait)</span>.</li>
-                <li>تأكد من اختيار حجم الورق على القياس <span className="font-extrabold text-slate-900">A4</span> القياسي.</li>
-                <li>اضبط الهوامش في المتصفح (Margins) على خيار <span className="font-bold text-slate-900">بلا هوامش (None)</span> أو <span className="font-bold text-slate-900">أصغر ما يمكن (Minimal)</span> لإلغاء أي خطوط هامشية مشوهة.</li>
-                <li>فعّل بالضرورة خيار <span className="font-bold text-slate-900">طباعة رسومات الخلفية (Background Graphics)</span> لضمان إبراز الديكورات والألوان الزرقاء الأنيقة للكروت.</li>
-              </ul>
-            </div>
-
-            {/* Status indicators & Actions */}
-            <div className="flex flex-col sm:flex-row justify-between items-center border-t border-slate-100 pt-5 gap-4">
-              <div className="text-right text-xs">
-                <span className="font-bold text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg inline-block border border-slate-200">
-                  إجمالي المختار للطباعة: <strong className="text-indigo-700 font-mono text-sm">{selectedForBatch.length}</strong> كارت عضوية
-                </span>
-                {selectedForBatch.length > 0 && (
-                  <span className="text-slate-500 font-semibold mr-3 font-sans">
-                    (سيشغل <strong className="text-slate-800 font-bold">{Math.ceil(selectedForBatch.length / 8)}</strong> ورقة A4 بمعدل 8 كرت/ورقة)
-                  </span>
-                )}
-              </div>
-
-              <div className="flex gap-2 w-full sm:w-auto">
+              <div className="flex gap-2.5 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedForBatch.length === 0) {
+                      setErrorMessage('يرجى تحديد طالب واحد على الأقل للطباعة الجماعية.');
+                      return;
+                    }
+                    window.print();
+                  }}
+                  className="flex-1 sm:flex-initial px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  بدء طباعة الكروت المحددة ({selectedForBatch.length})
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowBatchPrintModal(false)}
-                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-205 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer border border-slate-250/30"
+                  className="px-5 py-2.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
                 >
-                  إغلاق وتراجع
-                </button>
-                <button
-                  type="button"
-                  disabled={selectedForBatch.length === 0}
-                  onClick={handlePrintBatchA4}
-                  className="flex-1 sm:flex-initial px-8 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-xs rounded-xl transition cursor-pointer flex items-center justify-center gap-2 shadow-md hover:shadow-lg shadow-indigo-600/10"
-                >
-                  <Download className="w-4 h-4" />
-                  <span id="pdf-btn-text">تصدير وتحميل الكروت كصور (JPG)</span>
+                  إلغاء وإغلاق
                 </button>
               </div>
             </div>
-
           </div>
         </div>
       )}
 
-      {/* HIDDEN IN SCREEN VIEW - FOR RAW PRINT PREPARATION */}
-      <div id="batch-print-layout-raw" style={{ position: 'fixed', left: '-9999px', top: '-9999px', width: '210mm', backgroundColor: '#ffffff', zIndex: -1000, pointerEvents: 'none' }}>
-          {printPages.map((pageStudents, pageIdx) => (
-            <div 
-              key={pageIdx} 
-              className="a4-print-page"
-            >
-              {/* Top tiny label helper */}
-              <div className="flex justify-between items-center text-[9px] text-slate-400 border-b border-slate-100 pb-1 mb-4 select-none">
-                <span className="font-bold">نظام الأستاذ محمود أبوذكري لإدارة مادة العلوم - كروت الحضور والغياب الذكية</span>
-                <span className="font-bold font-mono">صفحة {pageIdx + 1} من {printPages.length}</span>
-              </div>
-
-              {/* Grid 2x4 Layout */}
-              <div className="grid grid-cols-2 gap-x-4 gap-y-5 justify-center items-start">
-                {pageStudents.map(student => {
-                  const group = groups.find(g => g.id === student.groupId);
-                  const groupName = group ? group.name : 'غير مخصص';
-                  return (
-                    <div 
-                      key={student.id}
-                      className={`p-3 bg-white text-right flex flex-row items-center justify-between relative overflow-hidden ${
-                        cutBorders 
-                          ? 'border-2 border-dashed border-slate-300' 
-                          : 'border border-slate-100 shadow-sm'
-                      }`}
-                      style={{ 
-                        width: '92mm', 
-                        height: '62mm', 
-                        boxSizing: 'border-box',
-                        pageBreakInside: 'avoid',
-                        breakInside: 'avoid',
-                        borderRadius: '16px'
-                      }}
-                    >
-                      {/* Background decor watermark specifically for printed sheet */}
-                      <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-sky-600/5 rounded-full select-none pointer-events-none"></div>
-
-                      {/* Left side: QR code column (35% width approx) */}
-                      <div 
-                        className="flex flex-col items-center justify-center h-full pl-2 select-none border-l border-dashed border-slate-200"
-                        style={{ width: '31mm', boxSizing: 'border-box' }}
-                      >
-                        <div className="bg-white p-1.5 rounded-xl border border-slate-150 flex items-center justify-center shadow-xs">
-                          <QRCodeSVG 
-                            value={student.id} 
-                            size={70}
-                            bgColor={"#FFFFFF"}
-                            fgColor={"#0369a1"}
-                            level={"H"}
-                            includeMargin={false}
-                          />
-                        </div>
-                        <div className="text-[8px] font-mono font-black text-sky-800 tracking-wider mt-1 px-2 py-0.5 bg-sky-50 text-sky-800 rounded">
-                          {student.code}
-                        </div>
-                      </div>
-
-                      {/* Right side: Student detail labels and info (65% width approx) */}
-                      <div 
-                        className="flex-1 pr-3 flex flex-col justify-between h-full text-right"
-                        style={{ width: '51mm', boxSizing: 'border-box' }}
-                      >
-                        {/* Brand and Logo Header of Center */}
-                        <div>
-                          <div className="flex items-center gap-1 justify-start">
-                            <span className="w-1.5 h-1.5 rounded-full bg-sky-600 animate-pulse"></span>
-                            <span className="text-[8.5px] font-extrabold text-sky-700 tracking-tight">مجموعات العلوم المتكاملة</span>
-                          </div>
-                          <div className="text-[7.5px] text-slate-400 font-bold -mt-0.5">الأستاذ محمود أبوذكري</div>
-                        </div>
-
-                        {/* Student full name */}
-                        <div className="py-1">
-                          <div className="text-[7.5px] text-slate-400 font-bold leading-none">اسم الطالب المنتسب:</div>
-                          <div className="text-[11.5px] font-black text-slate-850 leading-tight mt-0.5 truncate max-w-[170px]" title={student.name}>
-                            {student.name}
-                          </div>
-                        </div>
-
-                        {/* Detail metadata list */}
-                        <div className="space-y-0.5">
-                          <div className="text-[8px] text-slate-500 leading-none">
-                            <span className="font-bold text-slate-400">الصف الدراسي:</span> <span className="font-bold text-slate-700">{student.grade}</span>
-                          </div>
-                          <div className="text-[8px] text-slate-550 leading-none truncate max-w-[170px]">
-                            <span className="font-bold text-slate-400">المجموعة:</span> <span className="font-bold text-slate-750">{groupName}</span>
-                          </div>
-                          <div className="text-[8px] text-slate-500 leading-none">
-                            <span className="font-bold text-slate-400">موبايل الوالد:</span> <span className="font-mono font-bold text-slate-800">{student.parentPhone}</span>
-                          </div>
-                        </div>
-
-                        {/* Warning line at card bottom */}
-                        <div className="border-t border-slate-100 pt-1 text-[7px] text-slate-400 text-center font-bold font-sans">
-                          يرجى إبراز الكارت عند الحضور والمغادرة
-                        </div>
-                      </div>
-
-                    </div>
-                  );
-                })}
-              </div>
-              
+      {/* PRINT SHEET WORKSPACE (HIDDEN ON SCREEN, ONLY VISIBLE IN PRINT MODE) */}
+      <div className="hidden print:block print-sheets-container bg-white" dir="rtl">
+        {printPages.map((pageStudents, pageIdx) => (
+          <div 
+            key={pageIdx} 
+            className="a4-print-page"
+            dir="rtl"
+            style={{ fontFamily: "'Cairo', 'Tahoma', 'Arial', sans-serif" }}
+          >
+            {/* Top tiny label helper */}
+            <div className="flex justify-between items-center text-[10px] text-slate-500 border-b border-slate-200 pb-1.5 mb-4 select-none" dir="rtl">
+              <span className="font-bold">نظام الأستاذ محمود أبوذكري لإدارة مادة العلوم - كروت الحضور والغياب الذكية</span>
+              <span className="font-bold font-mono">صفحة {pageIdx + 1} من {printPages.length}</span>
             </div>
-          ))}
+
+            {/* Grid 2x4 Layout */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-5 justify-center items-start">
+              {pageStudents.map(student => {
+                const group = groups.find(g => g.id === student.groupId);
+                const groupName = group ? group.name : 'غير مخصص';
+                return (
+                  <div 
+                    key={student.id}
+                    className={`p-3 bg-white flex flex-row items-center justify-between relative overflow-hidden ${
+                      cutBorders 
+                        ? 'border-2 border-dashed border-slate-400' 
+                        : `border-4 ${themeConfig[cardTheme].cardBorder}`
+                    }`}
+                    dir="rtl"
+                    style={{ 
+                      width: '92mm', 
+                      height: '62mm', 
+                      boxSizing: 'border-box',
+                      pageBreakInside: 'avoid',
+                      breakInside: 'avoid',
+                      borderRadius: '16px',
+                      fontFamily: "'Cairo', 'Tahoma', 'Arial', sans-serif",
+                      textAlign: 'right'
+                    }}
+                  >
+                    {/* Background decor watermark specifically for printed sheet */}
+                    <div className="absolute -bottom-8 -right-8 w-24 h-24 bg-blue-600/5 rounded-full select-none pointer-events-none"></div>
+
+                    {/* Left side: QR code column (35% width approx) */}
+                    <div 
+                      className={`flex flex-col items-center justify-center h-full pl-2 select-none border-l-2 border-dashed ${themeConfig[cardTheme].footerBorder}`}
+                      style={{ width: '31mm', boxSizing: 'border-box' }}
+                      dir="rtl"
+                    >
+                      <div className={`bg-white p-2 rounded-xl border-2 ${themeConfig[cardTheme].qrBorder} flex items-center justify-center shadow-sm`}>
+                        <QRCodeCanvas 
+                          value={student.id} 
+                          size={280} // 280px in internal buffer for extreme HD resolution
+                          bgColor={"#FFFFFF"}
+                          fgColor={"#000000"} // Pure black for perfect high-contrast printing & lightning-fast scanner reading
+                          level={"H"}
+                          includeMargin={false}
+                          style={{ width: '70px', height: '70px' }} // scaled down
+                        />
+                      </div>
+                      <div className={`text-[11px] font-mono font-black ${themeConfig[cardTheme].textMain} tracking-wider mt-1.5 px-2 py-0.5 ${themeConfig[cardTheme].badgeBg} border rounded`}>
+                        {student.code}
+                      </div>
+                    </div>
+
+                    {/* Right side: Student detail labels and info (65% width approx) */}
+                    <div 
+                      className="flex-1 pr-3 flex flex-col justify-between h-full text-right"
+                      dir="rtl"
+                      style={{ width: '51mm', boxSizing: 'border-box' }}
+                    >
+                      {/* Brand and Logo Header of Center */}
+                      <div className={`border-b-2 border-dashed ${themeConfig[cardTheme].footerBorder} pb-1 ${themeConfig[cardTheme].headerBg} -mr-3 -mt-3 p-2 rounded-tr-lg`}>
+                        <div className="flex items-center gap-1 justify-start">
+                          <span className="w-2 h-2 rounded-full bg-red-600"></span>
+                          <span className={`text-[10.5px] font-black ${themeConfig[cardTheme].textMain} tracking-tight`}>
+                            {cardTitle}
+                          </span>
+                        </div>
+                        <div className="text-[8.5px] text-slate-500 font-black -mt-0.5">
+                          {cardTeacher}
+                        </div>
+                      </div>
+
+                      {/* Student name */}
+                      <div className="py-1">
+                        <div className={`text-[8.5px] ${themeConfig[cardTheme].labelColor} font-black leading-none`}>اسم الطالب المنتسب:</div>
+                        <div className="text-[12.5px] font-black text-black leading-tight mt-1 truncate max-w-[155px]" title={student.name}>
+                          {student.name}
+                        </div>
+                      </div>
+
+                      {/* Detail metadata list */}
+                      <div className="space-y-0.5 text-[9.5px]">
+                        <div className="text-black leading-none">
+                          <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>الصف:</span> <span className="text-black font-black">{student.grade}</span>
+                        </div>
+                        <div className="text-black leading-none truncate max-w-[155px]">
+                          <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>المجموعة:</span> <span className="text-black font-black">{groupName}</span>
+                        </div>
+                        {cardShowPhone && (
+                          <div className="text-black leading-none">
+                            <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>موبايل الوالد:</span> <span className={`font-mono font-black ${themeConfig[cardTheme].phoneColor}`}>{student.parentPhone}</span>
+                          </div>
+                        )}
+                        {cardShowAddress && (
+                          <div className="text-black leading-none truncate max-w-[155px]">
+                            <span className={`${themeConfig[cardTheme].labelColor} font-bold`}>منطقة السنتر:</span> <span className="text-black font-bold">{student.address || 'أسيوط'}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Warning line at card bottom */}
+                      <div className={`border-t border-dashed ${themeConfig[cardTheme].footerBorder} pt-1 text-[8px] ${themeConfig[cardTheme].footerText} text-center font-black`}>
+                        * {cardFooter} *
+                      </div>
+                    </div>
+
+                  </div>
+                );
+              })}
+            </div>
+            
+          </div>
+        ))}
       </div>
 
       {/* DELETE STUDENT CONFIRMATION MODAL */}

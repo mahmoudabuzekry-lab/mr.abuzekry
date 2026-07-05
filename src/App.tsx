@@ -169,8 +169,7 @@ export default function App() {
               for (const reg of publicRegs) {
                 const alreadyExists = currentStudents.some(s => s.phone === reg.phone && s.name === reg.name);
                 if (!alreadyExists) {
-                  const nextIndex = currentStudents.length + 1001;
-                  const code = `S-${nextIndex}`;
+                  const code = dbEngine.generateNextStudentCode(currentStudents);
                   const uniqueId = `s_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
                   
                   const newStudent = {
