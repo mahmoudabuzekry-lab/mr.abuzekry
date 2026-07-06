@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { dbEngine } from '../db';
 import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName } from '../types';
 import { 
@@ -22,7 +22,7 @@ interface FinanceManagerProps {
 }
 
 export default function FinanceManager({ students, payments, prices, onRefresh }: FinanceManagerProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'prices'>('history');
+  const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'prices' | 'blankSheet'>('history');
   
   // Cloud Sync tracking states
   const [isOnline, setIsOnline] = useState<boolean | null>(null);
@@ -134,6 +134,49 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const [tempPrices, setTempPrices] = useState<Record<GradeType, number>>({ ...prices });
   const [isPriceSaved, setIsPriceSaved] = useState(false);
 
+  // Sync tempPrices when prop prices changes
+  useEffect(() => {
+    setTempPrices({ ...prices });
+  }, [prices]);
+
+  // Billing Start Month & Grade Month Discounts State
+  const [billingStartMonth, setBillingStartMonth] = useState<string>(dbEngine.getBillingStartMonth());
+  const [gradeMonthDiscounts, setGradeMonthDiscounts] = useState<Array<{ id: string; grade: GradeType; month: string; discount: number }>>(dbEngine.getGradeMonthDiscounts());
+
+  // States for blank payment sheet printing
+  const [blankSheetGrade, setBlankSheetGrade] = useState<GradeType>('الصف الأول الإعدادي');
+  const [blankSheetMonth, setBlankSheetMonth] = useState<string>('أكتوبر');
+
+  // Form states for adding a discount
+  const [discountGrade, setDiscountGrade] = useState<GradeType>('الصف الثالث الإعدادي');
+  const [discountMonth, setDiscountMonth] = useState<string>('أكتوبر');
+  const [discountAmountInput, setDiscountAmountInput] = useState<number>(0);
+
+  const handleAddGradeDiscount = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (discountAmountInput <= 0) return;
+    
+    const newDiscount = {
+      id: `gd_${Date.now()}`,
+      grade: discountGrade,
+      month: discountMonth,
+      discount: Number(discountAmountInput)
+    };
+    
+    const updated = [...gradeMonthDiscounts, newDiscount];
+    dbEngine.setGradeMonthDiscounts(updated);
+    setGradeMonthDiscounts(updated);
+    setDiscountAmountInput(0);
+    onRefresh();
+  };
+
+  const handleDeleteGradeDiscount = (id: string) => {
+    const updated = gradeMonthDiscounts.filter(d => d.id !== id);
+    dbEngine.setGradeMonthDiscounts(updated);
+    setGradeMonthDiscounts(updated);
+    onRefresh();
+  };
+
   // Record Payment Form State
   const [paymentForm, setPaymentForm] = useState({
     studentId: '',
@@ -159,9 +202,109 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     'يوليو'
   ];
 
+  // Sorted students for the manual blank sheet
+  const blankSheetStudentsSorted = useMemo(() => {
+    return students
+      .filter(s => s.grade === blankSheetGrade && s.status === 'approved')
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  }, [students, blankSheetGrade]);
+
+  const handlePrintBlankSheet = () => {
+    const element = document.getElementById('blank-sheet-print-area');
+    if (!element) return;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'absolute';
+    iframe.style.width = '0px';
+    iframe.style.height = '0px';
+    iframe.style.border = 'none';
+    iframe.style.left = '-9999px';
+    iframe.style.top = '-9999px';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (!iframeDoc) {
+      window.print();
+      return;
+    }
+
+    let stylesHtml = '';
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((el) => {
+      stylesHtml += el.outerHTML;
+    });
+
+    iframeDoc.open();
+    iframeDoc.write(`
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+        <head>
+          <title>طباعة كشف سداد الرسوم اليدوي</title>
+          ${stylesHtml}
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap');
+            body {
+              background-color: white !important;
+              color: #0f172a !important;
+              padding: 30px !important;
+              font-family: 'Cairo', sans-serif !important;
+              direction: rtl !important;
+              text-align: right !important;
+            }
+            .no-print {
+              display: none !important;
+            }
+            table {
+              width: 100% !important;
+              border-collapse: collapse !important;
+              margin-top: 20px !important;
+              font-size: 11px !important;
+            }
+            th, td {
+              border: 1px solid #1e293b !important;
+              padding: 8px 10px !important;
+              text-align: right !important;
+              vertical-align: middle !important;
+            }
+            th {
+              background-color: #f1f5f9 !important;
+              font-weight: 800 !important;
+              color: #0f172a !important;
+            }
+            td {
+              color: #0f172a !important;
+              font-weight: 500 !important;
+            }
+            .blank-box {
+              height: 24px;
+              width: 100%;
+            }
+          </style>
+        </head>
+        <body class="bg-white">
+          <div style="direction: rtl;">
+            ${element.innerHTML}
+          </div>
+          <script>
+            window.addEventListener('load', () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.parent.document.body.removeChild(window.frameElement);
+                }, 100);
+              }, 150);
+            });
+          </script>
+        </body>
+      </html>
+    `);
+    iframeDoc.close();
+  };
+
   const handlePriceUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     dbEngine.setPrices(tempPrices);
+    dbEngine.setBillingStartMonth(billingStartMonth);
     setIsPriceSaved(true);
     setTimeout(() => {
       setIsPriceSaved(false);
@@ -176,15 +319,8 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     const student = students.find(s => s.id === paymentForm.studentId);
     if (!student) return;
 
-    // Calculate amountDue based on student's grade price & discounts
-    const basePrice = prices[student.grade];
-    let amountDue = basePrice;
-    
-    if (student.exemptionType === 'full') {
-      amountDue = 0;
-    } else if (student.exemptionType === 'partial') {
-      amountDue = Math.max(0, basePrice - student.discountAmount);
-    }
+    // Calculate amountDue based on student's grade price, start month & grade month discounts
+    const amountDue = dbEngine.calculateStudentDue(student, paymentForm.month);
 
     const recorded = dbEngine.addPayment({
       studentId: student.id,
@@ -221,8 +357,6 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const getDebtors = () => {
     const activeStudents = students.filter(s => {
       if (s.status !== 'approved') return false;
-      // Do not charge or demand from any student for a month preceding their registration date on the platform
-      if (doesMonthPrecedeDate(filterMonth, s.createdAt)) return false;
       return true;
     });
     const monthPayments = payments.filter(p => p.month === filterMonth);
@@ -231,10 +365,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
       const studentMonthPayments = monthPayments.filter(p => p.studentId === student.id);
       const totalPaid = studentMonthPayments.reduce((acc, p) => acc + p.amountPaid, 0);
       
-      const basePrice = prices[student.grade];
-      let amountDue = basePrice;
-      if (student.exemptionType === 'full') amountDue = 0;
-      else if (student.exemptionType === 'partial') amountDue = Math.max(0, basePrice - student.discountAmount);
+      const amountDue = dbEngine.calculateStudentDue(student, filterMonth);
 
       const balance = amountDue - totalPaid;
       
@@ -287,10 +418,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const totalDuesExpectedForMonth = students
     .filter(s => s.status === 'approved')
     .reduce((acc, s) => {
-      let fee = prices[s.grade];
-      if (s.exemptionType === 'full') return acc;
-      if (s.exemptionType === 'partial') fee = Math.max(0, fee - s.discountAmount);
-      return acc + fee;
+      return acc + dbEngine.calculateStudentDue(s, filterMonth);
     }, 0);
 
   const collectionPercentage = totalDuesExpectedForMonth > 0 
@@ -503,6 +631,17 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               قيد سداد جديد
             </button>
             <button
+              onClick={() => setActiveSubTab('blankSheet')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                activeSubTab === 'blankSheet' 
+                  ? 'bg-slate-900 text-white' 
+                  : 'bg-slate-50 text-slate-600 border border-slate-205 hover:bg-slate-100'
+              }`}
+            >
+              <Printer className="w-3.5 h-3.5" />
+              طباعة كشف فارغ (يدوي)
+            </button>
+            <button
               onClick={() => setActiveSubTab('prices')}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
                 activeSubTab === 'prices' 
@@ -511,7 +650,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               }`}
             >
               <Settings className="w-3.5 h-3.5" />
-              تعديل أسعار الصفوف
+              الإعدادات والأسعار والخصومات
             </button>
           </div>
 
@@ -725,7 +864,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                           <div className="bg-emerald-50/50 border border-emerald-200 rounded-lg px-3.5 py-1.5 text-right shrink-0">
                             <span className="text-[10px] text-emerald-800 font-bold block">القيمة الموصى بها</span>
                             <strong className="text-sm font-black text-emerald-900 font-mono">
-                              {student.exemptionType === 'full' ? 0 : student.exemptionType === 'partial' ? Math.max(0, basePrice - student.discountAmount) : basePrice} ج.م
+                              {dbEngine.calculateStudentDue(student, paymentForm.month)} ج.م
                             </strong>
                           </div>
                         </div>
@@ -811,10 +950,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                         }
 
                         return addFiltered.map(s => {
-                          const basePrice = prices[s.grade];
-                          let due = basePrice;
-                          if (s.exemptionType === 'full') due = 0;
-                          else if (s.exemptionType === 'partial') due = Math.max(0, basePrice - s.discountAmount);
+                          const due = dbEngine.calculateStudentDue(s, paymentForm.month);
 
                           const group = allGroups.find(g => g.id === s.groupId);
                           
@@ -1006,49 +1142,328 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
           </div>
         )}
 
-        {/* SUBTAB 4: BASE PRICES SETTINGS */}
+        {/* SUBTAB 4: BASE PRICES & BILLING CONFIG SETTINGS */}
         {activeSubTab === 'prices' && (
-          <form onSubmit={handlePriceUpdate} className="p-6 md:p-8 space-y-6 text-right">
-            <div>
-              <h3 className="font-bold text-slate-900 text-base">تغيير وضبط قيمة الاشتراك الشهري لمجموعات العلوم</h3>
-              <p className="text-slate-500 text-xs mt-1">تحديد القيمة المالية الشهرية الأساسية المترتبة للاشتراك لكل صف دراسي على حدة.</p>
-            </div>
+          <div className="space-y-8 p-6 md:p-8 text-right">
+            {/* Section 1: Base prices */}
+            <form onSubmit={handlePriceUpdate} className="space-y-6">
+              <div className="border-b border-slate-100 pb-4">
+                <h3 className="font-bold text-slate-900 text-base">تغيير وضبط قيمة الاشتراك الشهري لمجموعات العلوم</h3>
+                <p className="text-slate-500 text-xs mt-1">تحديد القيمة المالية الشهرية الأساسية المترتبة للاشتراك لكل صف دراسي على حدة.</p>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {Object.keys(prices).map((grade) => (
-                <div key={grade}>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">{grade}</label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {Object.keys(prices).map((grade) => (
+                  <div key={grade}>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">{grade}</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min={10}
+                        max={1000}
+                        required
+                        value={tempPrices[grade as GradeType] || ''}
+                        onChange={(e) => setTempPrices({ ...tempPrices, [grade]: Number(e.target.value) })}
+                        className="w-full px-3 py-2 pr-4 pl-16 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right font-mono font-bold outline-none"
+                      />
+                      <div className="absolute left-3 top-2.5 text-[10px] font-bold text-slate-450 text-slate-403">جنيه مصري</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Section 2: Billing Start Month setting */}
+              <div className="border-t border-slate-100 pt-6 space-y-4">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">تحديد شهر بدء محاسبة ومطالبة الطلاب بالرسوم</h3>
+                  <p className="text-slate-500 text-xs mt-1">
+                    الشهر الأكاديمي الذي تبدأ فيه مطالبة ومحاسبة جميع الطلاب بدفع اشتراكات المجموعات. الشهور السابقة لهذا الشهر لن تعتبر الطلاب مدينين فيها ولن تظهر في متأخرات السداد.
+                  </p>
+                </div>
+                <div className="max-w-xs">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">شهر بدء الحساب</label>
+                  <select
+                    value={billingStartMonth}
+                    onChange={(e) => setBillingStartMonth(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all font-bold"
+                  >
+                    {MONTHS.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {isPriceSaved && (
+                <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-100 text-xs font-bold rounded-lg text-center animate-in fade-in duration-200">
+                  تم حفظ وتحديث لائحة الأثمان والإعدادات المعتمدة بنجاح!
+                </div>
+              )}
+
+              <div className="flex justify-start">
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-850 transition cursor-pointer"
+                >
+                  تحديث وحفظ أسعار الصفوف وإعدادات المحاسبة
+                </button>
+              </div>
+            </form>
+
+            {/* Section 3: Grade-Month discounts */}
+            <div className="border-t border-slate-100 pt-8 space-y-6">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">خصم محدد لجميع تلاميذ صف محدد خلال شهر محدد</h3>
+                <p className="text-slate-500 text-xs mt-1">تطبيق خصم تعميمي تلقائي على جميع تلاميذ مرحلة دراسية كاملة خلال شهر مالي معين.</p>
+              </div>
+
+              <form onSubmit={handleAddGradeDiscount} className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">الصف الدراسي المستهدف</label>
+                  <select
+                    value={discountGrade}
+                    onChange={(e) => setDiscountGrade(e.target.value as GradeType)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all font-medium font-sans"
+                  >
+                    <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                    <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                    <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
+                    <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
+                    <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
+                    <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">الشهر المالي</label>
+                  <select
+                    value={discountMonth}
+                    onChange={(e) => setDiscountMonth(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all font-medium font-sans"
+                  >
+                    {MONTHS.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">قيمة الخصم التعميمي</label>
                   <div className="relative">
                     <input
                       type="number"
-                      min={10}
-                      max={1000}
+                      min={1}
+                      max={500}
                       required
-                      value={tempPrices[grade as GradeType]}
-                      onChange={(e) => setTempPrices({ ...tempPrices, [grade]: Number(e.target.value) })}
-                      className="w-full px-3 py-2 pr-4 pl-16 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right font-mono font-bold outline-none"
+                      value={discountAmountInput || ''}
+                      onChange={(e) => setDiscountAmountInput(Number(e.target.value))}
+                      className="w-full px-3 py-2 pr-4 pl-16 bg-white border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right font-mono font-bold outline-none"
+                      placeholder="مثال: 20"
                     />
-                    <div className="absolute left-3 top-2.5 text-[10px] font-bold text-slate-450 text-slate-403">جنيه مصري</div>
+                    <div className="absolute left-3 top-2 text-[10px] font-bold text-slate-400">جنيه</div>
                   </div>
                 </div>
-              ))}
-            </div>
 
-            {isPriceSaved && (
-              <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-100 text-xs font-bold rounded-lg text-center">
-                تم حفظ وتحديث لائحة الأثمان والمقادير المعتمدة لجميع المجموعات بنجاح!
+                <button
+                  type="submit"
+                  className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>تطبيق وإضافة الخصم</span>
+                </button>
+              </form>
+
+              {/* List of active discounts */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-extrabold text-slate-700">الخصومات التعميمية النشطة حالياً:</h4>
+                {gradeMonthDiscounts.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic bg-slate-50/50 p-4 rounded-xl text-center border border-dashed border-slate-200">
+                    لا توجد خصومات عامة مضافة لشهور محددة حالياً. يمكنك إضافة خصم باستخدام النموذج أعلاه.
+                  </p>
+                ) : (
+                  <div className="overflow-hidden border border-slate-200 rounded-xl bg-white">
+                    <table className="w-full text-right border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                          <th className="py-2.5 px-4 font-bold">الصف الدراسي</th>
+                          <th className="py-2.5 px-4 font-bold">الشهر</th>
+                          <th className="py-2.5 px-4 font-bold">قيمة الخصم</th>
+                          <th className="py-2.5 px-4 text-left">الإجراء</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {gradeMonthDiscounts.map((discount) => (
+                          <tr key={discount.id} className="hover:bg-slate-50/50 transition">
+                            <td className="py-2.5 px-4 font-bold text-slate-800 font-sans">{discount.grade}</td>
+                            <td className="py-2.5 px-4 text-slate-600 font-medium font-sans">{discount.month}</td>
+                            <td className="py-2.5 px-4 font-mono font-bold text-emerald-750 text-emerald-700">{discount.discount} ج.م</td>
+                            <td className="py-2.5 px-4 text-left">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteGradeDiscount(discount.id)}
+                                className="p-1 text-red-600 hover:bg-red-50 hover:text-red-700 rounded transition cursor-pointer"
+                                title="حذف الخصم"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
+          </div>
+        )}
 
-            <div className="flex justify-start">
+        {/* SUBTAB 5: PRINT BLANK MANUAL SHEET */}
+        {activeSubTab === 'blankSheet' && (
+          <div className="p-6 md:p-8 space-y-8 text-right">
+            <div className="border-b border-slate-100 pb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">طباعة كشف سداد الرسوم اليدوي</h3>
+                <p className="text-slate-500 text-xs mt-1">توليد وتنزيل/طباعة كشف فارغ بأسماء الطلاب لتسجيل وتدوين مستحقات ومقبوضات الاشتراك يدوياً أثناء الحصص.</p>
+              </div>
               <button
-                type="submit"
-                className="px-5 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-850 transition cursor-pointer"
+                type="button"
+                onClick={handlePrintBlankSheet}
+                disabled={blankSheetStudentsSorted.length === 0}
+                className={`px-5 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  blankSheetStudentsSorted.length === 0
+                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
+                }`}
               >
-                تحديث وحفظ أسعار الصفوف
+                <Printer className="w-4 h-4" />
+                <span>بدء طباعة الكشف الفارغ</span>
               </button>
             </div>
-          </form>
+
+            {/* Print configuration form */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">الصف الدراسي المطلوب</label>
+                <select
+                  value={blankSheetGrade}
+                  onChange={(e) => setBlankSheetGrade(e.target.value as GradeType)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all font-bold font-sans text-slate-800"
+                >
+                  <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                  <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                  <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
+                  <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
+                  <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
+                  <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">الشهر المالي المستهدف</label>
+                <select
+                  value={blankSheetMonth}
+                  onChange={(e) => setBlankSheetMonth(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all font-bold font-sans text-slate-800"
+                >
+                  {MONTHS.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Preview Section */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  معاينة الكشف قبل الطباعة (عدد الطلاب: {blankSheetStudentsSorted.length}):
+                </h4>
+                <span className="text-[10px] text-slate-400 font-bold">ورق مقاس A4 - اتجاه طولي</span>
+              </div>
+
+              {blankSheetStudentsSorted.length === 0 ? (
+                <div className="text-center p-8 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-xs text-slate-400 italic">
+                  لا يوجد طلاب مسجلين ونشطين في "{blankSheetGrade}" حالياً. يرجى اختيار صف دراسي آخر للمعاملة.
+                </div>
+              ) : (
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs">
+                  {/* Outer wrapper with ID for printer selector */}
+                  <div id="blank-sheet-print-area" className="p-6 md:p-8 bg-white text-right font-sans">
+                    {/* Sheet Header */}
+                    <div className="text-center border-b-2 border-slate-900 pb-4 mb-4">
+                      <h2 className="text-lg font-black text-slate-900">كشف تسجيل الرسوم والاشتراكات الشهرية (يدوي)</h2>
+                      <p className="text-xs text-slate-600 font-bold mt-1">مجموعات العلوم المتطورة — الأستاذ محمود أبوذكري</p>
+                      
+                      <div className="flex justify-center gap-6 text-xs text-slate-800 font-bold mt-3 bg-slate-50 border border-slate-200 rounded-lg py-2 px-4 max-w-md mx-auto">
+                        <div>
+                          <span>الصف الدراسي: </span>
+                          <span className="text-indigo-900">{blankSheetGrade}</span>
+                        </div>
+                        <div className="border-l border-slate-300"></div>
+                        <div>
+                          <span>شهر مستحقات: </span>
+                          <span className="text-indigo-900">{blankSheetMonth}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-right border-collapse text-xs border border-slate-900">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-900 border-b border-slate-900">
+                            <th className="py-2 px-2 border border-slate-900 text-center font-black w-10">م</th>
+                            <th className="py-2 px-3 border border-slate-900 font-black w-48">اسم التلميذ</th>
+                            <th className="py-2 px-2 border border-slate-900 text-center font-black w-20">كود التلميذ</th>
+                            <th className="py-2 px-2 border border-slate-900 text-center font-black w-24">المستحق للدفع</th>
+                            <th className="py-2 px-3 border border-slate-900 text-center font-black w-28">المبلغ المدفوع (ج.م)</th>
+                            <th className="py-2 px-3 border border-slate-900 text-center font-black w-28">طريقة الدفع (كاش/نقدي)</th>
+                            <th className="py-2 px-3 border border-slate-900 text-center font-black w-24">تاريخ السداد</th>
+                            <th className="py-2 px-3 border border-slate-900 font-black">ملاحظات / توقيع المستلم</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-300 animate-none">
+                          {blankSheetStudentsSorted.map((student, idx) => {
+                            const due = dbEngine.calculateStudentDue(student, blankSheetMonth);
+                            let dueLabel = `${due} ج.م`;
+                            if (due === 0) {
+                              if (student.exemptionType === 'full') {
+                                dueLabel = 'إعفاء كامل';
+                              } else {
+                                dueLabel = 'غير مطالب';
+                              }
+                            }
+                            return (
+                              <tr key={student.id} className="hover:bg-slate-50/50">
+                                <td className="py-2 px-2 border border-slate-900 text-center font-bold font-mono text-slate-700">{idx + 1}</td>
+                                <td className="py-2 px-3 border border-slate-900 font-bold text-slate-900 font-sans">{student.name}</td>
+                                <td className="py-2 px-2 border border-slate-900 text-center font-mono font-bold text-slate-500">{student.id}</td>
+                                <td className="py-2 px-2 border border-slate-900 text-center font-bold text-indigo-900 font-sans bg-slate-50/40">{dueLabel}</td>
+                                {/* Blank cells for manual entries */}
+                                <td className="py-2 px-3 border border-slate-900 bg-slate-50/10"></td>
+                                <td className="py-2 px-3 border border-slate-900 bg-slate-50/10"></td>
+                                <td className="py-2 px-3 border border-slate-900 bg-slate-50/10"></td>
+                                <td className="py-2 px-3 border border-slate-900 bg-slate-50/10"></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Footer for manual records */}
+                    <div className="mt-8 flex justify-between items-center text-[10px] text-slate-400 font-bold italic pt-4 border-t border-dashed border-slate-200">
+                      <span>تاريخ استخراج الكشف: {new Date().toLocaleDateString('ar-EG')}</span>
+                      <span>سجل المقبوضات والمتابعة المالي الورقي للمجموعات</span>
+                      <span>امضاء المشرف / المستلم: ........................</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
 

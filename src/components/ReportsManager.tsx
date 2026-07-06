@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
+import { dbEngine } from '../db';
 import { Student, Group, Payment, Attendance, Exam, ExamScore, GradeType, doesMonthPrecedeDate, getCurrentArabicMonthName } from '../types';
 import * as XLSX from 'xlsx';
 import { 
@@ -128,18 +129,8 @@ export default function ReportsManager({
       const studentPayments = payments.filter(p => p.studentId === student.id && p.month === selectedMonth);
       const precedesReg = doesMonthPrecedeDate(selectedMonth, student.createdAt);
       
-      // Calculate due amount
-      const gradePrice = prices[student.grade] || 0;
-      let amountDue = 0;
-      if (!precedesReg) {
-        if (student.exemptionType === 'full') {
-          amountDue = 0;
-        } else if (student.exemptionType === 'partial') {
-          amountDue = Math.max(0, gradePrice - student.discountAmount);
-        } else {
-          amountDue = gradePrice;
-        }
-      }
+      // Calculate due amount using dbEngine
+      const amountDue = dbEngine.calculateStudentDue(student, selectedMonth);
 
       const paid = studentPayments.reduce((acc, p) => acc + p.amountPaid, 0);
       const remaining = Math.max(0, amountDue - paid);
@@ -148,9 +139,7 @@ export default function ReportsManager({
       totalExpected += amountDue;
 
       let status: 'fully_paid' | 'partially_paid' | 'not_paid' | 'exempted' = 'not_paid';
-      if (precedesReg) {
-        status = 'exempted';
-      } else if (student.exemptionType === 'full') {
+      if (amountDue === 0) {
         status = 'exempted';
       } else if (paid >= amountDue && amountDue > 0) {
         status = 'fully_paid';

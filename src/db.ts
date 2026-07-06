@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType } from './types';
+import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate } from './types';
 import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase } from './firebase';
 
 // Price mapping for each grade
@@ -25,6 +25,8 @@ const STORAGE_KEYS = {
   EXAM_SCORES: 'abuzekry_exam_scores',
   WHATSAPP_TEMPLATES: 'abuzekry_templates',
   GRADE_PRICES: 'abuzekry_grade_prices',
+  BILLING_START_MONTH: 'abuzekry_billing_start_month',
+  GRADE_MONTH_DISCOUNTS: 'abuzekry_grade_month_discounts',
 };
 
 // Seed Data
@@ -355,6 +357,69 @@ class LocalDatabase {
 
   public getPrices(): Record<GradeType, number> {
     return this.get(STORAGE_KEYS.GRADE_PRICES, DEFAULT_GRADE_PRICES);
+  }
+
+  public getBillingStartMonth(): string {
+    return this.get(STORAGE_KEYS.BILLING_START_MONTH, 'أغسطس');
+  }
+
+  public setBillingStartMonth(month: string): void {
+    this.set(STORAGE_KEYS.BILLING_START_MONTH, month);
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
+      syncEntityToFirebase('billingStartMonth' as any, [month]);
+    }
+  }
+
+  public getGradeMonthDiscounts(): Array<{ id: string; grade: GradeType; month: string; discount: number }> {
+    return this.get(STORAGE_KEYS.GRADE_MONTH_DISCOUNTS, []);
+  }
+
+  public setGradeMonthDiscounts(discounts: Array<{ id: string; grade: GradeType; month: string; discount: number }>): void {
+    this.set(STORAGE_KEYS.GRADE_MONTH_DISCOUNTS, discounts);
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
+      syncEntityToFirebase('gradeMonthDiscounts' as any, discounts);
+    }
+  }
+
+  public isMonthBeforeStartMonth(month: string, startMonth: string): boolean {
+    const MONTHS = [
+      'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر', 'يناير',
+      'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو'
+    ];
+    const monthIdx = MONTHS.indexOf(month);
+    const startIdx = MONTHS.indexOf(startMonth);
+    if (monthIdx === -1 || startIdx === -1) return false;
+    return monthIdx < startIdx;
+  }
+
+  public calculateStudentDue(student: Student, month: string): number {
+    const prices = this.getPrices();
+    const basePrice = prices[student.grade] || 0;
+    
+    // Check global start month
+    const startMonth = this.getBillingStartMonth();
+    if (this.isMonthBeforeStartMonth(month, startMonth)) {
+      return 0;
+    }
+    
+    // Also check registration date check
+    if (doesMonthPrecedeDate(month, student.createdAt)) {
+      return 0;
+    }
+    
+    // Get grade month discount
+    const discounts = this.getGradeMonthDiscounts();
+    const gradeDiscount = discounts.find(d => d.grade === student.grade && d.month === month)?.discount || 0;
+    
+    const effectiveBasePrice = Math.max(0, basePrice - gradeDiscount);
+    
+    if (student.exemptionType === 'full') {
+      return 0;
+    } else if (student.exemptionType === 'partial') {
+      return Math.max(0, effectiveBasePrice - student.discountAmount);
+    } else {
+      return effectiveBasePrice;
+    }
   }
 
   // Firebase configuration toggle
@@ -819,6 +884,8 @@ class LocalDatabase {
       examScores: this.getExamScores(),
       templates: this.getTemplates(),
       prices: this.getPrices(),
+      billingStartMonth: this.getBillingStartMonth(),
+      gradeMonthDiscounts: this.getGradeMonthDiscounts(),
       version: '1.0.0',
       exportedAt: new Date().toISOString()
     };
@@ -836,6 +903,8 @@ class LocalDatabase {
       if (parsed.examScores) this.setExamScores(parsed.examScores);
       if (parsed.templates) this.setTemplates(parsed.templates);
       if (parsed.prices) this.setPrices(parsed.prices);
+      if (parsed.billingStartMonth) this.setBillingStartMonth(parsed.billingStartMonth);
+      if (parsed.gradeMonthDiscounts) this.setGradeMonthDiscounts(parsed.gradeMonthDiscounts);
       return true;
     } catch (e) {
       console.error('Import failure', e);
