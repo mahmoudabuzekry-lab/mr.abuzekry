@@ -73,6 +73,13 @@ export default function App() {
 
   // Active Teacher Panel Tab
   const [activeTeacherTab, setActiveTeacherTab] = useState<'dashboard' | 'students' | 'groups' | 'attendance' | 'finances' | 'exams' | 'whatsapp' | 'backup' | 'reports'>('dashboard');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Duplicates Finder & Manager States
+  const [selectedDuplicateGrade, setSelectedDuplicateGrade] = useState<GradeType>('الصف الرابع الابتدائي');
+  const [editingDupStudent, setEditingDupStudent] = useState<Student | null>(null);
+  const [deletingDupId, setDeletingDupId] = useState<string | null>(null);
+  const [duplicateSuccessMsg, setDuplicateSuccessMsg] = useState<string | null>(null);
 
   // Background Auto-Sync state
   const [autoSyncState, setAutoSyncState] = useState<'idle' | 'checking' | 'syncing' | 'synced' | 'offline' | 'error'>('idle');
@@ -456,6 +463,87 @@ export default function App() {
   const bestPerformingStudents = [...examScores]
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
+
+  const getDuplicateGroupsForGrade = (grade: GradeType) => {
+    const gradeStudents = students.filter(s => s.grade === grade && s.status === 'approved');
+    
+    const nameGroups: Record<string, Student[]> = {};
+    const phoneGroups: Record<string, Student[]> = {};
+    
+    gradeStudents.forEach(s => {
+      const normName = s.name.trim().replace(/\s+/g, ' ').toLowerCase();
+      const normPhone = s.parentPhone.trim().replace(/\D/g, '');
+      
+      if (normName) {
+        if (!nameGroups[normName]) nameGroups[normName] = [];
+        nameGroups[normName].push(s);
+      }
+      
+      if (normPhone && normPhone.length >= 8) {
+        if (!phoneGroups[normPhone]) phoneGroups[normPhone] = [];
+        phoneGroups[normPhone].push(s);
+      }
+    });
+    
+    const duplicateIds = new Set<string>();
+    
+    Object.values(nameGroups).forEach(group => {
+      if (group.length > 1) {
+        group.forEach(s => duplicateIds.add(s.id));
+      }
+    });
+    
+    Object.values(phoneGroups).forEach(group => {
+      if (group.length > 1) {
+        group.forEach(s => duplicateIds.add(s.id));
+      }
+    });
+    
+    const dups = gradeStudents.filter(s => duplicateIds.has(s.id));
+    const finalGroups: Array<{
+      key: string;
+      reason: 'name' | 'phone' | 'both';
+      students: Student[];
+    }> = [];
+    
+    const processedIds = new Set<string>();
+    
+    dups.forEach(student => {
+      if (processedIds.has(student.id)) return;
+      
+      const normName = student.name.trim().replace(/\s+/g, ' ').toLowerCase();
+      const normPhone = student.parentPhone.trim().replace(/\D/g, '');
+      
+      const related = dups.filter(s => {
+        const sName = s.name.trim().replace(/\s+/g, ' ').toLowerCase();
+        const sPhone = s.parentPhone.trim().replace(/\D/g, '');
+        
+        const nameMatch = sName === normName;
+        const phoneMatch = normPhone && sPhone && normPhone === sPhone;
+        
+        return nameMatch || phoneMatch;
+      });
+      
+      if (related.length > 0) {
+        related.forEach(s => processedIds.add(s.id));
+        
+        const uniqueNames = new Set(related.map(s => s.name.trim().replace(/\s+/g, ' ').toLowerCase()));
+        const uniquePhones = new Set(related.map(s => s.parentPhone.trim().replace(/\D/g, '')));
+        
+        let reason: 'name' | 'phone' | 'both' = 'name';
+        if (uniqueNames.size === 1 && uniquePhones.size === 1) reason = 'both';
+        else if (uniqueNames.size > 1 && uniquePhones.size === 1) reason = 'phone';
+        
+        finalGroups.push({
+          key: student.name,
+          reason,
+          students: related
+        });
+      }
+    });
+    
+    return finalGroups;
+  };
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] text-right" style={{ direction: 'rtl' }}>
@@ -859,155 +947,208 @@ export default function App() {
         {/* TEACHER (ADMIN) WORKSPACE                                 */}
         {/* ========================================================= */}
         {userRole === 'teacher' && (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 print:block print:w-full">
+          <div className="flex flex-col lg:flex-row gap-6 print:block print:w-full relative items-start">
             
             {/* Sidebar Navigation */}
-            <aside className="bg-[#0f172a] text-white rounded-2xl p-5 space-y-4 lg:col-span-1 h-fit shadow-md no-print">
-              <div className="border-b border-slate-800 pb-3 text-center lg:text-right font-sans">
-                <h3 className="font-bold text-white text-sm">لوحة إدارة الأستاذ محمود</h3>
-                <p className="text-[11px] text-slate-400">تحكم كامل بدفاتر ومستويات السنتر</p>
+            <aside className={`bg-[#0f172a] text-white rounded-3xl transition-all duration-300 shadow-xl no-print shrink-0 flex flex-col w-full ${
+              isSidebarCollapsed ? 'lg:w-20 p-4 space-y-3' : 'lg:w-72 p-5 space-y-4'
+            }`}>
+              <div className={`border-b border-slate-800 pb-3 flex items-center justify-between font-sans ${isSidebarCollapsed ? 'lg:flex-col lg:gap-2' : ''}`}>
+                <div className="text-right flex items-center gap-2">
+                  <div className="bg-blue-600/25 p-1.5 rounded-lg text-blue-400">
+                    <GraduationCap className="w-5 h-5" />
+                  </div>
+                  {!isSidebarCollapsed && (
+                    <div>
+                      <h3 className="font-bold text-white text-xs leading-none">لوحة إدارة الأستاذ محمود</h3>
+                      <p className="text-[10px] text-slate-400 mt-1 leading-none">دفاتر ومستويات السنتر</p>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Collapse Button (Desktop Only) */}
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                  className="hidden lg:flex p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white cursor-pointer transition-all items-center justify-center self-center"
+                  title={isSidebarCollapsed ? "توسيع القائمة" : "طي القائمة"}
+                >
+                  <ListOrdered className="w-4 h-4 transform rotate-180 text-slate-400" />
+                </button>
               </div>
 
-              <nav className="flex flex-col space-y-1">
+              {/* Navigation Items: displayed in 2 horizontal rows on mobile, vertical column on desktop */}
+              <nav className="grid grid-rows-2 grid-flow-col lg:flex lg:flex-col gap-2 lg:gap-1 overflow-x-auto lg:overflow-x-visible pb-2 lg:pb-0 scrollbar-none whitespace-nowrap lg:whitespace-normal">
                 <button
                   onClick={() => setActiveTeacherTab('dashboard')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'dashboard' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="اللوحة الإرشادية الكلية"
                 >
                   <span className="flex items-center gap-2">
-                    <Compass className="w-4 h-4" />
-                    اللوحة الإرشادية الكلية
+                    <Compass className="w-4 h-4 shrink-0 text-blue-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>اللوحة الإرشادية الكلية</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('students')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'students' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="المتعلمين والطلبات الجديدة"
                 >
                   <span className="flex items-center gap-2">
-                    <Users className="w-4 h-4" />
-                    المتعلمين والطلبات الجديدة
+                    <Users className="w-4 h-4 shrink-0 text-emerald-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>المتعلمين والطلبات الجديدة</span>
                   </span>
                   {pendingRequestsCount > 0 && (
-                    <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full font-sans font-extrabold">{pendingRequestsCount}</span>
+                    <span className={`text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full font-sans font-extrabold shrink-0 ${
+                      isSidebarCollapsed ? 'lg:absolute lg:top-1.5 lg:left-1.5 lg:translate-x-1/2 lg:-translate-y-1/2 lg:w-4.5 lg:h-4.5 lg:p-0 lg:flex lg:items-center lg:justify-center lg:text-[9px]' : 'mr-2'
+                    }`}>{pendingRequestsCount}</span>
                   )}
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('groups')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'groups' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="جدول وحجوزات المجموعات"
                 >
                   <span className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4" />
-                    جدول وحجوزات المجموعات
+                    <Calendar className="w-4 h-4 shrink-0 text-amber-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>جدول وحجوزات المجموعات</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('attendance')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'attendance' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="رصد التحضير والغياب الذكي"
                 >
                   <span className="flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    رصد التحضير والغياب الذكي
+                    <Clock className="w-4 h-4 shrink-0 text-indigo-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>رصد التحضير والغياب الذكي</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('finances')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'finances' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="المصروفات ودفتر الحسابات"
                 >
                   <span className="flex items-center gap-2">
-                    <CreditCard className="w-4 h-4" />
-                    المصروفات ودفتر الحسابات
+                    <CreditCard className="w-4 h-4 shrink-0 text-cyan-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>المصروفات ودفتر الحسابات</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('exams')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'exams' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="الاختبارات ورصد الدرجات"
                 >
                   <span className="flex items-center gap-2">
-                    <Award className="w-4 h-4" />
-                    الاختبارات ورصد الدرجات
+                    <Award className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>الاختبارات ورصد الدرجات</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('whatsapp')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'whatsapp' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="تهيئات قوالب WhatsApp"
                 >
                   <span className="flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4" />
-                    تهيئات قوالب WhatsApp
+                    <MessageSquare className="w-4 h-4 shrink-0 text-teal-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>تهيئات قوالب WhatsApp</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('reports')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'reports' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="قسم التقارير والتحليلات"
                 >
                   <span className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4" />
-                    قسم التقارير والتحليلات
+                    <TrendingUp className="w-4 h-4 shrink-0 text-purple-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>قسم التقارير والتحليلات</span>
                   </span>
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('backup')}
-                  className={`w-full py-2.5 px-3.5 text-xs font-semibold rounded-lg text-right flex items-center justify-between transition-all cursor-pointer ${
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
                     activeTeacherTab === 'backup' 
-                      ? 'bg-blue-600 text-white shadow-xs' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }`}
+                  title="النسخ الاحتياطي والصيانة"
                 >
                   <span className="flex items-center gap-2">
-                    <Database className="w-4 h-4" />
-                    النسخ الاحتياطي والصيانة
+                    <Database className="w-4 h-4 shrink-0 text-slate-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>النسخ الاحتياطي والصيانة</span>
                   </span>
                 </button>
               </nav>
 
-              <div className="pt-4 border-t border-slate-700 text-center">
-                <span className="bg-slate-800 text-slate-300 px-2.5 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider block">
-                  نظام الأستاذ محمود أبوذكري v1.0.0
-                </span>
-              </div>
+              {!isSidebarCollapsed && (
+                <div className="pt-4 border-t border-slate-800 text-center hidden lg:block">
+                  <span className="bg-slate-800 text-slate-300 px-2.5 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider block">
+                    نظام الأستاذ محمود أبوذكري v1.0.0
+                  </span>
+                </div>
+              )}
             </aside>
 
             {/* Layout Content wrapper */}
-            <div className="lg:col-span-3 space-y-6 print:block print:w-full">
+            <div className="flex-1 w-full space-y-6 print:block print:w-full overflow-hidden">
               
               {/* PANEL TAB 1: DASHBOARD STATS */}
               {activeTeacherTab === 'dashboard' && (
@@ -1060,6 +1201,326 @@ export default function App() {
                       <div className="bg-emerald-50 text-emerald-700 p-2.5 rounded-xl"><DollarSign className="w-5 h-5" /></div>
                     </div>
                   </div>
+
+                  {/* BRAND NEW SECTION 1: STUDENT COUNTS PER GRADE (أعداد طلاب كل صف على حدة) */}
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm text-right">
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border-b border-slate-100 pb-3">
+                      <div>
+                        <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5 justify-end">
+                          <GraduationCap className="w-5 h-5 text-indigo-600" />
+                          توزيع الطلاب المعتمدين حسب الصفوف الدراسية
+                        </h4>
+                        <p className="text-slate-400 text-[11px] mt-0.5">انقر على أي صف لمراجعة كاشف ومعالج الحسابات المكررة له مباشرة بالأسفل</p>
+                      </div>
+                      <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full font-bold self-start">إحصاء كلي دقيق</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                      {(['الصف الرابع الابتدائي', 'الصف الخامس الابتدائي', 'الصف السادس الابتدائي', 'الصف الأول الإعدادي', 'الصف الثاني الإعدادي', 'الصف الثالث الإعدادي'] as GradeType[]).map((grade) => {
+                        const count = students.filter(s => s.grade === grade && s.status === 'approved').length;
+                        const grpCount = groups.filter(g => g.grade === grade).length;
+                        const isSelected = selectedDuplicateGrade === grade;
+                        
+                        // Configuration for grade color and background
+                        const gradeCardConfigs: Record<GradeType, { bg: string; border: string; badgeBg: string; textBadge: string; textColor: string }> = {
+                          'الصف الرابع الابتدائي': { bg: 'bg-indigo-50/30', border: 'border-indigo-150', badgeBg: 'bg-indigo-100/60', textBadge: 'text-indigo-700', textColor: 'text-indigo-900' },
+                          'الصف الخامس الابتدائي': { bg: 'bg-emerald-50/30', border: 'border-emerald-150', badgeBg: 'bg-emerald-100/60', textBadge: 'text-emerald-700', textColor: 'text-emerald-900' },
+                          'الصف السادس الابتدائي': { bg: 'bg-sky-50/30', border: 'border-sky-150', badgeBg: 'bg-sky-100/60', textBadge: 'text-sky-700', textColor: 'text-sky-900' },
+                          'الصف الأول الإعدادي': { bg: 'bg-violet-50/30', border: 'border-violet-150', badgeBg: 'bg-violet-100/60', textBadge: 'text-violet-700', textColor: 'text-violet-900' },
+                          'الصف الثاني الإعدادي': { bg: 'bg-amber-50/30', border: 'border-amber-150', badgeBg: 'bg-amber-100/60', textBadge: 'text-amber-700', textColor: 'text-amber-900' },
+                          'الصف الثالث الإعدادي': { bg: 'bg-rose-50/30', border: 'border-rose-150', badgeBg: 'bg-rose-100/60', textBadge: 'text-rose-700', textColor: 'text-rose-900' }
+                        };
+                        const cfg = gradeCardConfigs[grade] || gradeCardConfigs['الصف الرابع الابتدائي'];
+
+                        return (
+                          <button
+                            key={grade}
+                            onClick={() => {
+                              setSelectedDuplicateGrade(grade);
+                              document.getElementById('duplicate-finder-section')?.scrollIntoView({ behavior: 'smooth' });
+                            }}
+                            className={`p-4 rounded-xl text-right border transition-all cursor-pointer ${cfg.bg} ${isSelected ? 'border-indigo-600 ring-2 ring-indigo-500/20 shadow-md' : `${cfg.border} hover:shadow-xs hover:border-slate-300`}`}
+                          >
+                            <h5 className="font-bold text-xs text-slate-700 leading-tight truncate">{grade.replace('الصف ', '')}</h5>
+                            <div className="mt-3 flex items-baseline gap-1 justify-end">
+                              <span className="text-xl font-black text-slate-800">{count}</span>
+                              <span className="text-[10px] text-slate-400 font-bold">طالب</span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between">
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${cfg.badgeBg} ${cfg.textBadge}`}>
+                                {grpCount} مجموعات
+                              </span>
+                              {isSelected && (
+                                <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-ping" />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* BRAND NEW SECTION 2: DUPLICATE STUDENTS FINDER & MANAGER (كاشف ومعالج الحسابات المكررة) */}
+                  <div id="duplicate-finder-section" className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm text-right">
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-slate-100 pb-3">
+                      <div>
+                        <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5 justify-end">
+                          <ShieldIcon className="w-5 h-5 text-rose-500 animate-pulse" />
+                          مستكشف ومعالج الحسابات المكررة بالصف
+                        </h4>
+                        <p className="text-slate-400 text-[11px] mt-0.5">يكتشف تلقائياً الطلاب الذين يمتلكون نفس الاسم أو نفس هاتف ولي الأمر لتنظيف وتعديل البيانات فوراً</p>
+                      </div>
+                      <div className="flex items-center gap-2 justify-end">
+                        <span className="text-xs font-bold text-slate-650 shrink-0">الصف المستهدف:</span>
+                        <select
+                          value={selectedDuplicateGrade}
+                          onChange={(e) => setSelectedDuplicateGrade(e.target.value as GradeType)}
+                          className="p-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none cursor-pointer text-slate-800 text-right"
+                        >
+                          {(['الصف الرابع الابتدائي', 'الصف الخامس الابتدائي', 'الصف السادس الابتدائي', 'الصف الأول الإعدادي', 'الصف الثاني الإعدادي', 'الصف الثالث الإعدادي'] as GradeType[]).map(g => (
+                            <option key={g} value={g}>{g}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {duplicateSuccessMsg && (
+                      <div className="p-3 bg-emerald-50 border border-emerald-250 text-emerald-855 text-emerald-800 rounded-xl text-xs font-bold text-center animate-in fade-in slide-in-from-top-1">
+                        {duplicateSuccessMsg}
+                      </div>
+                    )}
+
+                    {/* Duplicate matches logic */}
+                    {getDuplicateGroupsForGrade(selectedDuplicateGrade).length === 0 ? (
+                      <div className="text-center py-10 space-y-3 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 animate-in fade-in duration-350">
+                        <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-xl shadow-xs">🎉</div>
+                        <div>
+                          <p className="text-slate-700 font-bold text-xs">سجلات الصف نظيفة تماماً!</p>
+                          <p className="text-slate-400 text-[10px] mt-1">لا توجد حسابات مكررة بالاسم أو رقم الهاتف في {selectedDuplicateGrade}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <p className="text-xs text-rose-600 font-bold flex items-center gap-1 justify-end">
+                          <span>تم العثور على ({getDuplicateGroupsForGrade(selectedDuplicateGrade).length}) مجموعات تكرار محتملة بحاجة لاتخاذ إجراء:</span>
+                          <span className="w-2 h-2 rounded-full bg-rose-500 inline-block animate-ping" />
+                        </p>
+
+                        <div className="grid grid-cols-1 gap-4">
+                          {getDuplicateGroupsForGrade(selectedDuplicateGrade).map((group, idx) => (
+                            <div key={idx} className="bg-slate-50 border border-slate-200 rounded-2xl p-4 md:p-5 space-y-3">
+                              <div className="flex justify-between items-center border-b border-slate-150 pb-2">
+                                <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-md font-bold">
+                                  {group.reason === 'both' ? 'تطابق الاسم والهاتف ⚠️' : group.reason === 'phone' ? 'تطابق رقم هاتف ولي الأمر 📱' : 'تطابق الاسم الثنائي/الثلاثي 👤'}
+                                </span>
+                                <h5 className="font-extrabold text-xs text-slate-850">مجموعة التطابق: <strong className="text-slate-900">{group.key}</strong></h5>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                                {group.students.map((dupStudent) => {
+                                  const grp = groups.find(g => g.id === dupStudent.groupId);
+                                  const isDeleting = deletingDupId === dupStudent.id;
+
+                                  return (
+                                    <div key={dupStudent.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs relative hover:shadow-sm transition text-right">
+                                      {/* Header Info */}
+                                      <div className="space-y-2 text-right">
+                                        <div className="flex justify-between items-start">
+                                          <span className="font-mono font-bold text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md">
+                                            كود: {dupStudent.code}
+                                          </span>
+                                          <h6 className="font-extrabold text-xs text-slate-800">{dupStudent.name}</h6>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-[10px] text-slate-500 pt-2 border-t border-slate-100">
+                                          <div>
+                                            <span className="text-slate-400">رقم ولي الأمر:</span>
+                                            <span className="font-mono font-bold text-slate-700 block mt-0.5">{dupStudent.parentPhone}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-slate-400">المجموعة الحالية:</span>
+                                            <span className="font-bold text-slate-700 block mt-0.5 text-blue-650">{grp?.name || 'غير محددة'}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-slate-400">المدرسة:</span>
+                                            <span className="font-medium text-slate-700 block mt-0.5 truncate">{dupStudent.school || '—'}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-slate-400">تاريخ التسجيل:</span>
+                                            <span className="font-mono text-slate-700 block mt-0.5">{dupStudent.createdAt ? dupStudent.createdAt.split('T')[0] : '—'}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Action buttons inside student cards */}
+                                      <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
+                                        {/* Direct group transfer dropdown */}
+                                        <div className="flex items-center gap-1 text-[10px]">
+                                          <span className="text-slate-400 font-bold shrink-0">نقل لمجموعة:</span>
+                                          <select
+                                            value={dupStudent.groupId}
+                                            onChange={(e) => {
+                                              const updated = { ...dupStudent, groupId: e.target.value };
+                                              dbEngine.updateStudent(updated);
+                                              loadDatabase();
+                                              setDuplicateSuccessMsg(`تم نقل الطالب ${dupStudent.name} إلى المجموعة بنجاح 🎉`);
+                                              setTimeout(() => setDuplicateSuccessMsg(null), 3500);
+                                            }}
+                                            className="p-1 bg-slate-50 border border-slate-200 rounded text-[10px] font-bold text-slate-700 cursor-pointer max-w-[120px] truncate"
+                                          >
+                                            {groups.filter(g => g.grade === selectedDuplicateGrade).map(g => (
+                                              <option key={g.id} value={g.id}>{g.name}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        {/* Edit / Delete controllers */}
+                                        <div className="flex gap-1.5 justify-end">
+                                          {isDeleting ? (
+                                            <div className="flex items-center gap-1 animate-in fade-in zoom-in-95">
+                                              <button
+                                                onClick={() => {
+                                                  dbEngine.deleteStudent(dupStudent.id);
+                                                  loadDatabase();
+                                                  setDeletingDupId(null);
+                                                  setDuplicateSuccessMsg('تم حذف الحساب المكرر نهائياً بنجاح ✅');
+                                                  setTimeout(() => setDuplicateSuccessMsg(null), 3500);
+                                                }}
+                                                className="px-2 py-1 bg-red-600 text-white rounded text-[9px] font-bold hover:bg-red-700 cursor-pointer transition-all"
+                                              >
+                                                نعم، احذف
+                                              </button>
+                                              <button
+                                                onClick={() => setDeletingDupId(null)}
+                                                className="px-2 py-1 bg-slate-100 text-slate-500 border border-slate-200 rounded text-[9px] font-bold hover:bg-slate-200 cursor-pointer transition-all"
+                                              >
+                                                إلغاء
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <>
+                                              <button
+                                                onClick={() => setEditingDupStudent(dupStudent)}
+                                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-indigo-600 rounded-lg text-[10px] font-bold cursor-pointer transition"
+                                                title="تعديل البيانات"
+                                              >
+                                                تعديل
+                                              </button>
+                                              <button
+                                                onClick={() => setDeletingDupId(dupStudent.id)}
+                                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold cursor-pointer transition"
+                                                title="حذف الحساب المكرر"
+                                              >
+                                                حذف
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* EDIT DUP STUDENT MODAL */}
+                  {editingDupStudent && (
+                    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 text-right font-sans">
+                      <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl relative border border-slate-200 animate-in fade-in zoom-in-95 duration-150 text-right">
+                        <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                          <button 
+                            onClick={() => setEditingDupStudent(null)}
+                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-lg cursor-pointer transition"
+                          >
+                            X
+                          </button>
+                          <h4 className="font-extrabold text-slate-900 text-sm">تعديل بيانات الطالب المكرر</h4>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-500 block mb-1">اسم الطالب:</label>
+                            <input
+                              type="text"
+                              value={editingDupStudent.name}
+                              onChange={(e) => setEditingDupStudent({ ...editingDupStudent, name: e.target.value })}
+                              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:bg-white focus:border-indigo-500 text-right font-bold"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 block mb-1">كود الطالب:</label>
+                              <input
+                                type="text"
+                                value={editingDupStudent.code}
+                                onChange={(e) => setEditingDupStudent({ ...editingDupStudent, code: e.target.value })}
+                                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:bg-white focus:border-indigo-500 text-right font-bold font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-bold text-slate-500 block mb-1">هاتف ولي الأمر:</label>
+                              <input
+                                type="text"
+                                value={editingDupStudent.parentPhone}
+                                onChange={(e) => setEditingDupStudent({ ...editingDupStudent, parentPhone: e.target.value })}
+                                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:bg-white focus:border-indigo-500 text-right font-bold font-mono"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-500 block mb-1">المدرسة:</label>
+                            <input
+                              type="text"
+                              value={editingDupStudent.school || ''}
+                              onChange={(e) => setEditingDupStudent({ ...editingDupStudent, school: e.target.value })}
+                              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:bg-white focus:border-indigo-500 text-right font-medium"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[11px] font-bold text-slate-500 block mb-1">المجموعة الحالية:</label>
+                            <select
+                              value={editingDupStudent.groupId}
+                              onChange={(e) => setEditingDupStudent({ ...editingDupStudent, groupId: e.target.value })}
+                              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none cursor-pointer text-slate-800 text-right"
+                            >
+                              {groups.filter(g => g.grade === selectedDuplicateGrade).map(g => (
+                                <option key={g.id} value={g.id}>{g.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                          <button
+                            onClick={() => {
+                              dbEngine.updateStudent(editingDupStudent);
+                              loadDatabase();
+                              setEditingDupStudent(null);
+                              setDuplicateSuccessMsg('تم حفظ البيانات بنجاح ✅');
+                              setTimeout(() => setDuplicateSuccessMsg(null), 3000);
+                            }}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-xs"
+                          >
+                            حفظ التعديلات
+                          </button>
+                          <button
+                            onClick={() => setEditingDupStudent(null)}
+                            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer transition"
+                          >
+                            إلغاء
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Split Layout for Honor List and Approval pending list */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-sans">
@@ -1568,9 +2029,13 @@ export default function App() {
               <div className="relative">
                 <input
                   type="password"
-                  readOnly
+                  autoFocus
                   placeholder="••••••••"
                   value={secretInput}
+                  onChange={(e) => {
+                    setIsPasswordError(false);
+                    setSecretInput(e.target.value);
+                  }}
                   className="w-full px-4 py-3 bg-slate-950/60 border border-slate-700 rounded-xl text-center text-lg tracking-widest font-mono text-white outline-none focus:border-blue-500 transition-all placeholder:text-slate-700"
                 />
               </div>

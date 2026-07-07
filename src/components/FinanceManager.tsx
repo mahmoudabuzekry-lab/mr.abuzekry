@@ -3,14 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dbEngine } from '../db';
 import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName } from '../types';
 import { 
   DollarSign, Landmark, Filter, Search, Plus, Trash2, Printer, X, Download, 
   Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle,
-  Cloud, CloudOff, RefreshCw, Wifi, WifiOff, Server, Database
+  Cloud, CloudOff, RefreshCw, Wifi, WifiOff, Server, Database,
+  QrCode, Camera, HelpCircle, CheckCircle2
 } from 'lucide-react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import * as XLSX from 'xlsx';
 import { testConnection, getPendingQueue, fetchEntityFromFirebase } from '../firebase';
 
@@ -147,6 +149,105 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const [blankSheetGrade, setBlankSheetGrade] = useState<GradeType>('الصف الأول الإعدادي');
   const [blankSheetMonth, setBlankSheetMonth] = useState<string>('أكتوبر');
 
+  // QR Scanning States & Refs for recording payments
+  const [isFinanceCameraActive, setIsFinanceCameraActive] = useState(false);
+  const [financeScanSuccessMessage, setFinanceScanSuccessMessage] = useState<string | null>(null);
+  const [financeScanErrorMessage, setFinanceScanErrorMessage] = useState<string | null>(null);
+
+  const financeScannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const financeLastScannedRef = useRef<{ id: string; time: number } | null>(null);
+  const financeScanTimeoutRef = useRef<any>(null);
+
+  const processFinanceStudentQrScan = (studentId: string) => {
+    const student = students.find(s => s.id === studentId || s.code === studentId);
+    if (!student) {
+      setFinanceScanErrorMessage('عذراً، كود الطالب الممسوح غير مطابق لأي سجل أو قد يكون تالفاً!');
+      if (financeScanTimeoutRef.current) clearTimeout(financeScanTimeoutRef.current);
+      financeScanTimeoutRef.current = setTimeout(() => {
+        setFinanceScanErrorMessage(null);
+      }, 2500);
+      return;
+    }
+
+    const due = dbEngine.calculateStudentDue(student, paymentForm.month);
+    
+    setPaymentForm(prev => ({
+      ...prev,
+      studentId: student.id,
+      amountPaid: due
+    }));
+
+    setFinanceScanSuccessMessage(`تم التعرف على الطالب وتحديده بنجاح: ${student.name}`);
+    setIsFinanceCameraActive(false);
+    
+    // Stop the scanner immediately if active
+    if (financeScannerRef.current) {
+      financeScannerRef.current.clear().catch(err => console.error(err));
+      financeScannerRef.current = null;
+    }
+
+    if (financeScanTimeoutRef.current) clearTimeout(financeScanTimeoutRef.current);
+    financeScanTimeoutRef.current = setTimeout(() => {
+      setFinanceScanSuccessMessage(null);
+    }, 3000);
+  };
+
+  const startFinanceCameraScanner = () => {
+    setIsFinanceCameraActive(true);
+    setFinanceScanErrorMessage(null);
+    setTimeout(() => {
+      try {
+        const scanner = new Html5QrcodeScanner(
+          "finance-qr-reader-container",
+          { 
+            fps: 10, 
+            qrbox: { width: 220, height: 220 },
+            rememberLastUsedCamera: true
+          },
+          /* verbose= */ false
+        );
+        financeScannerRef.current = scanner;
+        
+        scanner.render(
+          (decodedText) => {
+            const now = Date.now();
+            if (financeLastScannedRef.current && financeLastScannedRef.current.id === decodedText && now - financeLastScannedRef.current.time < 3000) {
+              return; // Ignore rapid consecutive duplicate scans
+            }
+            financeLastScannedRef.current = { id: decodedText, time: now };
+            processFinanceStudentQrScan(decodedText);
+          },
+          (error) => {
+            // failure is common when sweeps across blank area
+          }
+        );
+      } catch (err) {
+        console.error("Finance camera startup fail", err);
+        setIsFinanceCameraActive(false);
+      }
+    }, 100);
+  };
+
+  const stopFinanceCameraScanner = () => {
+    if (financeScannerRef.current) {
+      financeScannerRef.current.clear().catch(err => console.error("Scanner clear fail", err));
+      financeScannerRef.current = null;
+    }
+    setIsFinanceCameraActive(false);
+  };
+
+  // Cleanup finance camera scanner on unmount
+  useEffect(() => {
+    return () => {
+      if (financeScannerRef.current) {
+        financeScannerRef.current.clear().catch(err => console.log(err));
+      }
+      if (financeScanTimeoutRef.current) {
+        clearTimeout(financeScanTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Form states for adding a discount
   const [discountGrade, setDiscountGrade] = useState<GradeType>('الصف الثالث الإعدادي');
   const [discountMonth, setDiscountMonth] = useState<string>('أكتوبر');
@@ -175,6 +276,39 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     dbEngine.setGradeMonthDiscounts(updated);
     setGradeMonthDiscounts(updated);
     onRefresh();
+  };
+
+  const handleAddSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const codeOrName = addSearchQuery.trim();
+      if (!codeOrName) return;
+
+      const found = students.find(s => 
+        s.status === 'approved' && 
+        (s.code.toLowerCase() === codeOrName.toLowerCase() || s.name === codeOrName)
+      );
+
+      if (found) {
+        const due = dbEngine.calculateStudentDue(found, paymentForm.month);
+        setPaymentForm({ ...paymentForm, studentId: found.id, amountPaid: due });
+        setFinanceScanSuccessMessage(`تم العثور على الطالب بنجاح باستخدام كود QR: ${found.name}`);
+        setTimeout(() => setFinanceScanSuccessMessage(null), 3000);
+      } else {
+        // Try loose match
+        const looseFound = students.filter(s => 
+          s.status === 'approved' && 
+          (s.code.toLowerCase().includes(codeOrName.toLowerCase()) || s.name.includes(codeOrName))
+        );
+        if (looseFound.length === 1) {
+          const matched = looseFound[0];
+          const due = dbEngine.calculateStudentDue(matched, paymentForm.month);
+          setPaymentForm({ ...paymentForm, studentId: matched.id, amountPaid: due });
+          setFinanceScanSuccessMessage(`تم التعرف تلقائياً على: ${matched.name}`);
+          setTimeout(() => setFinanceScanSuccessMessage(null), 3000);
+        }
+      }
+    }
   };
 
   // Record Payment Form State
@@ -874,18 +1008,44 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                 ) : (
                   // Search & Selection Area
                   <div className="space-y-4">
+                    {/* Floating messages for Scan */}
+                    {financeScanSuccessMessage && (
+                      <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-lg flex items-center gap-2 animate-in fade-in duration-200">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>{financeScanSuccessMessage}</span>
+                      </div>
+                    )}
+                    {financeScanErrorMessage && (
+                      <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-lg flex items-center gap-2 animate-in fade-in duration-200">
+                        <AlertTriangle className="w-4 h-4 text-rose-600" />
+                        <span>{financeScanErrorMessage}</span>
+                      </div>
+                    )}
+
                     {/* Filters Row */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      {/* Search box */}
-                      <div className="relative">
-                        <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
-                        <input
-                          type="text"
-                          placeholder="ابحث باسم الطالب أو الكود..."
-                          value={addSearchQuery}
-                          onChange={(e) => setAddSearchQuery(e.target.value)}
-                          className="w-full pr-9 pl-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs outline-none text-right transition-all"
-                        />
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      {/* Search box with QR Scanner button */}
+                      <div className="md:col-span-2 flex gap-2">
+                        <div className="relative flex-1">
+                          <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="ابحث باسم الطالب أو كود الـ QR..."
+                            value={addSearchQuery}
+                            onChange={(e) => setAddSearchQuery(e.target.value)}
+                            onKeyDown={handleAddSearchKeyDown}
+                            className="w-full pr-9 pl-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs outline-none text-right transition-all font-sans font-medium"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={startFinanceCameraScanner}
+                          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                          title="البحث السريع بمسح QR كود الطالب"
+                        >
+                          <QrCode className="w-4 h-4" />
+                          <span>مسح QR</span>
+                        </button>
                       </div>
 
                       {/* Grade Filter */}
@@ -896,7 +1056,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                             setAddFilterGrade(e.target.value);
                             setAddFilterGroupId('all'); // Reset group when grade changes
                           }}
-                          className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs outline-none text-right transition-all"
+                          className="w-full px-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs outline-none text-right transition-all font-sans font-bold"
                         >
                           <option value="all">كل الصفوف الدراسية</option>
                           <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
@@ -1005,9 +1165,63 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                         });
                       })()}
                     </div>
+
+                    {/* QR Simulation Bar for Finance */}
+                    <div className="bg-indigo-50/50 border border-indigo-150 rounded-xl p-3.5 text-right space-y-2.5">
+                      <div className="flex items-center gap-1.5 justify-start text-indigo-900">
+                        <HelpCircle className="w-3.5 h-3.5" />
+                        <h5 className="font-bold text-[11px] font-sans">محاكاة مسح QR كود الطالب (لتجربة الـ QR بغير كاميرا فعلية)</h5>
+                      </div>
+                      <p className="text-[10px] text-indigo-700/80 leading-relaxed">
+                        بما أنك بحاجة لتجربة الكود، انقر مباشرة على أي طالب لمحاكاة مسح كارت الـ QR الخاص به وتحديده لتسجيل اشتراكه فوراً:
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 justify-start">
+                        {students.filter(s => s.status === 'approved').slice(0, 6).map(s => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => processFinanceStudentQrScan(s.id)}
+                            className="px-2.5 py-1 bg-white border border-indigo-200 text-indigo-900 hover:bg-indigo-50 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                          >
+                            <QrCode className="w-3 h-3 text-indigo-600" />
+                            {s.name.split(' ')[0]} {s.name.split(' ')[1] || ''}
+                          </button>
+                        ))}
+                        {students.filter(s => s.status === 'approved').length > 6 && (
+                          <span className="text-[9px] text-slate-400 self-center">+ {students.filter(s => s.status === 'approved').length - 6} آخرين</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
+
+              {/* QR CAMERA SCREEN OVERLAY CONTAINER */}
+              {isFinanceCameraActive && (
+                <div className="fixed inset-0 z-50 bg-black/80 flex flex-col items-center justify-center p-4 no-print">
+                  <div className="bg-white rounded-xl p-6 max-w-md w-full space-y-4 text-center border border-slate-200">
+                    <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                      <h4 className="font-bold text-slate-900 text-sm">مسح كيو أر كود الطالب للحضور والمالية</h4>
+                      <button type="button" onClick={stopFinanceCameraScanner} className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 cursor-pointer">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <p className="text-xs text-slate-500">ضع رمز الـ QR Code الخاص بكارت الطالب أمام عدسة الكاميرا بوضوح تامة ليتم تحديده لتسجيل السداد.</p>
+                    
+                    {/* Real Reader target */}
+                    <div id="finance-qr-reader-container" className="w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-50"></div>
+
+                    <button
+                      type="button"
+                      onClick={stopFinanceCameraScanner}
+                      className="w-full py-2 bg-red-55 bg-red-50 text-red-600 hover:bg-red-100 font-bold text-xs rounded-lg border border-red-100 transition cursor-pointer"
+                    >
+                      إلغاء تشغيل الكاميرا
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Month */}
               <div>

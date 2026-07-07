@@ -232,7 +232,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
   const [notificationModal, setNotificationModal] = useState<{
     isOpen: boolean;
     student: Student | null;
-    templateType: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom';
+    templateType: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom' | 'registration_approved' | 'registration_rejected';
     messageText: string;
   }>({
     isOpen: false,
@@ -243,7 +243,8 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
 
   const formatNotificationTemplate = (
     templateText: string, 
-    student: Student
+    student: Student,
+    rejectionReason?: string
   ) => {
     let result = templateText;
     const group = groups.find(g => g.id === student.groupId);
@@ -264,7 +265,9 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
       '[التاريخ]': formattedDate,
       '[الصف_الدراسي]': student.grade,
       '[المبلغ]': String(prices[student.grade] || '0'),
-      '[الوقت]': timeNow
+      '[الوقت]': timeNow,
+      '[الكود]': student.code || '—',
+      '[السبب]': rejectionReason || '—'
     };
 
     Object.entries(replacements).forEach(([placeholder, value]) => {
@@ -276,7 +279,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
 
   const handleOpenNotificationModal = (student: Student) => {
     // Determine the logical default template type
-    let defaultType: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom' = 'attendance';
+    let defaultType: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom' | 'registration_approved' | 'registration_rejected' = 'attendance';
 
     // Load templates
     const templates = dbEngine.getTemplates();
@@ -292,7 +295,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
     });
   };
 
-  const handleTemplateTypeChange = (type: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom') => {
+  const handleTemplateTypeChange = (type: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom' | 'registration_approved' | 'registration_rejected') => {
     if (!notificationModal.student) return;
     
     const templates = dbEngine.getTemplates();
@@ -370,14 +373,108 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
     setActiveTab('all');
   };
 
+  // State for Approval Modal
+  const [approvalModal, setApprovalModal] = useState<{
+    isOpen: boolean;
+    student: Student | null;
+    sendWhatsApp: boolean;
+    messageText: string;
+  }>({
+    isOpen: false,
+    student: null,
+    sendWhatsApp: true,
+    messageText: '',
+  });
+
+  // State for Rejection Modal
+  const [rejectionModal, setRejectionModal] = useState<{
+    isOpen: boolean;
+    student: Student | null;
+    reason: string;
+    sendWhatsApp: boolean;
+    messageText: string;
+  }>({
+    isOpen: false,
+    student: null,
+    reason: 'عدم اكتمال البيانات الأساسية المطلوبة',
+    sendWhatsApp: true,
+    messageText: '',
+  });
+
   // Handle approval of requests
-  const handleApprove = (id: string) => {
-    dbEngine.updateStudentStatus(id, 'approved');
+  const handleApprove = (student: Student) => {
+    const templates = dbEngine.getTemplates();
+    const tpl = templates.find(t => t.type === 'registration_approved') || { text: 'تم قبول طلب تسجيل الطالب *[اسم_الطالب]* كود *[الكود]*' };
+    const text = formatNotificationTemplate(tpl.text, student);
+    setApprovalModal({
+      isOpen: true,
+      student,
+      sendWhatsApp: true,
+      messageText: text,
+    });
+  };
+
+  const handleReject = (student: Student) => {
+    const defaultReason = 'عدم اكتمال البيانات الأساسية المطلوبة';
+    const templates = dbEngine.getTemplates();
+    const tpl = templates.find(t => t.type === 'registration_rejected') || { text: 'نعتذر عن عدم قبول طلب تسجيل الطالب *[اسم_الطالب]* بسبب *[السبب]*' };
+    const text = formatNotificationTemplate(tpl.text, student, defaultReason);
+    setRejectionModal({
+      isOpen: true,
+      student,
+      reason: defaultReason,
+      sendWhatsApp: true,
+      messageText: text,
+    });
+  };
+
+  const handleRejectionReasonChange = (newReason: string) => {
+    if (!rejectionModal.student) return;
+    const templates = dbEngine.getTemplates();
+    const tpl = templates.find(t => t.type === 'registration_rejected') || { text: 'نعتذر عن عدم قبول طلب تسجيل الطالب *[اسم_الطالب]* بسبب *[السبب]*' };
+    const text = formatNotificationTemplate(tpl.text, rejectionModal.student, newReason === 'custom_reason' ? '' : newReason);
+    setRejectionModal(prev => ({
+      ...prev,
+      reason: newReason,
+      messageText: text,
+    }));
+  };
+
+  const confirmApprove = () => {
+    if (!approvalModal.student) return;
+    const s = approvalModal.student;
+    
+    dbEngine.updateStudentStatus(s.id, 'approved');
+    
+    if (approvalModal.sendWhatsApp && approvalModal.messageText.trim()) {
+      let cleanPhone = s.parentPhone.replace(/\D/g, '');
+      if (cleanPhone.startsWith('01')) {
+        cleanPhone = `20${cleanPhone}`;
+      }
+      const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(approvalModal.messageText)}`;
+      window.open(waUrl, '_blank');
+    }
+    
+    setApprovalModal({ isOpen: false, student: null, sendWhatsApp: true, messageText: '' });
     onRefresh();
   };
 
-  const handleReject = (id: string) => {
-    dbEngine.updateStudentStatus(id, 'rejected');
+  const confirmReject = () => {
+    if (!rejectionModal.student) return;
+    const s = rejectionModal.student;
+    
+    dbEngine.updateStudentStatus(s.id, 'rejected');
+    
+    if (rejectionModal.sendWhatsApp && rejectionModal.messageText.trim()) {
+      let cleanPhone = s.parentPhone.replace(/\D/g, '');
+      if (cleanPhone.startsWith('01')) {
+        cleanPhone = `20${cleanPhone}`;
+      }
+      const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(rejectionModal.messageText)}`;
+      window.open(waUrl, '_blank');
+    }
+    
+    setRejectionModal({ isOpen: false, student: null, reason: 'عدم اكتمال البيانات الأساسية المطلوبة', sendWhatsApp: true, messageText: '' });
     onRefresh();
   };
 
@@ -983,15 +1080,15 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                         <td className="py-4 px-6 text-center">
                           <div className="inline-flex space-x-1.5 space-x-reverse">
                             <button
-                              onClick={() => handleApprove(s.id)}
-                              className="px-3.5 py-1.5 bg-emerald-600 label-shadow text-white hover:bg-emerald-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                              onClick={() => handleApprove(s)}
+                              className="px-3.5 py-1.5 bg-emerald-600 label-shadow text-white hover:bg-emerald-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
                             >
                               <Check className="w-3.5 h-3.5" />
                               قبول واعتماد
                             </button>
                             <button
-                              onClick={() => handleReject(s.id)}
-                              className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                              onClick={() => handleReject(s)}
+                              className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
                             >
                               <X className="w-3.5 h-3.5" />
                               رفض الطلب
@@ -2484,6 +2581,195 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
               >
                 إلغاء وإغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* APPROVAL CONFIRMATION MODAL WITH WHATSAPP */}
+      {approvalModal.isOpen && approvalModal.student && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-center justify-center p-4 text-right">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 border border-slate-200">
+            <button 
+              onClick={() => setApprovalModal({ isOpen: false, student: null, sendWhatsApp: true, messageText: '' })}
+              className="absolute left-4 top-4 p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 rounded-lg cursor-pointer transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="space-y-1 pb-3 border-b border-slate-100">
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2 justify-end">
+                <CheckCircle className="w-5 h-5 text-emerald-600" />
+                تأكيد اعتماد وقبول طلب التسجيل
+              </h3>
+              <p className="text-slate-500 text-[11px]">
+                أنت على وشك قبول واعتماد طلب تسجيل الطالب: <strong className="text-slate-800">{approvalModal.student.name}</strong>
+              </p>
+            </div>
+
+            {/* Form Fields/Info */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-150 grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <span className="text-slate-400 block mb-0.5">الصف الدراسي:</span>
+                <span className="font-bold text-slate-700">{approvalModal.student.grade}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block mb-0.5">المجموعة المقترحة:</span>
+                <span className="font-bold text-slate-700">
+                  {groups.find(g => g.id === approvalModal.student?.groupId)?.name || 'مجموعة العلوم'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block mb-0.5">رقم ولي الأمر:</span>
+                <span className="font-mono font-bold text-slate-700">{approvalModal.student.parentPhone}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block mb-0.5">كود الطالب المؤقت:</span>
+                <span className="font-mono font-bold text-indigo-650">{approvalModal.student.code}</span>
+              </div>
+            </div>
+
+            {/* Toggle WhatsApp Send */}
+            <label className="flex items-center gap-2 justify-end cursor-pointer select-none py-1">
+              <span className="text-xs font-bold text-slate-700">إرسال رسالة ترحيب وقبول على WhatsApp لولي الأمر</span>
+              <input 
+                type="checkbox" 
+                checked={approvalModal.sendWhatsApp} 
+                onChange={(e) => setApprovalModal(prev => ({ ...prev, sendWhatsApp: e.target.checked }))}
+                className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-slate-300 rounded cursor-pointer animate-in duration-100"
+              />
+            </label>
+
+            {/* Message Preview Textarea */}
+            {approvalModal.sendWhatsApp && (
+              <div className="space-y-1.5 text-right animate-in fade-in slide-in-from-top-1 duration-200">
+                <label className="text-xs font-bold text-slate-600 block">معاينة وتعديل نص رسالة الترحيب والقبول:</label>
+                <textarea
+                  rows={4}
+                  value={approvalModal.messageText}
+                  onChange={(e) => setApprovalModal(prev => ({ ...prev, messageText: e.target.value }))}
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl text-xs outline-none transition text-right leading-relaxed font-sans"
+                />
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={confirmApprove}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                {approvalModal.sendWhatsApp ? <Send className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                {approvalModal.sendWhatsApp ? 'اعتماد وإرسال عبر WhatsApp' : 'اعتماد وقبول فقط'}
+              </button>
+              <button
+                onClick={() => setApprovalModal({ isOpen: false, student: null, sendWhatsApp: true, messageText: '' })}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REJECTION CONFIRMATION MODAL WITH REASON & WHATSAPP */}
+      {rejectionModal.isOpen && rejectionModal.student && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-center justify-center p-4 text-right">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 border border-slate-200">
+            <button 
+              onClick={() => setRejectionModal({ isOpen: false, student: null, reason: 'عدم اكتمال البيانات الأساسية المطلوبة', sendWhatsApp: true, messageText: '' })}
+              className="absolute left-4 top-4 p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 rounded-lg cursor-pointer transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="space-y-1 pb-3 border-b border-slate-100">
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2 justify-end">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+                تأكيد رفض طلب التسجيل
+              </h3>
+              <p className="text-slate-500 text-[11px]">
+                أنت على وشك رفض طلب تسجيل الطالب: <strong className="text-slate-800">{rejectionModal.student.name}</strong>
+              </p>
+            </div>
+
+            {/* Select Rejection Reason */}
+            <div className="space-y-1.5 text-right">
+              <label className="text-xs font-bold text-slate-700 block">اختر سبب رفض الطلب أولاً:</label>
+              <select
+                value={rejectionModal.reason}
+                onChange={(e) => handleRejectionReasonChange(e.target.value)}
+                className="w-full p-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-red-500 rounded-xl text-xs font-bold outline-none transition cursor-pointer"
+              >
+                <option value="عدم اكتمال البيانات الأساسية المطلوبة">عدم اكتمال البيانات الأساسية المطلوبة</option>
+                <option value="المجموعة المطلوبة ممتلئة بالكامل">المجموعة المطلوبة ممتلئة بالكامل</option>
+                <option value="عدم ملاءمة المواعيد المتاحة مع رغبة الطالب">عدم ملاءمة المواعيد المتاحة مع رغبة الطالب</option>
+                <option value="تكرار تقديم طلب تسجيل الطالب بالفعل">تكرار تقديم طلب تسجيل الطالب بالفعل</option>
+                <option value="custom_reason">بيان سبب مخصص آخر...</option>
+              </select>
+            </div>
+
+            {/* Custom Reason Input */}
+            {rejectionModal.reason === 'custom_reason' && (
+              <div className="space-y-1.5 text-right animate-in fade-in slide-in-from-top-1 duration-150">
+                <label className="text-xs font-bold text-slate-600 block">اكتب سبب الرفض بالتفصيل:</label>
+                <input
+                  type="text"
+                  placeholder="مثال: يرجى كتابة اسم المدرسة الحقيقي والتأكد من رقم ولي الأمر..."
+                  onChange={(e) => {
+                    const templates = dbEngine.getTemplates();
+                    const tpl = templates.find(t => t.type === 'registration_rejected') || { text: 'نعتذر عن عدم قبول طلب تسجيل الطالب *[اسم_الطالب]* بسبب *[السبب]*' };
+                    const text = formatNotificationTemplate(tpl.text, rejectionModal.student!, e.target.value || 'سبب مخصص');
+                    setRejectionModal(prev => ({
+                      ...prev,
+                      messageText: text
+                    }));
+                  }}
+                  className="w-full p-2.5 bg-white border border-slate-200 focus:border-red-500 focus:ring-1 focus:ring-red-500 rounded-xl text-xs outline-none text-right transition-all font-sans font-medium"
+                />
+              </div>
+            )}
+
+            {/* Toggle WhatsApp Send */}
+            <label className="flex items-center gap-2 justify-end cursor-pointer select-none py-1">
+              <span className="text-xs font-bold text-slate-700">إرسال رسالة اعتذار وتوضيح سبب الرفض على WhatsApp لولي الأمر</span>
+              <input 
+                type="checkbox" 
+                checked={rejectionModal.sendWhatsApp} 
+                onChange={(e) => setRejectionModal(prev => ({ ...prev, sendWhatsApp: e.target.checked }))}
+                className="w-4 h-4 text-red-600 focus:ring-red-500 border-slate-300 rounded cursor-pointer animate-in duration-100"
+              />
+            </label>
+
+            {/* Message Preview Textarea */}
+            {rejectionModal.sendWhatsApp && (
+              <div className="space-y-1.5 text-right animate-in fade-in slide-in-from-top-1 duration-200">
+                <label className="text-xs font-bold text-slate-600 block">معاينة وتعديل نص رسالة الاعتذار والرفض:</label>
+                <textarea
+                  rows={4}
+                  value={rejectionModal.messageText}
+                  onChange={(e) => setRejectionModal(prev => ({ ...prev, messageText: e.target.value }))}
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-red-500 rounded-xl text-xs outline-none transition text-right leading-relaxed font-sans"
+                />
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={confirmReject}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                {rejectionModal.sendWhatsApp ? <Send className="w-4 h-4" /> : <X className="w-4 h-4" />}
+                {rejectionModal.sendWhatsApp ? 'رفض وإرسال اعتذار عبر WhatsApp' : 'تأكيد الرفض فقط'}
+              </button>
+              <button
+                onClick={() => setRejectionModal({ isOpen: false, student: null, reason: 'عدم اكتمال البيانات الأساسية المطلوبة', sendWhatsApp: true, messageText: '' })}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء
               </button>
             </div>
           </div>

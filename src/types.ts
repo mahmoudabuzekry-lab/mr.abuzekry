@@ -90,7 +90,7 @@ export interface ExamScore {
 export interface WhatsAppTemplate {
   id: string;
   title: string;
-  type: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'exam_result' | 'announcement' | 'custom';
+  type: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'exam_result' | 'announcement' | 'custom' | 'registration_approved' | 'registration_rejected';
   text: string;
 }
 

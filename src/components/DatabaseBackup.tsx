@@ -37,6 +37,7 @@ interface DatabaseBackupProps {
 
 interface CloudMetrics {
   studentsCount: number;
+  pendingStudentsCount: number;
   groupsCount: number;
   paymentsCount: number;
   examsCount: number;
@@ -77,7 +78,8 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
   const [comparisonError, setComparisonError] = useState<string | null>(null);
 
   const localMetrics = {
-    studentsCount: dbEngine.getStudents().length,
+    studentsCount: dbEngine.getStudents().filter(s => s.status === 'approved').length,
+    pendingStudentsCount: dbEngine.getStudents().filter(s => s.status === 'pending').length,
     groupsCount: dbEngine.getGroups().length,
     paymentsCount: dbEngine.getPayments().length,
     examsCount: dbEngine.getExams().length
@@ -124,7 +126,8 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
       const lastUpdateStr = localStorage.getItem('abuzekry_last_firebase_sync') || null;
 
       setCloudMetrics({
-        studentsCount: cStudents?.items ? cStudents.items.length : 0,
+        studentsCount: cStudents?.items ? cStudents.items.filter((s: any) => s.status === 'approved').length : 0,
+        pendingStudentsCount: cStudents?.items ? cStudents.items.filter((s: any) => s.status === 'pending').length : 0,
         groupsCount: cGroups?.items ? cGroups.items.length : 0,
         paymentsCount: cPayments?.items ? cPayments.items.length : 0,
         examsCount: cExams?.items ? cExams.items.length : 0,
@@ -429,9 +432,10 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 font-semibold text-xs">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 font-semibold text-xs">
           {[
-            { label: 'الطلاب المسجلين', local: localMetrics.studentsCount, cloud: cloudMetrics?.studentsCount, icon: '👨‍🎓' },
+            { label: 'الطلاب المعتمدين', local: localMetrics.studentsCount, cloud: cloudMetrics?.studentsCount, icon: '👨‍🎓' },
+            { label: 'طلبات الانتظار', local: localMetrics.pendingStudentsCount, cloud: cloudMetrics?.pendingStudentsCount, icon: '⏳' },
             { label: 'المجموعات النشطة', local: localMetrics.groupsCount, cloud: cloudMetrics?.groupsCount, icon: '👥' },
             { label: 'المدفوعات والاشتراكات', local: localMetrics.paymentsCount, cloud: cloudMetrics?.paymentsCount, icon: '💵' },
             { label: 'الاختبارات المرصودة', local: localMetrics.examsCount, cloud: cloudMetrics?.examsCount, icon: '📝' }
