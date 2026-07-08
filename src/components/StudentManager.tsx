@@ -242,6 +242,26 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
     messageText: '',
   });
 
+  // Multi-select for bulk operations
+  const [selectedForBulk, setSelectedForBulk] = useState<string[]>([]);
+
+  // Bulk WhatsApp Modal state
+  const [bulkWhatsAppModal, setBulkWhatsAppModal] = useState<{
+    isOpen: boolean;
+    studentIds: string[];
+    currentIndex: number;
+    templateType: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom' | 'registration_approved' | 'registration_rejected';
+    messageText: string;
+    sentStatus: Record<string, 'pending' | 'opened'>;
+  }>({
+    isOpen: false,
+    studentIds: [],
+    currentIndex: 0,
+    templateType: 'registration_approved',
+    messageText: '',
+    sentStatus: {}
+  });
+
   const formatNotificationTemplate = (
     templateText: string, 
     student: Student,
@@ -323,6 +343,138 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
     window.open(waUrl, '_blank');
     
     setNotificationModal(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const handleOpenRegistrationSuccessModal = (student: Student) => {
+    const templates = dbEngine.getTemplates();
+    const tpl = templates.find(t => t.type === 'registration_approved') || { text: 'ولي الأمر العزيز، يسعدنا إعلامكم بقبول واعتماد طلب تسجيل الطالب...' };
+    const formattedText = formatNotificationTemplate(tpl.text, student);
+    setNotificationModal({
+      isOpen: true,
+      student,
+      templateType: 'registration_approved',
+      messageText: formattedText
+    });
+  };
+
+  const handleOpenBulkWhatsAppModal = (
+    studentIds: string[], 
+    defaultType: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom' | 'registration_approved' | 'registration_rejected' = 'registration_approved'
+  ) => {
+    const initialStatus: Record<string, 'pending' | 'opened'> = {};
+    studentIds.forEach(id => {
+      initialStatus[id] = 'pending';
+    });
+
+    const firstStudent = students.find(s => s.id === studentIds[0]);
+    let initialMsg = '';
+    if (firstStudent) {
+      const templates = dbEngine.getTemplates();
+      const tpl = templates.find(t => t.type === defaultType) || { text: '' };
+      initialMsg = formatNotificationTemplate(tpl.text, firstStudent);
+    }
+
+    setBulkWhatsAppModal({
+      isOpen: true,
+      studentIds,
+      currentIndex: 0,
+      templateType: defaultType,
+      messageText: initialMsg,
+      sentStatus: initialStatus
+    });
+  };
+
+  const handleBulkTemplateChange = (type: 'attendance' | 'checkout' | 'absence' | 'payment_reminder' | 'announcement' | 'custom' | 'registration_approved' | 'registration_rejected') => {
+    const currentStudentId = bulkWhatsAppModal.studentIds[bulkWhatsAppModal.currentIndex];
+    const student = students.find(s => s.id === currentStudentId);
+    if (student) {
+      const templates = dbEngine.getTemplates();
+      const tpl = templates.find(t => t.type === type) || { text: '' };
+      const text = formatNotificationTemplate(tpl.text, student);
+      setBulkWhatsAppModal(prev => ({
+        ...prev,
+        templateType: type,
+        messageText: text
+      }));
+    }
+  };
+
+  const updateBulkMessageTextForIndex = (index: number, templateType: any, ids: string[]) => {
+    const currentStudentId = ids[index];
+    const student = students.find(s => s.id === currentStudentId);
+    if (student) {
+      const templates = dbEngine.getTemplates();
+      const tpl = templates.find(t => t.type === templateType) || { text: '' };
+      return formatNotificationTemplate(tpl.text, student);
+    }
+    return '';
+  };
+
+  const handleSendCurrentBulkWhatsApp = () => {
+    const { studentIds, currentIndex, templateType, sentStatus, messageText } = bulkWhatsAppModal;
+    const currentStudentId = studentIds[currentIndex];
+    const student = students.find(s => s.id === currentStudentId);
+    if (!student) return;
+
+    let cleanPhone = student.parentPhone.replace(/\D/g, '');
+    if (cleanPhone.startsWith('01')) {
+      cleanPhone = `20${cleanPhone}`; // Egypt country code
+    }
+
+    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(messageText)}`;
+    window.open(waUrl, '_blank');
+
+    const updatedStatus = { ...sentStatus, [currentStudentId]: 'opened' as const };
+    const nextIndex = currentIndex + 1;
+
+    if (nextIndex < studentIds.length) {
+      const nextMsgText = updateBulkMessageTextForIndex(nextIndex, templateType, studentIds);
+      setBulkWhatsAppModal(prev => ({
+        ...prev,
+        currentIndex: nextIndex,
+        sentStatus: updatedStatus,
+        messageText: nextMsgText
+      }));
+    } else {
+      setBulkWhatsAppModal(prev => ({
+        ...prev,
+        currentIndex: nextIndex,
+        sentStatus: updatedStatus,
+        messageText: ''
+      }));
+    }
+  };
+
+  const handleSkipCurrentBulk = () => {
+    const { studentIds, currentIndex, templateType } = bulkWhatsAppModal;
+    const nextIndex = currentIndex + 1;
+
+    if (nextIndex < studentIds.length) {
+      const nextMsgText = updateBulkMessageTextForIndex(nextIndex, templateType, studentIds);
+      setBulkWhatsAppModal(prev => ({
+        ...prev,
+        currentIndex: nextIndex,
+        messageText: nextMsgText
+      }));
+    } else {
+      setBulkWhatsAppModal(prev => ({
+        ...prev,
+        currentIndex: nextIndex,
+        messageText: ''
+      }));
+    }
+  };
+
+  const handleSelectBulkQueueIndex = (index: number) => {
+    const { studentIds, templateType } = bulkWhatsAppModal;
+    if (index >= 0 && index < studentIds.length) {
+      const msgText = updateBulkMessageTextForIndex(index, templateType, studentIds);
+      setBulkWhatsAppModal(prev => ({
+        ...prev,
+        currentIndex: index,
+        messageText: msgText
+      }));
+    }
   };
 
   // Handle manual additions
@@ -950,6 +1102,21 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
             <table className="w-full text-right border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50/70 text-slate-600 font-bold border-b border-slate-200">
+                  <th className="py-3 px-4 font-semibold w-10">
+                    <input
+                      type="checkbox"
+                      checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedForBulk.includes(s.id))}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const allIds = filteredStudents.map(s => s.id);
+                          setSelectedForBulk(allIds);
+                        } else {
+                          setSelectedForBulk([]);
+                        }
+                      }}
+                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer accent-indigo-650"
+                    />
+                  </th>
                   <th className="py-3 px-6 font-semibold">كود الطالب</th>
                   <th className="py-3 px-6 font-semibold">اسم الطالب</th>
                   <th className="py-3 px-6 font-semibold">الصف والمجموعة</th>
@@ -962,15 +1129,30 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
               <tbody className="divide-y divide-slate-100">
                 {filteredStudents.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-10 text-slate-405">
+                    <td colSpan={8} className="text-center py-10 text-slate-405">
                       لا يوجد متعلمين يطابقون خيارات التصفية المدخلة.
                     </td>
                   </tr>
                 ) : (
                   filteredStudents.map((s) => {
                     const group = groups.find(g => g.id === s.groupId);
+                    const isSelected = selectedForBulk.includes(s.id);
                     return (
-                      <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
+                      <tr key={s.id} className={`hover:bg-slate-50/50 transition-colors ${isSelected ? 'bg-indigo-50/30' : ''}`}>
+                        <td className="py-3.5 px-4 w-10">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedForBulk(prev => [...prev, s.id]);
+                              } else {
+                                setSelectedForBulk(prev => prev.filter(id => id !== s.id));
+                              }
+                            }}
+                            className="w-4 h-4 rounded text-indigo-650 focus:ring-indigo-500 border-slate-300 cursor-pointer accent-indigo-650"
+                          />
+                        </td>
                         <td className="py-3.5 px-6 font-mono font-medium text-slate-900">{s.code}</td>
                         <td className="py-3.5 px-6">
                           <div className="font-bold text-slate-800">{s.name}</div>
@@ -1006,9 +1188,16 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                             <QrCode className="w-3.5 h-3.5" />
                           </button>
                           <button
+                            onClick={() => handleOpenRegistrationSuccessModal(s)}
+                            title="إرسال إشعار نجاح التسجيل لولي الأمر (WhatsApp)"
+                            className="p-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg inline-flex items-center transition-all border border-emerald-100 cursor-pointer"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-650" />
+                          </button>
+                          <button
                             onClick={() => handleOpenNotificationModal(s)}
                             title="إرسال إشعار WhatsApp ذكي"
-                            className="p-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg inline-flex items-center transition-all border border-emerald-100 cursor-pointer"
+                            className="p-1.5 bg-slate-50 text-slate-700 hover:bg-slate-100 rounded-lg inline-flex items-center transition-all border border-slate-200 cursor-pointer"
                           >
                             <MessageSquare className="w-3.5 h-3.5" />
                           </button>
@@ -1022,7 +1211,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                           <button
                             onClick={() => handleDelete(s)}
                             title="حذف الطالب"
-                            className="p-1.5 bg-red-50 text-red-650 hover:bg-red-100 rounded-lg inline-flex items-center transition-all border border-red-100 cursor-pointer"
+                            className="p-1.5 bg-red-50 text-red-655 hover:bg-red-100 rounded-lg inline-flex items-center transition-all border border-red-100 cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -2629,11 +2818,13 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                   onChange={(e) => handleTemplateTypeChange(e.target.value as any)}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl text-xs font-bold outline-none transition cursor-pointer"
                 >
+                  <option value="registration_approved">🎉 قبول واعتماد طلب التسجيل</option>
                   <option value="attendance">✅ حضور الطالب اليوم</option>
                   <option value="checkout">🚶‍♂️ انصراف وخروج الطالب</option>
                   <option value="absence">⚠️ غياب الطالب عن الحصة</option>
                   <option value="payment_reminder">🧾 تذكير بالمصروفات الشهرية</option>
                   <option value="announcement">📢 إعلان عام للمجموعة</option>
+                  <option value="registration_rejected">❌ اعتذار/رفض طلب التسجيل</option>
                   <option value="custom">✍️ إشعار مخصص حر (مخصوص)</option>
                 </select>
               </div>
@@ -2680,6 +2871,215 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
               >
                 إلغاء وإغلاق
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Bulk Operations Bar */}
+      {selectedForBulk.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[45] bg-slate-900/95 backdrop-blur-md border border-slate-800 text-white px-6 py-4 rounded-2xl shadow-2xl flex flex-col md:flex-row items-center gap-4 animate-in slide-in-from-bottom-10 duration-300 max-w-2xl w-[90%] justify-between no-print">
+          <div className="flex items-center gap-3">
+            <span className="bg-indigo-600 text-white text-xs font-black px-3 py-1 rounded-full">{selectedForBulk.length}</span>
+            <span className="text-xs font-semibold text-slate-200">طالب تم تحديدهم لإجراء مجمع</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => handleOpenBulkWhatsAppModal(selectedForBulk, 'registration_approved')}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <Send className="w-3.5 h-3.5" />
+              إرسال مجمع (نجاح التسجيل)
+            </button>
+            <button
+              onClick={() => handleOpenBulkWhatsAppModal(selectedForBulk, 'attendance')}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              إرسال إشعار مجمع آخر
+            </button>
+            <button
+              onClick={() => setSelectedForBulk([])}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-xs font-medium transition cursor-pointer"
+            >
+              إلغاء التحديد
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* BULK WHATSAPP SENDER MODAL */}
+      {bulkWhatsAppModal.isOpen && bulkWhatsAppModal.studentIds.length > 0 && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4 text-right no-print">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-6 space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 border border-slate-200">
+            <button 
+              onClick={() => setBulkWhatsAppModal(prev => ({ ...prev, isOpen: false }))}
+              className="absolute left-4 top-4 p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 rounded-lg cursor-pointer transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="space-y-1 pb-3 border-b border-slate-100">
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2 justify-end">
+                <Sparkles className="w-5 h-5 text-emerald-600 animate-pulse" />
+                بوابة الإرسال الجماعي الذكي عبر WhatsApp 🚀
+              </h3>
+              <p className="text-slate-500 text-[11px]">
+                تتيح لك هذه الأداة مراجعة وإرسال الرسائل لـ <strong className="text-slate-800">({bulkWhatsAppModal.studentIds.length})</strong> طالب محدد واحد تلو الآخر لتجنب الحظر وبشكل متتالي سريع ومريح.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Sidebar: Selected Students Queue */}
+              <div className="md:col-span-1 border border-slate-200 rounded-2xl p-4 bg-slate-50/50 space-y-3 flex flex-col h-[420px]">
+                <h4 className="text-xs font-black text-slate-700 border-b border-slate-200 pb-2 flex items-center justify-between">
+                  <span>طابور المتقدمين</span>
+                  <span className="bg-slate-200/80 text-slate-750 px-2 py-0.5 rounded font-mono font-bold">
+                    {bulkWhatsAppModal.studentIds.filter(id => bulkWhatsAppModal.sentStatus[id] === 'opened').length} / {bulkWhatsAppModal.studentIds.length} تم فتحهم
+                  </span>
+                </h4>
+                <div className="overflow-y-auto flex-1 divide-y divide-slate-100 pr-1 space-y-1.5">
+                  {bulkWhatsAppModal.studentIds.map((id, index) => {
+                    const student = students.find(s => s.id === id);
+                    if (!student) return null;
+                    const isActive = index === bulkWhatsAppModal.currentIndex;
+                    const isOpened = bulkWhatsAppModal.sentStatus[id] === 'opened';
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => handleSelectBulkQueueIndex(index)}
+                        className={`w-full text-right p-2.5 rounded-xl transition-all border flex items-center justify-between cursor-pointer ${
+                          isActive 
+                            ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs' 
+                            : isOpened 
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-100' 
+                              : 'bg-white hover:bg-slate-100 border-slate-200'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1 pl-2">
+                          <p className={`text-xs truncate ${isActive ? 'text-white' : 'text-slate-800 font-bold'}`}>{student.name}</p>
+                          <p className={`text-[10px] ${isActive ? 'text-indigo-200' : 'text-slate-400 font-medium'} mt-0.5`}>
+                            {student.grade}
+                          </p>
+                        </div>
+                        <div className="shrink-0">
+                          {isOpened ? (
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isActive ? 'bg-white text-indigo-600' : 'bg-emerald-100 text-emerald-800'}`}>
+                              تم التوجيه
+                            </span>
+                          ) : (
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isActive ? 'bg-indigo-700 text-white' : 'bg-slate-150 text-slate-600'}`}>
+                              انتظار
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Main Area: Composer for Active Student */}
+              <div className="md:col-span-2 space-y-4 flex flex-col h-[420px] justify-between">
+                {bulkWhatsAppModal.currentIndex < bulkWhatsAppModal.studentIds.length ? (
+                  (() => {
+                    const activeStudentId = bulkWhatsAppModal.studentIds[bulkWhatsAppModal.currentIndex];
+                    const student = students.find(s => s.id === activeStudentId);
+                    if (!student) return null;
+                    return (
+                      <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+                        {/* Selected Template Control */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-1 text-right">
+                            <label className="text-xs font-bold text-slate-600 block">قالب الإرسال للمجموعة الحالية</label>
+                            <select
+                              value={bulkWhatsAppModal.templateType}
+                              onChange={(e) => handleBulkTemplateChange(e.target.value as any)}
+                              className="w-full p-2.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl text-xs font-bold outline-none cursor-pointer"
+                            >
+                              <option value="registration_approved">🎉 قبول واعتماد طلب التسجيل</option>
+                              <option value="attendance">✅ حضور الطالب اليوم</option>
+                              <option value="checkout">🚶‍♂️ انصراف وخروج الطالب</option>
+                              <option value="absence">⚠️ غياب الطالب عن الحصة</option>
+                              <option value="payment_reminder">🧾 تذكير بالمصروفات الشهرية</option>
+                              <option value="announcement">📢 إعلان عام للمجموعة</option>
+                              <option value="registration_rejected">❌ اعتذار/رفض طلب التسجيل</option>
+                              <option value="custom">✍️ إشعار مخصص حر (مخصوص)</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1 text-right">
+                            <label className="text-xs font-bold text-slate-600 block">الطالب الحالي ({bulkWhatsAppModal.currentIndex + 1} من {bulkWhatsAppModal.studentIds.length})</label>
+                            <div className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800">
+                              {student.name} | {student.parentPhone}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* TextArea Composer */}
+                        <div className="space-y-1.5 text-right flex-1 flex flex-col">
+                          <label className="text-xs font-bold text-slate-600 block">محتوى الرسالة الفردية التنبيهية</label>
+                          <textarea
+                            rows={6}
+                            value={bulkWhatsAppModal.messageText}
+                            onChange={(e) => setBulkWhatsAppModal(prev => ({ ...prev, messageText: e.target.value }))}
+                            className="w-full p-3.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl text-xs outline-none transition text-right leading-relaxed font-sans resize-none flex-1"
+                          />
+                        </div>
+
+                        <div className="bg-emerald-50/50 border border-emerald-100 p-3 rounded-xl text-[10.5px] leading-relaxed flex items-start gap-2 text-emerald-900 font-medium">
+                          <Info className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                          <div>
+                            عند النقر على إرسال، سيتم تلقائياً فتح رابط محادثة WhatsApp لولي الأمر <strong className="text-emerald-950">{student.name}</strong>، ويتم نقلك تلقائياً للطالب التالي في طابور الانتظار بالأسفل!
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-8 space-y-4">
+                    <div className="w-16 h-16 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center animate-bounce">
+                      <CheckCircle className="w-8 h-8" />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-base font-extrabold text-slate-900">اكتمل طابور الإرسال الجماعي بنجاح! 🎉</h4>
+                      <p className="text-xs text-slate-500 max-w-md">
+                        لقد قمت بمراجعة وتوجيه جميع رسائل الطلاب المحددة في الطابور بنجاح. يمكنك الآن إغلاق البوابة أو إلغاء التحديد.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Footer Controls */}
+                <div className="flex justify-end gap-2 pt-4 border-t border-slate-100 mt-2">
+                  {bulkWhatsAppModal.currentIndex < bulkWhatsAppModal.studentIds.length ? (
+                    <>
+                      <button
+                        onClick={handleSendCurrentBulkWhatsApp}
+                        className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                      >
+                        <Send className="w-4 h-4" />
+                        توجيه وإرسال الحالي 🚀
+                      </button>
+                      <button
+                        onClick={handleSkipCurrentBulk}
+                        className="px-4 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        تخطي الحالي ⏭️
+                      </button>
+                    </>
+                  ) : null}
+                  <button
+                    onClick={() => {
+                      setBulkWhatsAppModal(prev => ({ ...prev, isOpen: false }));
+                      setSelectedForBulk([]);
+                    }}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    إغلاق البوابة
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
