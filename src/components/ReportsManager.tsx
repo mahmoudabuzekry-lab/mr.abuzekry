@@ -14,6 +14,102 @@ import {
   Trash2, X, MessageSquare, ListTodo
 } from 'lucide-react';
 
+const ARABIC_DAYS_MAP: { [key: string]: number } = {
+  'الأحد': 0,
+  'الاثنين': 1,
+  'الثلاثاء': 2,
+  'الأربعاء': 3,
+  'الخميس': 4,
+  'الجمعة': 5,
+  'السبت': 6
+};
+
+const ARABIC_MONTHS_MAP: { [key: string]: number } = {
+  'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4,
+  'مايو': 5, 'يونيو': 6, 'يوليو': 7, 'أغسطس': 8,
+  'سبتمبر': 9, 'أكتوبر': 10, 'نوفمبر': 11, 'ديسمبر': 12
+};
+
+const getGroupDays = (dayStr: string): string[] => {
+  if (!dayStr) return [];
+  return dayStr
+    .split(/ و |,|،|and/)
+    .map(d => d.trim())
+    .filter(Boolean);
+};
+
+const getGroupSessionsInMonth = (group: Group, monthStr: string) => {
+  const parts = monthStr.split(/\s+/).filter(Boolean);
+  let month = new Date().getMonth() + 1;
+  let year = new Date().getFullYear();
+  
+  for (const part of parts) {
+    for (const [mName, mVal] of Object.entries(ARABIC_MONTHS_MAP)) {
+      if (part.includes(mName)) {
+        month = mVal;
+        break;
+      }
+    }
+    const parsedNum = parseInt(part, 10);
+    if (!isNaN(parsedNum) && parsedNum > 1900) {
+      year = parsedNum;
+    }
+  }
+
+  const daysOfGroup = getGroupDays(group.day);
+  const dayIndices = daysOfGroup.map(d => ARABIC_DAYS_MAP[d]).filter(idx => idx !== undefined);
+
+  if (dayIndices.length === 0) {
+    return Array.from({ length: 6 }).map((_, i) => ({
+      label: `حصة ${i + 1}`,
+      dateStr: `حصة ${i + 1}`
+    }));
+  }
+
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const sessions: { label: string; dateStr: string }[] = [];
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateObj = new Date(year, month - 1, d);
+    const dayOfWeek = dateObj.getDay();
+    if (dayIndices.includes(dayOfWeek)) {
+      const dayName = Object.keys(ARABIC_DAYS_MAP).find(k => ARABIC_DAYS_MAP[k] === dayOfWeek) || '';
+      sessions.push({
+        label: `${dayName} ${d}/${month}`,
+        dateStr: `${d}/${month}`
+      });
+    }
+  }
+
+  if (sessions.length === 0) {
+    return Array.from({ length: 6 }).map((_, i) => ({
+      label: `حصة ${i + 1}`,
+      dateStr: `حصة ${i + 1}`
+    }));
+  }
+
+  return sessions;
+};
+
+const getAttendanceHeaders = (groupId: string, grade: string, monthStr: string, groups: Group[]) => {
+  if (groupId !== 'all') {
+    const group = groups.find(g => g.id === groupId);
+    if (group) {
+      return getGroupSessionsInMonth(group, monthStr);
+    }
+  } else if (grade !== 'all') {
+    const gradeGroups = groups.filter(g => g.grade === grade);
+    if (gradeGroups.length > 0) {
+      return getGroupSessionsInMonth(gradeGroups[0], monthStr);
+    }
+  }
+  
+  return Array.from({ length: 8 }).map((_, i) => ({
+    label: `حصة ${i + 1}`,
+    dateStr: `حصة ${i + 1}`
+  }));
+};
+
 interface ReportsManagerProps {
   students: Student[];
   groups: Group[];
@@ -36,7 +132,8 @@ export default function ReportsManager({
   onRefresh
 }: ReportsManagerProps) {
   // Tabs
-  const [activeTab, setActiveTab] = useState<'financial' | 'revenues' | 'attendance' | 'exams' | 'studentCard'>('financial');
+  const [activeTab, setActiveTab] = useState<'financial' | 'revenues' | 'attendance' | 'exams' | 'studentCard' | 'revisionSheets'>('financial');
+  const [rosterType, setRosterType] = useState<'revision' | 'attendance' | 'collection'>('revision');
 
   // Revenues filter state
   const [revenueViewMode, setRevenueViewMode] = useState<'daily' | 'monthly'>('daily');
@@ -107,10 +204,33 @@ export default function ReportsManager({
     });
   }, [students, selectedGrade, selectedGroupId]);
 
+  // Helper: Calculate dynamic attendance headers
+  const activeHeaders = useMemo(() => {
+    return getAttendanceHeaders(selectedGroupId, selectedGrade, selectedMonth, groups);
+  }, [selectedGroupId, selectedGrade, selectedMonth, groups]);
+
   // Helper: Filter groups based on grade selection
   const filteredGroups = useMemo(() => {
     return groups.filter(g => selectedGrade === 'all' || g.grade === selectedGrade);
   }, [groups, selectedGrade]);
+
+  // Group approved students by grade for quick overview & bulk grade printing
+  const studentsByGrade = useMemo(() => {
+    const map: Record<GradeType, Student[]> = {
+      'الصف الرابع الابتدائي': [],
+      'الصف الخامس الابتدائي': [],
+      'الصف السادس الابتدائي': [],
+      'الصف الأول الإعدادي': [],
+      'الصف الثاني الإعدادي': [],
+      'الصف الثالث الإعدادي': []
+    };
+    students.forEach(s => {
+      if (s.status === 'approved' && s.grade in map) {
+        map[s.grade].push(s);
+      }
+    });
+    return map;
+  }, [students]);
 
   // Handle grade change and reset group
   const handleGradeChange = (grade: 'all' | GradeType) => {
@@ -190,6 +310,65 @@ export default function ReportsManager({
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'تقرير_الاشتراكات');
     XLSX.writeFile(workbook, `التقرير_المالي_العلوم_${selectedMonth.replace(' ', '_')}.xlsx`);
+  };
+
+  const handleExportRosterToExcel = (gradeName: string, list: Student[]) => {
+    let data: any[] = [];
+    let sheetName = '';
+    let fileName = '';
+
+    if (rosterType === 'revision') {
+      data = list.map((s, index) => ({
+        'م': index + 1,
+        'كود الطالب': s.code,
+        'الاسم الكامل': s.name,
+        'الصف الدراسي': s.grade,
+        'المجموعة': groups.find(g => g.id === s.groupId)?.name || 'غير محدد',
+        'تليفون الطالب': s.phone || '—',
+        'تليفون ولي الأمر': s.parentPhone,
+        'المدرسة': s.school || '—',
+        'تعديل البيانات (يدوي)': '',
+        'تأكيد الحجز والتوقيع (يدوي)': ''
+      }));
+      sheetName = 'مراجعة وتأكيد البيانات';
+      fileName = `كشف_مراجعة_${gradeName.replace(/\s+/g, '_')}`;
+    } else if (rosterType === 'attendance') {
+      data = list.map((s, index) => ({
+        'م': index + 1,
+        'كود الطالب': s.code,
+        'الاسم الكامل': s.name,
+        'المجموعة': groups.find(g => g.id === s.groupId)?.name || 'غير محدد',
+        'تليفون ولي الأمر': s.parentPhone,
+        'حصة 1': '',
+        'حصة 2': '',
+        'حصة 3': '',
+        'حصة 4': '',
+        'حصة 5': '',
+        'حصة 6': '',
+        'ملاحظات وسلوك الطالب': ''
+      }));
+      sheetName = 'حضور وغياب يدوي';
+      fileName = `كشف_حضور_${gradeName.replace(/\s+/g, '_')}`;
+    } else if (rosterType === 'collection') {
+      data = list.map((s, index) => ({
+        'م': index + 1,
+        'كود الطالب': s.code,
+        'الاسم الكامل': s.name,
+        'المجموعة': groups.find(g => g.id === s.groupId)?.name || 'غير محدد',
+        'تليفون ولي الأمر': s.parentPhone,
+        'الشهر المستحق': currentMonth,
+        'القيمة المسددة (جنيه)': '',
+        'رقم الإيصال الورقي': '',
+        'توقيع المحصل والتاريخ': ''
+      }));
+      sheetName = 'تحصيل اشتراكات يدوي';
+      fileName = `كشف_تحصيل_${gradeName.replace(/\s+/g, '_')}`;
+    }
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    XLSX.writeFile(workbook, `${fileName}.xlsx`);
   };
 
   // ==========================================
@@ -713,6 +892,16 @@ export default function ReportsManager({
           <FileText className="w-4 h-4" />
           شهادة الطالب التفصيلية الشاملة
         </button>
+
+        <button
+          onClick={() => setActiveTab('revisionSheets')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'revisionSheets' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <Printer className="w-4 h-4" />
+          كشوف مراجعة البيانات وتأكيد الحجز
+        </button>
       </div>
 
       {/* Primary Filters Panel (no-print) */}
@@ -749,9 +938,9 @@ export default function ReportsManager({
             </select>
           </div>
 
-          {activeTab === 'financial' && (
+          {(activeTab === 'financial' || activeTab === 'revisionSheets') && (
             <div>
-              <label className="block text-[11px] font-bold text-slate-500 mb-1.5">الشهر المالي المستهدف</label>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1.5">{activeTab === 'revisionSheets' ? 'الشهر المستهدف لتسجيل الحضور' : 'الشهر المالي المستهدف'}</label>
               <select
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(e.target.value)}
@@ -2000,6 +2189,787 @@ export default function ReportsManager({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 5. TAB: REVISION ROSTERS & MANUAL BOOKING CONFIRMATION    */}
+      {/* ========================================================= */}
+      {activeTab === 'revisionSheets' && (
+        <div className="space-y-6">
+          {/* Main Info Box */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2 no-print">
+            <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+              <Printer className="w-5 h-5 text-indigo-650" />
+              {rosterType === 'revision' && 'كشوف مراجعة وتصحيح البيانات وتأكيد الحجز يدويًا'}
+              {rosterType === 'attendance' && 'كشوف تسجيل حضور وغياب الطلاب يدوياً'}
+              {rosterType === 'collection' && 'كشوف تسجيل تحصيل الاشتراكات والمصروفات يدوياً'}
+            </h3>
+            <p className="text-xs text-slate-500 font-medium leading-relaxed">
+              {rosterType === 'revision' && 'تتيح لك هذه المنطقة طباعة قوائم ورقية منظمة لطلاب كل صف دراسي، مُهيأة للمطابقة الميدانية ومراجعة وتصحيح بيانات المتعلمين وتوقيع تأكيد الحجز والتحصيل يدويًا في السنتر.'}
+              {rosterType === 'attendance' && 'تتيح لك طباعة دفاتر ورقية مخصصة لتسجيل حضور وغياب الطلاب يدوياً لكل حصة من الحصص الـ 6 القادمة للمجموعة، لمتابعة الانضباط الفعلي داخل السنتر.'}
+              {rosterType === 'collection' && 'تتيح لك طباعة كشوف ورقية خاصة لتسجيل سداد الاشتراكات الشهرية وتدوين قيمة المبالغ والخصومات يدوياً وتوقيع المستلم مع تدوين رقم الإيصال الورقي.'}
+            </p>
+          </div>
+
+          {/* Roster Type Selector Pills (no-print) */}
+          <div className="flex flex-wrap gap-2 bg-slate-100 p-1.5 rounded-2xl max-w-2xl border border-slate-200/60 no-print">
+            <button
+              onClick={() => setRosterType('revision')}
+              className={`flex-1 min-w-[150px] py-2 px-4 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                rosterType === 'revision' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200/50 hover:text-slate-900'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              مراجعة وتأكيد البيانات
+            </button>
+            <button
+              onClick={() => setRosterType('attendance')}
+              className={`flex-1 min-w-[150px] py-2 px-4 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                rosterType === 'attendance' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200/50 hover:text-slate-900'
+              }`}
+            >
+              <ListTodo className="w-4 h-4" />
+              حضور وغياب يدوي
+            </button>
+            <button
+              onClick={() => setRosterType('collection')}
+              className={`flex-1 min-w-[150px] py-2 px-4 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                rosterType === 'collection' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200/50 hover:text-slate-900'
+              }`}
+            >
+              <DollarSign className="w-4 h-4" />
+              تحصيل اشتراكات يدوي
+            </button>
+          </div>
+
+          {selectedGrade === 'all' ? (
+            /* Dashboard View: All Grades Cards */
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 no-print">
+              {(Object.keys(studentsByGrade) as GradeType[]).map((gradeName, idx) => {
+                const gradeStudents = studentsByGrade[gradeName];
+                const gradeGroups = groups.filter(g => g.grade === gradeName);
+                
+                return (
+                  <div key={gradeName} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md transition-all duration-205 flex flex-col justify-between space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <h4 className="font-extrabold text-xs text-slate-800">{gradeName}</h4>
+                        <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded">
+                          مجموعات العلوم ({gradeGroups.length})
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="bg-indigo-50/50 p-2.5 rounded-xl text-center">
+                          <span className="text-[10px] text-slate-450 font-bold block">إجمالي الطلاب المقبولين</span>
+                          <strong className="text-indigo-750 font-black text-base font-mono">{gradeStudents.length}</strong>
+                        </div>
+                        <div className="bg-slate-50 p-2.5 rounded-xl text-center">
+                          <span className="text-[10px] text-slate-450 font-bold block">السعة الاستيعابية للمجموعات</span>
+                          <strong className="text-slate-700 font-black text-base font-mono">
+                            {gradeGroups.reduce((acc, g) => acc + g.maxCapacity, 0)}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {gradeGroups.length > 0 ? (
+                        <div className="space-y-2 mt-3 bg-slate-50 p-3 rounded-xl border border-slate-150">
+                          <span className="text-[10px] font-bold text-slate-500 block text-right">طباعة كشوف المجموعات منفصلة:</span>
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                            {gradeGroups.map(g => {
+                              const groupStudents = students.filter(s => s.status === 'approved' && s.groupId === g.id);
+                              return (
+                                <div key={g.id} className="flex justify-between items-center text-[11px] bg-white p-2 rounded-lg border border-slate-200/60 shadow-2xs hover:border-slate-300 transition">
+                                  <div className="space-y-0.5 text-right">
+                                    <strong className="text-slate-800 font-bold block">{g.name}</strong>
+                                    <span className="text-[10px] text-slate-450 block font-medium">{g.day} — {g.time} ({groupStudents.length} طالب)</span>
+                                  </div>
+                                  <div className="flex gap-1.5">
+                                    <button
+                                      onClick={() => handlePrint(`printable-roster-group-${g.id}`)}
+                                      disabled={groupStudents.length === 0}
+                                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed text-indigo-750 font-bold rounded-md border border-indigo-200 flex items-center gap-1 transition cursor-pointer"
+                                      title="طباعة كشف هذه المجموعة منفصلاً"
+                                    >
+                                      <Printer className="w-3.5 h-3.5" />
+                                      طباعة
+                                    </button>
+                                    <button
+                                      onClick={() => handleExportRosterToExcel(`${g.grade} — ${g.name}`, groupStudents)}
+                                      disabled={groupStudents.length === 0}
+                                      className="p-1 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-slate-600 rounded-md border border-slate-200 transition cursor-pointer"
+                                      title="تصدير المجموعة لملف Excel"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-slate-400 italic pt-1">لا توجد مجموعات مضافة لهذا الصف حالياً.</div>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => handlePrint(`printable-roster-grade-${idx}`)}
+                        disabled={gradeStudents.length === 0}
+                        className="flex-1 py-2 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Printer className="w-4 h-4" />
+                        طباعة الكشف الشامل للصف
+                      </button>
+                      <button
+                        onClick={() => handleExportRosterToExcel(gradeName, gradeStudents)}
+                        disabled={gradeStudents.length === 0}
+                        className="p-2 bg-slate-50 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed text-slate-600 border border-slate-200 rounded-xl transition cursor-pointer"
+                        title="تصدير كجدول Excel"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            /* Detailed Preview View: Single Filtered Grade */
+            <div className="space-y-6">
+              {/* Roster Controls & Info (no-print) */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 no-print">
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-slate-800 text-sm">
+                    معاينة كشف: {selectedGrade}
+                    {selectedGroupId !== 'all' && ` — مجموعة: ${groups.find(g => g.id === selectedGroupId)?.name}`}
+                  </h4>
+                  <p className="text-xs text-slate-450 font-medium">
+                    {rosterType === 'revision' && `يحتوي كشف المراجعة هذا على ${activeStudents.length} طالب وطالبة مطابقين لخيارات الفلترة.`}
+                    {rosterType === 'attendance' && `يحتوي كشف تسجيل الحضور هذا على ${activeStudents.length} خانة لمتابعة الانضباط للحصص الـ 6 القادمة.`}
+                    {rosterType === 'collection' && `يحتوي كشف تسجيل التحصيل هذا على ${activeStudents.length} اسم لتوثيق سداد شهر ${currentMonth} يدوياً.`}
+                  </p>
+                </div>
+
+                <div className="flex gap-2 w-full sm:w-auto">
+                  <button
+                    onClick={() => handleExportRosterToExcel(selectedGrade, activeStudents)}
+                    disabled={activeStudents.length === 0}
+                    className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200"
+                  >
+                    <Download className="w-4 h-4" />
+                    تصدير الكشف Excel
+                  </button>
+                  <button
+                    onClick={() => handlePrint('printable-active-roster')}
+                    disabled={activeStudents.length === 0}
+                    className="flex-1 sm:flex-none px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                  >
+                    <Printer className="w-4 h-4" />
+                    طباعة الكشف اليدوي
+                  </button>
+                </div>
+              </div>
+
+              {/* Screen Preview Table */}
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm no-print">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
+                        <th className="py-3 px-4 w-12 text-center">م</th>
+                        <th className="py-3 px-4 w-24">كود الطالب</th>
+                        <th className="py-3 px-4">اسم الطالب رباعي</th>
+                        {rosterType === 'revision' && (
+                          <>
+                            <th className="py-3 px-4">رقم الهاتف</th>
+                            <th className="py-3 px-4">هاتف ولي الأمر</th>
+                            <th className="py-3 px-4">المجموعة</th>
+                            <th className="py-3 px-4">المدرسة</th>
+                            <th className="py-3 px-4 text-slate-450 font-medium italic">تعديل البيانات (معاينة)</th>
+                            <th className="py-3 px-4 text-slate-450 font-medium italic text-center">تأكيد الحجز</th>
+                          </>
+                        )}
+                        {rosterType === 'attendance' && (
+                          <>
+                            <th className="py-3 px-4">المجموعة</th>
+                            <th className="py-3 px-4">هاتف ولي الأمر</th>
+                            {activeHeaders.map((header, sIdx) => (
+                              <th key={sIdx} className="py-3 px-4 text-center whitespace-nowrap">{header.label}</th>
+                            ))}
+                            <th className="py-3 px-4 text-slate-450 font-medium italic">ملاحظات وسلوك الطالب (معاينة)</th>
+                          </>
+                        )}
+                        {rosterType === 'collection' && (
+                          <>
+                            <th className="py-3 px-4">المجموعة</th>
+                            <th className="py-3 px-4">هاتف ولي الأمر</th>
+                            <th className="py-3 px-4">الشهر المستحق</th>
+                            <th className="py-3 px-4 text-slate-450 font-medium italic">قيمة السداد المطلوب</th>
+                            <th className="py-3 px-4 text-slate-450 font-medium italic">رقم الإيصال اليدوي</th>
+                            <th className="py-3 px-4 text-slate-450 font-medium italic text-center">توقيع المستلم</th>
+                          </>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {activeStudents.length === 0 ? (
+                        <tr>
+                          <td colSpan={rosterType === 'revision' ? 9 : rosterType === 'attendance' ? (5 + activeHeaders.length + 1) : 9} className="text-center py-12 text-slate-400 italic font-bold">
+                            لا يوجد طلاب مقبولين مسجلين في هذا الصف الدراسي/المجموعة حالياً.
+                          </td>
+                        </tr>
+                      ) : (
+                        activeStudents.map((student, index) => (
+                          <tr key={student.id} className="hover:bg-slate-50/40">
+                            <td className="py-3 px-4 text-center font-mono font-bold text-slate-450">{index + 1}</td>
+                            <td className="py-3 px-4 font-mono font-bold text-indigo-750">{student.code}</td>
+                            <td className="py-3 px-4 font-bold text-slate-800">{student.name}</td>
+                            
+                            {rosterType === 'revision' && (
+                              <>
+                                <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.phone || '—'}</td>
+                                <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
+                                <td className="py-3 px-4 font-semibold text-slate-700">
+                                  {groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}
+                                </td>
+                                <td className="py-3 px-4 text-slate-500">{student.school || '—'}</td>
+                                <td className="py-3 px-4 bg-slate-50/25">
+                                  <span className="text-[10px] text-slate-350 italic">عمود فارغ للتدوين اليدوي عند الطباعة</span>
+                                </td>
+                                <td className="py-3 px-4 bg-slate-50/25 text-center">
+                                  <span className="inline-block w-4 h-4 border border-slate-200 rounded"></span>
+                                </td>
+                              </>
+                            )}
+                            
+                            {rosterType === 'attendance' && (
+                              <>
+                                <td className="py-3 px-4 font-semibold text-slate-700">
+                                  {groups.find(g => g.id === student.groupId)?.name || 'غير حدد'}
+                                </td>
+                                <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
+                                {activeHeaders.map((_, sIdx) => (
+                                  <td key={sIdx} className="py-3 px-4 text-center">
+                                    <span className="inline-block w-3.5 h-3.5 border border-slate-200 rounded-sm"></span>
+                                  </td>
+                                ))}
+                                <td className="py-3 px-4 bg-slate-50/25">
+                                  <span className="text-[10px] text-slate-350 italic">عمود تدوين الغياب والسلوك</span>
+                                </td>
+                              </>
+                            )}
+                            
+                            {rosterType === 'collection' && (
+                              <>
+                                <td className="py-3 px-4 font-semibold text-slate-700">
+                                  {groups.find(g => g.id === student.groupId)?.name || 'غير حدد'}
+                                </td>
+                                <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
+                                <td className="py-3 px-4 font-bold text-slate-700">{selectedMonth}</td>
+                                <td className="py-3 px-4 bg-slate-50/25">
+                                  <span className="text-[10px] text-slate-350 italic">كتابة المبلغ المستلم</span>
+                                </td>
+                                <td className="py-3 px-4 bg-slate-50/25">
+                                  <span className="text-[10px] text-slate-350 italic">رقم الإيصال السنتر</span>
+                                </td>
+                                <td className="py-3 px-4 bg-slate-50/25 text-center">
+                                  <span className="text-[10px] text-slate-350 italic">توقيع الموظف</span>
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hidden Print Elements (Rendered in DOM but completely hidden from view screen, used exclusively by print engine) */}
+          <div className="hidden">
+            {/* 1. All-Grades Hidden Print Targets */}
+            {(Object.keys(studentsByGrade) as GradeType[]).map((gradeName, gradeIdx) => {
+              const gradeStudents = studentsByGrade[gradeName];
+              const gradeHeaders = getAttendanceHeaders('all', gradeName, selectedMonth, groups);
+              return (
+                <div key={gradeIdx} id={`printable-roster-grade-${gradeIdx}`}>
+                  <div className="p-6 text-center border-b-2 border-slate-800 font-sans space-y-2">
+                    <h2 className="text-2xl font-black text-slate-900">مجموعة العلوم الحديثة للتميز التأسيسي</h2>
+                    <h3 className="text-md font-bold text-slate-700">تحت إشراف الأستاذ: محمود أبوذكري</h3>
+                    <div className="h-2"></div>
+                    <h1 className="text-xl font-black text-blue-700 bg-slate-50 border border-slate-200 py-2.5 rounded-xl">
+                      {rosterType === 'revision' && 'كشف مراجعة وتصحيح بيانات الطلاب وتأكيد الحجز يدويًا'}
+                      {rosterType === 'attendance' && 'كشف تسجيل حضور وغياب الطلاب يدوياً (دفتر متابعة السنتر)'}
+                      {rosterType === 'collection' && 'كشف تسجيل تحصيل اشتراكات ومصروفات الطلاب يدوياً'}
+                    </h1>
+                    <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mt-3 text-xs font-bold text-right">
+                      <div>الصف الدراسي: {gradeName}</div>
+                      <div>تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</div>
+                      <div>إجمالي المقيدين بالصف: {gradeStudents.length} طالب وطالبة</div>
+                      <div>مادة الدراسة: العلوم والتأسيس العلمي</div>
+                    </div>
+                  </div>
+
+                  {rosterType === 'revision' && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                          <th style={{ width: '80px' }}>كود الطالب</th>
+                          <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                          <th style={{ width: '90px' }}>تليفون الطالب</th>
+                          <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                          <th style={{ width: '90px' }}>المجموعة</th>
+                          <th style={{ width: '100px' }}>المدرسة والمنطقة</th>
+                          <th>تعديل وتصحيح البيانات (يدوياً)</th>
+                          <th style={{ width: '100px', textAlign: 'center' }}>تأكيد الحجز والتوقيع</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gradeStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={9} style={{ textAlign: 'center', padding: '30px' }}>
+                              لا توجد أسماء مسجلة ومقبولة حالياً في هذا الصف الدراسي.
+                            </td>
+                          </tr>
+                        ) : (
+                          gradeStudents.map((student, idx) => (
+                            <tr key={student.id}>
+                              <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                              <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                              <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                              <td style={{ fontFamily: 'monospace' }}>{student.phone || '—'}</td>
+                              <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                              <td>{groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}</td>
+                              <td>{student.school || '—'}</td>
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                              <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '1px solid #94a3b8', borderRadius: '3px' }}></span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {rosterType === 'attendance' && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                          <th style={{ width: '80px' }}>كود الطالب</th>
+                          <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                          <th style={{ width: '90px' }}>المجموعة</th>
+                          <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                          {gradeHeaders.map((sess, sIdx) => (
+                            <th key={sIdx} style={{ width: '55px', textAlign: 'center', fontSize: '9px' }}>{sess.label}</th>
+                          ))}
+                          <th>ملاحظات وسلوك الطالب (يدوياً)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gradeStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={5 + gradeHeaders.length + 1} style={{ textAlign: 'center', padding: '30px' }}>
+                              لا توجد أسماء مسجلة ومقبولة حالياً في هذا الصف الدراسي.
+                            </td>
+                          </tr>
+                        ) : (
+                          gradeStudents.map((student, idx) => (
+                            <tr key={student.id}>
+                              <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                              <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                              <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                              <td>{groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}</td>
+                              <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                              {gradeHeaders.map((_, sIdx) => (
+                                <td key={sIdx} style={{ textAlign: 'center' }}><span style={{ display: 'inline-block', width: '12px', height: '12px', border: '1px solid #cbd5e1', borderRadius: '2px' }}></span></td>
+                              ))}
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {rosterType === 'collection' && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                          <th style={{ width: '80px' }}>كود الطالب</th>
+                          <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                          <th style={{ width: '90px' }}>المجموعة</th>
+                          <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                          <th style={{ width: '90px' }}>الشهر المستحق</th>
+                          <th style={{ width: '110px' }}>المبلغ المستلم (جنيه)</th>
+                          <th style={{ width: '110px' }}>رقم الإيصال الورقي</th>
+                          <th>توقيع المحصل وتاريخ الاستلام</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gradeStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={9} style={{ textAlign: 'center', padding: '30px' }}>
+                              لا توجد أسماء مسجلة ومقبولة حالياً في هذا الصف الدراسي.
+                            </td>
+                          </tr>
+                        ) : (
+                          gradeStudents.map((student, idx) => (
+                            <tr key={student.id}>
+                              <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                              <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                              <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                              <td>{groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}</td>
+                              <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                              <td style={{ fontWeight: 'bold' }}>{selectedMonth}</td>
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+
+                  <div className="mt-12 pt-6 border-t border-slate-200 grid grid-cols-2 text-xs">
+                    <div>
+                      <span className="font-bold block text-slate-400">توقيع موجه المادة:</span>
+                      <strong className="block mt-2 text-slate-800">الأستاذ محمود أبوذكري</strong>
+                    </div>
+                    <div style={{ textAlign: 'left' }}>
+                      <span className="font-bold block text-slate-400">توقيع مسؤول الاستقبال والسنتر:</span>
+                      <strong className="block mt-2">..........................................</strong>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* 2. Specific Filtered Grade Print Target */}
+            <div id="printable-active-roster">
+              <div className="p-6 text-center border-b-2 border-slate-800 font-sans space-y-2">
+                <h2 className="text-2xl font-black text-slate-900">مجموعة العلوم الحديثة للتميز التأسيسي</h2>
+                <h3 className="text-md font-bold text-slate-700">تحت إشراف الأستاذ: محمود أبوذكري</h3>
+                <div className="h-2"></div>
+                <h1 className="text-xl font-black text-blue-700 bg-slate-50 border border-slate-200 py-2.5 rounded-xl">
+                  {rosterType === 'revision' && 'كشف مراجعة وتصحيح بيانات الطلاب وتأكيد الحجز يدويًا'}
+                  {rosterType === 'attendance' && 'كشف تسجيل حضور وغياب الطلاب يدوياً (دفتر متابعة السنتر)'}
+                  {rosterType === 'collection' && 'كشف تسجيل تحصيل اشتراكات ومصروفات الطلاب يدوياً'}
+                </h1>
+                <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mt-3 text-xs font-bold text-right">
+                  <div>الصف الدراسي المختار: {selectedGrade}</div>
+                  <div>تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</div>
+                  <div>إجمالي المقيدين بالكشف: {activeStudents.length} طالب وطالبة</div>
+                  {selectedGroupId !== 'all' && (
+                    <div>المجموعة: {groups.find(g => g.id === selectedGroupId)?.name}</div>
+                  )}
+                  <div>مادة الدراسة: العلوم والتأسيس العلمي</div>
+                </div>
+              </div>
+
+              {rosterType === 'revision' && (
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                      <th style={{ width: '80px' }}>كود الطالب</th>
+                      <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                      <th style={{ width: '90px' }}>تليفون الطالب</th>
+                      <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                      <th style={{ width: '90px' }}>المجموعة</th>
+                      <th style={{ width: '100px' }}>المدرسة والمنطقة</th>
+                      <th>تعديل وتصحيح البيانات (يدوياً)</th>
+                      <th style={{ width: '100px', textAlign: 'center' }}>تأكيد الحجز والتوقيع</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} style={{ textAlign: 'center', padding: '30px' }}>
+                          لا توجد أسماء مسجلة ومقبولة حالياً تطابق خيارات التصفية المحددة.
+                        </td>
+                      </tr>
+                    ) : (
+                      activeStudents.map((student, idx) => (
+                        <tr key={student.id}>
+                          <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                          <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                          <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                          <td style={{ fontFamily: 'monospace' }}>{student.phone || '—'}</td>
+                          <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                          <td>{groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}</td>
+                          <td>{student.school || '—'}</td>
+                          <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                          <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                            <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '1px solid #94a3b8', borderRadius: '3px' }}></span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+
+              {rosterType === 'attendance' && (
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                      <th style={{ width: '80px' }}>كود الطالب</th>
+                      <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                      <th style={{ width: '90px' }}>المجموعة</th>
+                      <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                      {activeHeaders.map((sess, sIdx) => (
+                        <th key={sIdx} style={{ width: '55px', textAlign: 'center', fontSize: '9px' }}>{sess.label}</th>
+                      ))}
+                      <th>ملاحظات وسلوك الطالب (يدوياً)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={5 + activeHeaders.length + 1} style={{ textAlign: 'center', padding: '30px' }}>
+                          لا توجد أسماء مسجلة ومقبولة حالياً تطابق خيارات التصفية المحددة.
+                        </td>
+                      </tr>
+                    ) : (
+                      activeStudents.map((student, idx) => (
+                        <tr key={student.id}>
+                          <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                          <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                          <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                          <td>{groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}</td>
+                          <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                          {activeHeaders.map((_, sIdx) => (
+                            <td key={sIdx} style={{ textAlign: 'center' }}><span style={{ display: 'inline-block', width: '12px', height: '12px', border: '1px solid #cbd5e1', borderRadius: '2px' }}></span></td>
+                          ))}
+                          <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+
+              {rosterType === 'collection' && (
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                      <th style={{ width: '80px' }}>كود الطالب</th>
+                      <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                      <th style={{ width: '90px' }}>المجموعة</th>
+                      <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                      <th style={{ width: '90px' }}>الشهر المستحق</th>
+                      <th style={{ width: '110px' }}>المبلغ المستلم (جنيه)</th>
+                      <th style={{ width: '110px' }}>رقم الإيصال الورقي</th>
+                      <th>توقيع المحصل وتاريخ الاستلام</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} style={{ textAlign: 'center', padding: '30px' }}>
+                          لا توجد أسماء مسجلة ومقبولة حالياً تطابق خيارات التصفية المحددة.
+                        </td>
+                      </tr>
+                    ) : (
+                      activeStudents.map((student, idx) => (
+                        <tr key={student.id}>
+                          <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                          <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                          <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                          <td>{groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}</td>
+                          <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                          <td style={{ fontWeight: 'bold' }}>{selectedMonth}</td>
+                          <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                          <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                          <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+
+              <div className="mt-12 pt-6 border-t border-slate-200 grid grid-cols-2 text-xs">
+                <div>
+                  <span className="font-bold block text-slate-400">توقيع موجه المادة:</span>
+                  <strong className="block mt-2 text-slate-800">الأستاذ محمود أبوذكري</strong>
+                </div>
+                <div style={{ textAlign: 'left' }}>
+                  <span className="font-bold block text-slate-400">توقيع مسؤول الاستقبال والسنتر:</span>
+                  <strong className="block mt-2">..........................................</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Group Hidden Print Targets */}
+            {groups.map((group) => {
+              const groupStudents = students.filter(s => s.status === 'approved' && s.groupId === group.id);
+              const groupHeaders = getAttendanceHeaders(group.id, 'all', selectedMonth, groups);
+              return (
+                <div key={group.id} id={`printable-roster-group-${group.id}`}>
+                  <div className="p-6 text-center border-b-2 border-slate-800 font-sans space-y-2">
+                    <h2 className="text-2xl font-black text-slate-900">مجموعة العلوم الحديثة للتميز التأسيسي</h2>
+                    <h3 className="text-md font-bold text-slate-700">تحت إشراف الأستاذ: محمود أبوذكري</h3>
+                    <div className="h-2"></div>
+                    <h1 className="text-xl font-black text-blue-700 bg-slate-50 border border-slate-200 py-2.5 rounded-xl">
+                      {rosterType === 'revision' && 'كشف مراجعة وتصحيح بيانات الطلاب وتأكيد الحجز يدويًا'}
+                      {rosterType === 'attendance' && 'كشف تسجيل حضور وغياب الطلاب يدوياً (دفتر متابعة السنتر)'}
+                      {rosterType === 'collection' && 'كشف تسجيل تحصيل اشتراكات ومصروفات الطلاب يدوياً'}
+                    </h1>
+                    <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mt-3 text-xs font-bold text-right">
+                      <div>المجموعة: {group.name} ({group.grade})</div>
+                      <div>تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</div>
+                      <div>إجمالي المقيدين بالمجموعة: {groupStudents.length} طالب وطالبة</div>
+                      <div>مواعيد المجموعة: {group.day} — {group.time}</div>
+                      <div>مادة الدراسة: العلوم والتأسيس العلمي</div>
+                    </div>
+                  </div>
+
+                  {rosterType === 'revision' && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                          <th style={{ width: '80px' }}>كود الطالب</th>
+                          <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                          <th style={{ width: '90px' }}>تليفون الطالب</th>
+                          <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                          <th style={{ width: '100px' }}>المدرسة والمنطقة</th>
+                          <th>تعديل وتصحيح البيانات (يدوياً)</th>
+                          <th style={{ width: '100px', textAlign: 'center' }}>تأكيد الحجز والتوقيع</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {groupStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} style={{ textAlign: 'center', padding: '30px' }}>
+                              لا توجد أسماء مسجلة ومقبولة حالياً في هذه المجموعة.
+                            </td>
+                          </tr>
+                        ) : (
+                          groupStudents.map((student, idx) => (
+                            <tr key={student.id}>
+                              <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                              <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                              <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                              <td style={{ fontFamily: 'monospace' }}>{student.phone || '—'}</td>
+                              <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                              <td>{student.school || '—'}</td>
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                              <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '1px solid #94a3b8', borderRadius: '3px' }}></span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {rosterType === 'attendance' && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                          <th style={{ width: '80px' }}>كود الطالب</th>
+                          <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                          <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                          {groupHeaders.map((sess, sIdx) => (
+                            <th key={sIdx} style={{ width: '55px', textAlign: 'center', fontSize: '9px' }}>{sess.label}</th>
+                          ))}
+                          <th>ملاحظات وسلوك الطالب (يدوياً)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {groupStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={4 + groupHeaders.length + 1} style={{ textAlign: 'center', padding: '30px' }}>
+                              لا توجد أسماء مسجلة ومقبولة حالياً في هذه المجموعة.
+                            </td>
+                          </tr>
+                        ) : (
+                          groupStudents.map((student, idx) => (
+                            <tr key={student.id}>
+                              <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                              <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                              <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                              <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                              {groupHeaders.map((_, sIdx) => (
+                                <td key={sIdx} style={{ textAlign: 'center' }}><span style={{ display: 'inline-block', width: '12px', height: '12px', border: '1px solid #cbd5e1', borderRadius: '2px' }}></span></td>
+                              ))}
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {rosterType === 'collection' && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                          <th style={{ width: '80px' }}>كود الطالب</th>
+                          <th style={{ width: '180px' }}>اسم الطالب رباعي</th>
+                          <th style={{ width: '95px' }}>تليفون ولي الأمر</th>
+                          <th style={{ width: '90px' }}>الشهر المستحق</th>
+                          <th style={{ width: '110px' }}>المبلغ المستلم (جنيه)</th>
+                          <th style={{ width: '110px' }}>رقم الإيصال الورقي</th>
+                          <th>توقيع المحصل وتاريخ الاستلام</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {groupStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} style={{ textAlign: 'center', padding: '30px' }}>
+                              لا توجد أسماء مسجلة ومقبولة حالياً في هذه المجموعة.
+                            </td>
+                          </tr>
+                        ) : (
+                          groupStudents.map((student, idx) => (
+                            <tr key={student.id}>
+                              <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                              <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                              <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                              <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                              <td style={{ fontWeight: 'bold' }}>{selectedMonth}</td>
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                              <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+
+                  <div className="mt-12 pt-6 border-t border-slate-200 grid grid-cols-2 text-xs">
+                    <div>
+                      <span className="font-bold block text-slate-400">توقيع موجه المادة:</span>
+                      <strong className="block mt-2 text-slate-800">الأستاذ محمود أبوذكري</strong>
+                    </div>
+                    <div style={{ textAlign: 'left' }}>
+                      <span className="font-bold block text-slate-400">توقيع مسؤول الاستقبال والسنتر:</span>
+                      <strong className="block mt-2">..........................................</strong>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
