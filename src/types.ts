@@ -99,6 +99,11 @@ export interface GradePrice {
   price: number;
 }
 
+export interface RegistrationSettings {
+  isGloballyEnabled: boolean;
+  disabledGrades: GradeType[];
+}
+
 const ARABIC_MONTHS_MAP: { [key: string]: number } = {
   'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4,
   'مايو': 5, 'يونيو': 6, 'يوليو': 7, 'أغسطس': 8,

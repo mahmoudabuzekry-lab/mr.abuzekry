@@ -6,11 +6,11 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { dbEngine } from '../db';
-import { Student, Group, GradeType, ExemptionType } from '../types';
+import { Student, Group, GradeType, ExemptionType, RegistrationSettings } from '../types';
 import { 
   UserPlus, Search, Filter, Check, X, QrCode, Trash2, Edit, Printer, 
   Upload, Download, FileSpreadsheet, CheckCircle, AlertCircle, Save, ShieldAlert,
-  MessageSquare, Sparkles, Send, Info
+  MessageSquare, Sparkles, Send, Info, Lock, Unlock, Globe, Sliders
 } from 'lucide-react';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
 import * as XLSX from 'xlsx';
@@ -180,6 +180,7 @@ interface StudentManagerProps {
 
 export default function StudentManager({ students, groups, prices, onRefresh }: StudentManagerProps) {
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'new-student' | 'import'>('all');
+  const [regSettings, setRegSettings] = useState<RegistrationSettings>(() => dbEngine.getRegistrationSettings());
   
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -1037,8 +1038,104 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
 
         {/* TAB 2: PENDING APPROVAL REQUESTS */}
         {activeTab === 'pending' && (
-          <div className="overflow-x-auto text-right">
-            <table className="w-full text-right border-collapse text-sm">
+          <div className="space-y-6">
+            {/* Control Panel Card */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-xs space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                <div className="space-y-1 text-right">
+                  <h4 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                    <Sliders className="w-5 h-5 text-indigo-600" />
+                    التحكم في استمارة التسجيل الذاتي للطلاب
+                  </h4>
+                  <p className="text-xs text-slate-500 font-medium">
+                    تتيح لك هذه الإعدادات تمكين أو إغلاق الاستمارة الإلكترونية العامة أو تخصيص الإتاحة لصفوف معينة.
+                  </p>
+                </div>
+                
+                {/* Global Toggle switch */}
+                <div className="flex items-center gap-3 bg-slate-50 px-4 py-2.5 rounded-xl border border-slate-200/80 justify-between sm:justify-start">
+                  <span className="text-xs font-black text-slate-700">حالة الاستمارة كلياً:</span>
+                  <button
+                    onClick={() => {
+                      const updated = {
+                        ...regSettings,
+                        isGloballyEnabled: !regSettings.isGloballyEnabled
+                      };
+                      setRegSettings(updated);
+                      dbEngine.setRegistrationSettings(updated);
+                      onRefresh();
+                    }}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                      regSettings.isGloballyEnabled ? 'bg-indigo-600' : 'bg-slate-300'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                        regSettings.isGloballyEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                  <span className={`text-xs font-bold ${regSettings.isGloballyEnabled ? 'text-emerald-700' : 'text-rose-600'}`}>
+                    {regSettings.isGloballyEnabled ? 'متاحة للجميع' : 'مغلقة كلياً'}
+                  </span>
+                </div>
+              </div>
+
+              {regSettings.isGloballyEnabled && (
+                <div className="space-y-4 animate-in fade-in duration-200 text-right">
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-800">
+                    <Globe className="w-4 h-4 text-indigo-500" />
+                    <span>تخصيص الإتاحة حسب الصف الدراسي:</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
+                    {([
+                      'الصف الرابع الابتدائي',
+                      'الصف الخامس الابتدائي',
+                      'الصف السادس الابتدائي',
+                      'الصف الأول الإعدادي',
+                      'الصف الثاني الإعدادي',
+                      'الصف الثالث الإعدادي'
+                    ] as GradeType[]).map((grade) => {
+                      const isDisabled = regSettings.disabledGrades?.includes(grade);
+                      return (
+                        <div
+                          key={grade}
+                          onClick={() => {
+                            const newDisabled = isDisabled
+                              ? regSettings.disabledGrades.filter(g => g !== grade)
+                              : [...(regSettings.disabledGrades || []), grade];
+                            const updated = {
+                              ...regSettings,
+                              disabledGrades: newDisabled
+                            };
+                            setRegSettings(updated);
+                            dbEngine.setRegistrationSettings(updated);
+                            onRefresh();
+                          }}
+                          className={`p-3.5 rounded-xl border-2 text-right transition-all cursor-pointer flex items-center justify-between select-none ${
+                            isDisabled
+                              ? 'border-rose-100 bg-rose-50/30 text-rose-950 hover:bg-rose-50/50'
+                              : 'border-slate-100 bg-slate-50/30 text-slate-850 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="text-xs font-bold">{grade}</span>
+                          <span className={`text-[10px] px-2.5 py-1 rounded-full font-extrabold flex items-center gap-1 shrink-0 ${
+                            isDisabled ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            {isDisabled ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                            {isDisabled ? 'مغلق' : 'متاح'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="overflow-x-auto text-right">
+              <table className="w-full text-right border-collapse text-sm">
               <thead>
                 <tr className="bg-gray-50 text-gray-500 font-bold border-b border-gray-100">
                   <th className="py-4 px-6 font-semibold">تاريخ التقديم</th>
@@ -1101,6 +1198,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 )}
               </tbody>
             </table>
+          </div>
           </div>
         )}
 

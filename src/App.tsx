@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { dbEngine } from './db';
-import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, doesMonthPrecedeDate, getCurrentArabicMonthName } from './types';
+import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, doesMonthPrecedeDate, getCurrentArabicMonthName, RegistrationSettings } from './types';
 import StudentManager from './components/StudentManager';
 import GroupsManager from './components/GroupsManager';
 import AttendanceManager from './components/AttendanceManager';
@@ -35,6 +35,10 @@ export default function App() {
   const [examScores, setExamScores] = useState<ExamScore[]>([]);
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
   const [prices, setPrices] = useState<Record<GradeType, number>>({} as any);
+  const [registrationSettings, setRegistrationSettings] = useState<RegistrationSettings>({
+    isGloballyEnabled: true,
+    disabledGrades: []
+  });
 
   // Authentication/Role State
   const [userRole, setUserRole] = useState<'guest' | 'teacher' | 'parent' | 'student'>('guest');
@@ -96,6 +100,7 @@ export default function App() {
     setExamScores(dbEngine.getExamScores());
     setTemplates(dbEngine.getTemplates());
     setPrices(dbEngine.getPrices());
+    setRegistrationSettings(dbEngine.getRegistrationSettings());
   };
 
   useEffect(() => {
@@ -779,43 +784,63 @@ export default function App() {
                       </p>
                     </div>
 
-                    <form onSubmit={handlePublicRegisterSubmit} className="space-y-5">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-extrabold text-slate-700 mb-2">اسم الطالب رباعي باللغة العربية *</label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="أدخل الاسم رباعي بوضوح تام..."
-                            value={regForm.name}
-                            onChange={(e) => setRegForm({...regForm, name: e.target.value})}
-                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition"
-                          />
+                    {!registrationSettings.isGloballyEnabled ? (
+                      <div className="p-8 bg-amber-50/40 border-2 border-dashed border-amber-200 rounded-3xl text-center space-y-4 animate-in zoom-in duration-300">
+                        <div className="w-16 h-16 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto text-3xl">
+                          🔒
                         </div>
-                        <div>
-                          <label className="block text-xs font-extrabold text-slate-700 mb-2">الصف الدراسي الحالي *</label>
-                          <select
-                            value={regForm.grade}
-                            onChange={(e) => {
-                              const newGrade = e.target.value as any;
-                              const gradeGroups = groups.filter(g => g.grade === newGrade);
-                              setRegForm({
-                                ...regForm,
-                                grade: newGrade,
-                                groupId: gradeGroups.length > 0 ? gradeGroups[0].id : ''
-                              });
-                            }}
-                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition font-sans"
-                          >
-                            <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
-                            <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
-                            <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
-                            <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
-                            <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
-                            <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
-                          </select>
+                        <h4 className="text-xl font-black text-amber-950">التسجيل الإلكتروني مغلق حالياً</h4>
+                        <p className="text-sm text-amber-800 leading-relaxed max-w-md mx-auto font-medium">
+                          عذراً، التقديم الإلكتروني وحجز المجموعات مغلق حالياً بالكامل لجميع المراحل بقرار من إدارة الأستاذ محمود أبوذكري. يرجى التواصل مع السكرتارية أو المحاولة في وقت لاحق.
+                        </p>
+                        <div className="inline-flex items-center gap-2 bg-white px-5 py-2.5 rounded-full text-xs font-extrabold border border-amber-200 text-slate-850 shadow-sm">
+                          <span>للتواصل عبر الواتساب:</span>
+                          <a href="https://wa.me/201110335245" target="_blank" rel="noreferrer" className="hover:underline tracking-wider font-mono font-black text-amber-700">01110335245</a>
                         </div>
                       </div>
+                    ) : (
+                      <form onSubmit={handlePublicRegisterSubmit} className="space-y-5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-extrabold text-slate-700 mb-2">اسم الطالب رباعي باللغة العربية *</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="أدخل الاسم رباعي بوضوح تام..."
+                              value={regForm.name}
+                              onChange={(e) => setRegForm({...regForm, name: e.target.value})}
+                              className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-extrabold text-slate-700 mb-2">الصف الدراسي الحالي *</label>
+                            <select
+                              value={regForm.grade}
+                              onChange={(e) => {
+                                const newGrade = e.target.value as any;
+                                const gradeGroups = groups.filter(g => g.grade === newGrade);
+                                setRegForm({
+                                  ...regForm,
+                                  grade: newGrade,
+                                  groupId: gradeGroups.length > 0 ? gradeGroups[0].id : ''
+                                });
+                              }}
+                              className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-semibold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition font-sans"
+                            >
+                              <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                              <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                              <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
+                              <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
+                              <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
+                              <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
+                            </select>
+                            {registrationSettings.disabledGrades?.includes(regForm.grade) && (
+                              <p className="text-xs text-red-600 font-extrabold mt-2 flex items-center gap-1.5 animate-pulse bg-red-50 border border-red-100 px-3 py-1.5 rounded-lg">
+                                <span>⚠️ باب التسجيل مغلق حالياً لطلاب هذا الصف بقرار من الإدارة.</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
 
                       {/* Available Groups Selection Based on Selected Grade */}
                       {(() => {
@@ -927,7 +952,7 @@ export default function App() {
                       <div className="flex justify-end pt-3">
                         <button
                           type="submit"
-                          disabled={regSuccess}
+                          disabled={regSuccess || registrationSettings.disabledGrades?.includes(regForm.grade)}
                           className="w-full sm:w-auto px-10 py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs md:text-sm rounded-xl transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
                         >
                           <BookOpen className="w-5 h-5" />
@@ -935,6 +960,7 @@ export default function App() {
                         </button>
                       </div>
                     </form>
+                    )}
                   </div>
                 )}
 

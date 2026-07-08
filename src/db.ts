@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate } from './types';
-import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase } from './firebase';
+import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings } from './types';
+import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase, getPendingQueue } from './firebase';
 
 // Price mapping for each grade
 export const DEFAULT_GRADE_PRICES: Record<GradeType, number> = {
@@ -393,6 +393,20 @@ class LocalDatabase {
     }
   }
 
+  public getRegistrationSettings(): RegistrationSettings {
+    return this.get('abuzekry_registration_settings', {
+      isGloballyEnabled: true,
+      disabledGrades: []
+    });
+  }
+
+  public setRegistrationSettings(settings: RegistrationSettings): void {
+    this.set('abuzekry_registration_settings', settings);
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
+      syncEntityToFirebase('registration_settings' as any, settings);
+    }
+  }
+
   public isMonthBeforeStartMonth(month: string, startMonth: string): boolean {
     const MONTHS = [
       'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر', 'يناير',
@@ -453,6 +467,7 @@ class LocalDatabase {
       examScores: this.getExamScores(),
       templates: this.getTemplates(),
       prices: this.getPrices(),
+      registrationSettings: this.getRegistrationSettings(),
       version: '1.0.0',
       exportedAt: new Date().toISOString()
     };
@@ -468,12 +483,23 @@ class LocalDatabase {
       syncEntityToFirebase('exams', data.exams),
       syncEntityToFirebase('examScores', data.examScores),
       syncEntityToFirebase('templates', data.templates),
-      syncEntityToFirebase('prices', data.prices)
+      syncEntityToFirebase('prices', data.prices),
+      syncEntityToFirebase('registration_settings' as any, data.registrationSettings)
     ]);
   }
 
   private safeMerge(key: string, cloudItems: any[] | undefined, entityName: string): void {
     const localItems = this.get<any[]>(key, []);
+    
+    // Check if we have any pending offline writes for this entity in the sync queue
+    let hasPendingWrite = false;
+    try {
+      const queue = getPendingQueue();
+      hasPendingWrite = queue.some(item => item.entityKey === entityName);
+    } catch (e) {
+      console.error("Error checking pending queue in safeMerge:", e);
+    }
+
     if (!cloudItems || !Array.isArray(cloudItems)) {
       // Cloud has no data, but local has data -> self-heal by uploading local to cloud
       if (localItems.length > 0 && this.isFirebaseEnabled()) {
@@ -483,13 +509,20 @@ class LocalDatabase {
       return;
     }
 
+    // If there is no pending offline write for this entity, the cloud is the absolute ground truth!
+    // This allows deletions and clean synchronization across devices.
+    if (!hasPendingWrite) {
+      this.set(key, cloudItems);
+      return;
+    }
+
     if (localItems.length === 0) {
       // Local has nothing, cloud has items, safe to overwrite local
       this.set(key, cloudItems);
       return;
     }
 
-    // Both have data -> Merge by ID to prevent ANY data loss!
+    // Both have data and we have unsaved local offline changes -> Merge by ID to prevent ANY data loss!
     const merged = [...localItems];
     let updated = false;
 
@@ -536,7 +569,8 @@ class LocalDatabase {
         cExams,
         cExamScores,
         cTemplates,
-        cPrices
+        cPrices,
+        cRegSettings
       ] = await Promise.all([
         downloadBackupFromFirebase().catch(() => null),
         fetchEntityFromFirebase('students').catch(() => null),
@@ -546,7 +580,8 @@ class LocalDatabase {
         fetchEntityFromFirebase('exams').catch(() => null),
         fetchEntityFromFirebase('examScores').catch(() => null),
         fetchEntityFromFirebase('templates').catch(() => null),
-        fetchEntityFromFirebase('prices').catch(() => null)
+        fetchEntityFromFirebase('prices').catch(() => null),
+        fetchEntityFromFirebase('registration_settings').catch(() => null)
       ]);
 
       let hasData = false;
@@ -561,6 +596,9 @@ class LocalDatabase {
         if (backup.examScores) this.safeMerge(STORAGE_KEYS.EXAM_SCORES, backup.examScores, 'examScores');
         if (backup.templates) this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, backup.templates, 'templates');
         if (backup.prices) this.safeMerge(STORAGE_KEYS.GRADE_PRICES, backup.prices, 'prices');
+        if (backup.registrationSettings) {
+          this.set('abuzekry_registration_settings', backup.registrationSettings);
+        }
       }
 
       if (cStudents && cStudents.items) { hasData = true; this.safeMerge(STORAGE_KEYS.STUDENTS, cStudents.items, 'students'); }
@@ -571,6 +609,10 @@ class LocalDatabase {
       if (cExamScores && cExamScores.items) { hasData = true; this.safeMerge(STORAGE_KEYS.EXAM_SCORES, cExamScores.items, 'examScores'); }
       if (cTemplates && cTemplates.items) { hasData = true; this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, cTemplates.items, 'templates'); }
       if (cPrices && cPrices.items) { hasData = true; this.safeMerge(STORAGE_KEYS.GRADE_PRICES, cPrices.items, 'prices'); }
+      if (cRegSettings && cRegSettings.items) {
+        hasData = true;
+        this.set('abuzekry_registration_settings', cRegSettings.items);
+      }
 
       if (hasData) {
         this.sanitizeAndRepairDuplicates();
@@ -898,6 +940,7 @@ class LocalDatabase {
       prices: this.getPrices(),
       billingStartMonth: this.getBillingStartMonth(),
       gradeMonthDiscounts: this.getGradeMonthDiscounts(),
+      registrationSettings: this.getRegistrationSettings(),
       version: '1.0.0',
       exportedAt: new Date().toISOString()
     };
@@ -917,6 +960,7 @@ class LocalDatabase {
       if (parsed.prices) this.setPrices(parsed.prices);
       if (parsed.billingStartMonth) this.setBillingStartMonth(parsed.billingStartMonth);
       if (parsed.gradeMonthDiscounts) this.setGradeMonthDiscounts(parsed.gradeMonthDiscounts);
+      if (parsed.registrationSettings) this.setRegistrationSettings(parsed.registrationSettings);
       return true;
     } catch (e) {
       console.error('Import failure', e);
