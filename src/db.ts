@@ -570,7 +570,9 @@ class LocalDatabase {
         cExamScores,
         cTemplates,
         cPrices,
-        cRegSettings
+        cRegSettings,
+        cBillingStartMonth,
+        cGradeMonthDiscounts
       ] = await Promise.all([
         downloadBackupFromFirebase().catch(() => null),
         fetchEntityFromFirebase('students').catch(() => null),
@@ -581,7 +583,9 @@ class LocalDatabase {
         fetchEntityFromFirebase('examScores').catch(() => null),
         fetchEntityFromFirebase('templates').catch(() => null),
         fetchEntityFromFirebase('prices').catch(() => null),
-        fetchEntityFromFirebase('registration_settings').catch(() => null)
+        fetchEntityFromFirebase('registration_settings').catch(() => null),
+        fetchEntityFromFirebase('billingStartMonth').catch(() => null),
+        fetchEntityFromFirebase('gradeMonthDiscounts').catch(() => null)
       ]);
 
       let hasData = false;
@@ -595,7 +599,11 @@ class LocalDatabase {
         if (backup.exams) this.safeMerge(STORAGE_KEYS.EXAMS, backup.exams, 'exams');
         if (backup.examScores) this.safeMerge(STORAGE_KEYS.EXAM_SCORES, backup.examScores, 'examScores');
         if (backup.templates) this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, backup.templates, 'templates');
-        if (backup.prices) this.safeMerge(STORAGE_KEYS.GRADE_PRICES, backup.prices, 'prices');
+        if (backup.prices) {
+          const localPrices = this.getPrices();
+          const mergedPrices = { ...localPrices, ...backup.prices };
+          this.set(STORAGE_KEYS.GRADE_PRICES, mergedPrices);
+        }
         if (backup.registrationSettings) {
           this.set('abuzekry_registration_settings', backup.registrationSettings);
         }
@@ -608,10 +616,23 @@ class LocalDatabase {
       if (cExams && cExams.items) { hasData = true; this.safeMerge(STORAGE_KEYS.EXAMS, cExams.items, 'exams'); }
       if (cExamScores && cExamScores.items) { hasData = true; this.safeMerge(STORAGE_KEYS.EXAM_SCORES, cExamScores.items, 'examScores'); }
       if (cTemplates && cTemplates.items) { hasData = true; this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, cTemplates.items, 'templates'); }
-      if (cPrices && cPrices.items) { hasData = true; this.safeMerge(STORAGE_KEYS.GRADE_PRICES, cPrices.items, 'prices'); }
+      if (cPrices && cPrices.items) {
+        hasData = true;
+        const localPrices = this.getPrices();
+        const mergedPrices = { ...localPrices, ...cPrices.items };
+        this.set(STORAGE_KEYS.GRADE_PRICES, mergedPrices);
+      }
       if (cRegSettings && cRegSettings.items) {
         hasData = true;
         this.set('abuzekry_registration_settings', cRegSettings.items);
+      }
+      if (cBillingStartMonth && cBillingStartMonth.items && Array.isArray(cBillingStartMonth.items) && cBillingStartMonth.items[0]) {
+        hasData = true;
+        this.set(STORAGE_KEYS.BILLING_START_MONTH, cBillingStartMonth.items[0]);
+      }
+      if (cGradeMonthDiscounts && cGradeMonthDiscounts.items) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.GRADE_MONTH_DISCOUNTS, cGradeMonthDiscounts.items, 'gradeMonthDiscounts');
       }
 
       if (hasData) {

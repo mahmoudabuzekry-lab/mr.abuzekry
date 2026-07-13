@@ -41,7 +41,9 @@ export default function App() {
   });
 
   // Authentication/Role State
-  const [userRole, setUserRole] = useState<'guest' | 'teacher' | 'parent' | 'student'>('guest');
+  const [userRole, setUserRole] = useState<'guest' | 'teacher' | 'parent' | 'student'>(() => {
+    return (localStorage.getItem('abuzekry_user_role') as any) || 'guest';
+  });
   const [adminPassword, setAdminPassword] = useState('');
   const [isPasswordError, setIsPasswordError] = useState(false);
 
@@ -64,12 +66,16 @@ export default function App() {
   const [regSuccess, setRegSuccess] = useState(false);
   
   // Student Portal State
-  const [studentCodeInput, setStudentCodeInput] = useState('');
+  const [studentCodeInput, setStudentCodeInput] = useState(() => {
+    return localStorage.getItem('abuzekry_student_code_input') || '';
+  });
   const [activePortalStudent, setActivePortalStudent] = useState<Student | null>(null);
   const [activePortalStudentError, setActivePortalStudentError] = useState(false);
 
   // Parent Portal State
-  const [parentPhoneInput, setParentPhoneInput] = useState('');
+  const [parentPhoneInput, setParentPhoneInput] = useState(() => {
+    return localStorage.getItem('abuzekry_parent_phone_input') || '';
+  });
   const [activePortalParentStudents, setActivePortalParentStudents] = useState<Student[]>([]);
   const [activePortalParentSearchDone, setActivePortalParentSearchDone] = useState(false);
   const [guestTab, setGuestTab] = useState<'parent' | 'student' | 'register'>('register');
@@ -117,10 +123,25 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Synchronize teacher active state with local database engine
+  // Synchronize teacher active state with local database engine and persist role
   useEffect(() => {
+    localStorage.setItem('abuzekry_user_role', userRole);
     dbEngine.setTeacherActive(userRole === 'teacher');
   }, [userRole]);
+
+  // Re-link portal active records when student list or role changes
+  useEffect(() => {
+    if (userRole === 'student' && studentCodeInput) {
+      const found = students.find(s => s.status === 'approved' && s.code.toLowerCase() === studentCodeInput.trim().toLowerCase());
+      if (found) {
+        setActivePortalStudent(found);
+      }
+    } else if (userRole === 'parent' && parentPhoneInput) {
+      const found = students.filter(s => s.status === 'approved' && s.parentPhone.trim() === parentPhoneInput.trim());
+      setActivePortalParentStudents(found);
+      setActivePortalParentSearchDone(true);
+    }
+  }, [students, userRole, studentCodeInput, parentPhoneInput]);
 
   // Automatic background database synchronization with Firebase on startup/mount & user role change
   useEffect(() => {
@@ -394,6 +415,7 @@ export default function App() {
   // Pre-configured login shortcuts for demo experience
   const handleQuickParentLogin = (phone: string) => {
     setParentPhoneInput(phone);
+    localStorage.setItem('abuzekry_parent_phone_input', phone);
     const found = dbEngine.getStudents().filter(s => s.status === 'approved' && s.parentPhone === phone);
     setActivePortalParentStudents(found);
     setActivePortalParentSearchDone(true);
@@ -402,6 +424,7 @@ export default function App() {
 
   const handleQuickStudentLogin = (code: string) => {
     setStudentCodeInput(code);
+    localStorage.setItem('abuzekry_student_code_input', code);
     const found = dbEngine.getStudents().find(s => s.status === 'approved' && s.code === code);
     if (found) {
       setActivePortalStudent(found);
@@ -429,10 +452,12 @@ export default function App() {
 
   const handleStudentSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const found = students.find(s => s.status === 'approved' && s.code.toLowerCase() === studentCodeInput.trim().toLowerCase());
+    const cleanCode = studentCodeInput.trim();
+    const found = students.find(s => s.status === 'approved' && s.code.toLowerCase() === cleanCode.toLowerCase());
     if (found) {
       setActivePortalStudent(found);
       setActivePortalStudentError(false);
+      localStorage.setItem('abuzekry_student_code_input', cleanCode);
     } else {
       setActivePortalStudent(null);
       setActivePortalStudentError(true);
@@ -441,9 +466,11 @@ export default function App() {
 
   const handleParentSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const found = students.filter(s => s.status === 'approved' && s.parentPhone.trim() === parentPhoneInput.trim());
+    const cleanPhone = parentPhoneInput.trim();
+    const found = students.filter(s => s.status === 'approved' && s.parentPhone.trim() === cleanPhone);
     setActivePortalParentStudents(found);
     setActivePortalParentSearchDone(true);
+    localStorage.setItem('abuzekry_parent_phone_input', cleanPhone);
   };
 
   const handleLogout = () => {
@@ -453,6 +480,9 @@ export default function App() {
     setActivePortalParentSearchDone(false);
     setStudentCodeInput('');
     setParentPhoneInput('');
+    localStorage.removeItem('abuzekry_user_role');
+    localStorage.removeItem('abuzekry_student_code_input');
+    localStorage.removeItem('abuzekry_parent_phone_input');
   };
 
   // Dashboard calculations representing Mr. Mahmoud Abuzekry statistics
