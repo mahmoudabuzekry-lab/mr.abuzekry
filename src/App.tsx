@@ -14,6 +14,7 @@ import ExamsManager from './components/ExamsManager';
 import WhatsAppSender from './components/WhatsAppSender';
 import DatabaseBackup from './components/DatabaseBackup';
 import ReportsManager from './components/ReportsManager';
+import WeeklyAttendancePlanner from './components/WeeklyAttendancePlanner';
 import { QRCodeSVG } from 'qrcode.react';
 
 // Icons
@@ -82,7 +83,7 @@ export default function App() {
   const [bannerError, setBannerError] = useState(false);
 
   // Active Teacher Panel Tab
-  const [activeTeacherTab, setActiveTeacherTab] = useState<'dashboard' | 'students' | 'groups' | 'attendance' | 'finances' | 'exams' | 'whatsapp' | 'backup' | 'reports'>('dashboard');
+  const [activeTeacherTab, setActiveTeacherTab] = useState<'dashboard' | 'students' | 'groups' | 'attendance' | 'finances' | 'exams' | 'weekly-planner' | 'whatsapp' | 'backup' | 'reports'>('dashboard');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Duplicates Finder & Manager States
@@ -90,6 +91,7 @@ export default function App() {
   const [editingDupStudent, setEditingDupStudent] = useState<Student | null>(null);
   const [deletingDupId, setDeletingDupId] = useState<string | null>(null);
   const [duplicateSuccessMsg, setDuplicateSuccessMsg] = useState<string | null>(null);
+  const [showApprovedSiblings, setShowApprovedSiblings] = useState(false);
 
   // Background Auto-Sync state
   const [autoSyncState, setAutoSyncState] = useState<'idle' | 'checking' | 'syncing' | 'synced' | 'offline' | 'error'>('idle');
@@ -500,7 +502,7 @@ export default function App() {
     .slice(0, 5);
 
   const getDuplicateGroupsForGrade = (grade: GradeType) => {
-    const gradeStudents = students.filter(s => s.grade === grade && s.status === 'approved');
+    const gradeStudents = students.filter(s => s.grade === grade && s.status === 'approved' && !s.isSiblingApproved);
     
     const nameGroups: Record<string, Student[]> = {};
     const phoneGroups: Record<string, Student[]> = {};
@@ -1109,6 +1111,23 @@ export default function App() {
                 </button>
 
                 <button
+                  onClick={() => setActiveTeacherTab('weekly-planner')}
+                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                    isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
+                  } ${
+                    activeTeacherTab === 'weekly-planner' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                  title="تنظيم أيام الحضور الأسبوعية"
+                >
+                  <span className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 shrink-0 text-violet-400" />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>تنظيم أيام الحضور الأسبوعية 🔄</span>
+                  </span>
+                </button>
+
+                <button
                   onClick={() => setActiveTeacherTab('finances')}
                   className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
@@ -1376,9 +1395,17 @@ export default function App() {
                                 {group.students.map((dupStudent) => {
                                   const grp = groups.find(g => g.id === dupStudent.groupId);
                                   const isDeleting = deletingDupId === dupStudent.id;
+                                  
+                                  // Sibling detection logic (same parentPhone but different student ID)
+                                  const cleanDupPhone = dupStudent.parentPhone.trim().replace(/\D/g, '');
+                                  const siblings = students.filter(s => 
+                                    s.id !== dupStudent.id && 
+                                    s.parentPhone && 
+                                    s.parentPhone.trim().replace(/\D/g, '') === cleanDupPhone
+                                  );
 
                                   return (
-                                    <div key={dupStudent.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs relative hover:shadow-sm transition text-right">
+                                    <div key={dupStudent.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs relative hover:shadow-sm transition text-right flex flex-col justify-between">
                                       {/* Header Info */}
                                       <div className="space-y-2 text-right">
                                         <div className="flex justify-between items-start">
@@ -1406,6 +1433,24 @@ export default function App() {
                                             <span className="font-mono text-slate-700 block mt-0.5">{dupStudent.createdAt ? dupStudent.createdAt.split('T')[0] : '—'}</span>
                                           </div>
                                         </div>
+
+                                        {/* Sibling Detection Info */}
+                                        {siblings.length > 0 && (
+                                          <div className="mt-3 p-2.5 bg-indigo-50/55 border border-indigo-100 rounded-lg text-[10px] text-right space-y-1">
+                                            <div className="font-bold text-indigo-900 flex items-center gap-1 justify-end">
+                                              <span>نظام كشف الإخوة الذكي:</span>
+                                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                                            </div>
+                                            <div className="space-y-0.5 text-slate-700 font-medium">
+                                              {siblings.map(sib => (
+                                                <div key={sib.id} className="flex justify-between items-center gap-2">
+                                                  <span className="font-bold text-indigo-700">({sib.grade === dupStudent.grade ? 'نفس الصف' : sib.grade})</span>
+                                                  <span>• {sib.name}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
 
                                       {/* Action buttons inside student cards */}
@@ -1456,15 +1501,28 @@ export default function App() {
                                           ) : (
                                             <>
                                               <button
+                                                onClick={() => {
+                                                  const updated = { ...dupStudent, isSiblingApproved: true };
+                                                  dbEngine.updateStudent(updated);
+                                                  loadDatabase();
+                                                  setDuplicateSuccessMsg(`تم اعتماد الطالب ${dupStudent.name} كحساب إخوة معتمد مستثنى من التكرار بنجاح 🎉`);
+                                                  setTimeout(() => setDuplicateSuccessMsg(null), 4000);
+                                                }}
+                                                className="px-2 py-1.5 bg-emerald-55 bg-emerald-50 hover:bg-emerald-100 border border-emerald-150 text-emerald-700 rounded-lg text-[10px] font-bold cursor-pointer transition"
+                                                title="اعتماد كحساب إخوة معتمد"
+                                              >
+                                                موافقة إخوة ✅
+                                              </button>
+                                              <button
                                                 onClick={() => setEditingDupStudent(dupStudent)}
-                                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-indigo-600 rounded-lg text-[10px] font-bold cursor-pointer transition"
+                                                className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-indigo-600 rounded-lg text-[10px] font-bold cursor-pointer transition"
                                                 title="تعديل البيانات"
                                               >
                                                 تعديل
                                               </button>
                                               <button
                                                 onClick={() => setDeletingDupId(dupStudent.id)}
-                                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold cursor-pointer transition"
+                                                className="px-2 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[10px] font-bold cursor-pointer transition"
                                                 title="حذف الحساب المكرر"
                                               >
                                                 حذف
@@ -1482,6 +1540,53 @@ export default function App() {
                         </div>
                       </div>
                     )}
+
+                    {/* Excluded Sibling Approved list */}
+                    {(() => {
+                      const siblingApprovedStudents = students.filter(s => s.grade === selectedDuplicateGrade && s.status === 'approved' && s.isSiblingApproved);
+                      if (siblingApprovedStudents.length === 0) return null;
+                      return (
+                        <div className="pt-4 border-t border-slate-250 border-dashed mt-4">
+                          <div className="flex justify-between items-center">
+                            <button
+                              onClick={() => setShowApprovedSiblings(!showApprovedSiblings)}
+                              className="text-xs text-indigo-600 font-extrabold hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <span>{showApprovedSiblings ? 'إخفاء حسابات الإخوة المعتمدة' : `عرض حسابات الإخوة المعتمدة المستثناة (${siblingApprovedStudents.length}) 👥`}</span>
+                            </button>
+                            <span className="text-[10px] text-slate-400 font-bold">حسابات تم قبول تكرارها كإخوة</span>
+                          </div>
+                          
+                          {showApprovedSiblings && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 animate-in fade-in slide-in-from-top-2">
+                              {siblingApprovedStudents.map(student => (
+                                <div key={student.id} className="bg-emerald-50/40 border border-emerald-100 p-3 rounded-xl flex items-center justify-between">
+                                  <button
+                                    onClick={() => {
+                                      const updated = { ...student, isSiblingApproved: false };
+                                      dbEngine.updateStudent(updated);
+                                      loadDatabase();
+                                      setDuplicateSuccessMsg(`تم إلغاء اعتماد إخوة للطالب ${student.name} وإعادته للفحص ✅`);
+                                      setTimeout(() => setDuplicateSuccessMsg(null), 3000);
+                                    }}
+                                    className="px-2 py-1 bg-white hover:bg-slate-55 hover:bg-slate-100 border border-slate-200 text-rose-600 rounded-lg text-[9px] font-bold cursor-pointer transition"
+                                  >
+                                    إلغاء الاستثناء كإخوة
+                                  </button>
+                                  <div className="text-right space-y-0.5">
+                                    <h6 className="font-extrabold text-xs text-slate-850 flex items-center gap-1 justify-end">
+                                      <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">إخوة معتمد</span>
+                                      <span>{student.name}</span>
+                                    </h6>
+                                    <p className="text-[9px] text-slate-500 font-semibold">كود: {student.code} — هاتف: {student.parentPhone}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* EDIT DUP STUDENT MODAL */}
@@ -1722,6 +1827,14 @@ export default function App() {
                   exams={exams} 
                   examScores={examScores}
                   prices={prices}
+                  onRefresh={loadDatabase} 
+                />
+              )}
+
+              {activeTeacherTab === 'weekly-planner' && (
+                <WeeklyAttendancePlanner 
+                  students={students} 
+                  groups={groups} 
                   onRefresh={loadDatabase} 
                 />
               )}

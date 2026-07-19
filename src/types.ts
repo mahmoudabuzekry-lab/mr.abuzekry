@@ -27,10 +27,13 @@ export interface Student {
   school: string;
   address: string;
   groupId: string; // References Group.id
+  alternativeGroupIds?: string[]; // Alternative groups the student is allowed to attend (flexible/substitute days)
+  attendanceDays?: string[]; // Weekly attendance days (custom flexible schedule)
   notes?: string;
   status: StudentStatus;
   exemptionType: ExemptionType;
   discountAmount: number; // For partial exemptions
+  isSiblingApproved?: boolean; // Whether duplicate accounts have been approved as siblings
   createdAt: string;
 }
 

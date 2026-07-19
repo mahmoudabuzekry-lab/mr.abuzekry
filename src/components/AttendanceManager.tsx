@@ -9,9 +9,25 @@ import { Student, Group, Attendance } from '../types';
 import { 
   Calendar, Users, QrCode, Camera, CheckCircle2, AlertTriangle, 
   Clock, X, Search, Check, AlertCircle, HelpCircle, LogIn, LogOut,
-  MessageSquare, Sparkles, Send, Info, Trash2, Edit
+  MessageSquare, Sparkles, Send, Info, Trash2, Edit, CheckSquare
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
+
+const parseGroupDays = (dayStr: string): string[] => {
+  if (!dayStr) return [];
+  return dayStr
+    .split(/ و |,|،|and/)
+    .map(d => d.trim())
+    .filter(Boolean);
+};
+
+const getArabicDayName = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  const dayIndex = date.getDay(); // 0 is Sunday, 1 is Monday, etc.
+  const dayNames = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+  return dayNames[dayIndex];
+};
 
 interface AttendanceManagerProps {
   students: Student[];
@@ -33,6 +49,12 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     student: Student;
     record: Attendance;
   } | null>(null);
+
+  // State for Flexible Attendance (Guest Student) Modal
+  const [isFlexModalOpen, setIsFlexModalOpen] = useState(false);
+  const [flexStudentId, setFlexStudentId] = useState('');
+  const [flexStatus, setFlexStatus] = useState<'present' | 'late'>('present');
+  const [flexSearchQuery, setFlexSearchQuery] = useState('');
 
   // State for WhatsApp Notification Modal
   const [notificationModal, setNotificationModal] = useState<{
@@ -168,16 +190,40 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
       dbEngine.deleteAttendance(todayRecord.id || `${student.id}_${selectedDate}`, student.id, selectedDate);
     } else {
       const timeNow = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+      const recordGroupId = (selectedGroupId && selectedGroupId !== 'الكل') ? selectedGroupId : student.groupId;
       dbEngine.addAttendance({
         id: `${student.id}_${selectedDate}`,
         studentId: student.id,
         studentName: student.name,
-        groupId: student.groupId,
+        groupId: recordGroupId,
         date: selectedDate,
         status,
         checkInTime: (status === 'present' || status === 'late') ? timeNow : undefined
       });
     }
+    
+    onRefresh();
+  };
+
+  // Handle marking all currently listed students in the filtered roster as present
+  const handleMarkAllPresent = () => {
+    const timeNow = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    
+    filteredGroupStudents.forEach(student => {
+      const todayRecord = attendance.find(a => a.studentId === student.id && a.date === selectedDate);
+      if (!todayRecord || (todayRecord.status !== 'present' && todayRecord.status !== 'late')) {
+        const recordGroupId = (selectedGroupId && selectedGroupId !== 'الكل') ? selectedGroupId : student.groupId;
+        dbEngine.addAttendance({
+          id: `${student.id}_${selectedDate}`,
+          studentId: student.id,
+          studentName: student.name,
+          groupId: recordGroupId,
+          date: selectedDate,
+          status: 'present',
+          checkInTime: timeNow
+        });
+      }
+    });
     
     onRefresh();
   };
@@ -209,11 +255,12 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
       checkInTime = existingRecord.checkInTime || timeNow;
     } else {
       // First scan, or was absent/excused = Present
+      const recordGroupId = (selectedGroupId && selectedGroupId !== 'الكل') ? selectedGroupId : student.groupId;
       dbEngine.addAttendance({
         id: `${student.id}_${todayStr}`,
         studentId: student.id,
         studentName: student.name,
-        groupId: student.groupId,
+        groupId: recordGroupId,
         date: todayStr,
         status: 'present',
         checkInTime: timeNow
@@ -322,8 +369,27 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     // Grade filter
     if (selectedGrade !== 'الكل' && s.grade !== selectedGrade) return false;
     
+    // Day compatibility check: Student's scheduled days MUST match the day of selectedDate
+    const currentDayOfWeek = getArabicDayName(selectedDate);
+    const primaryGroup = groups.find(g => g.id === s.groupId);
+    const studentDays = s.attendanceDays || (primaryGroup ? parseGroupDays(primaryGroup.day) : []);
+    const isCompatibleDay = studentDays.includes(currentDayOfWeek);
+    
+    if (!isCompatibleDay) return false;
+    
     // Group filter
-    if (selectedGroupId !== 'الكل' && s.groupId !== selectedGroupId) return false;
+    if (selectedGroupId !== 'الكل') {
+      const isPrimaryGroup = s.groupId === selectedGroupId;
+      const isAlternativeGroup = s.alternativeGroupIds && s.alternativeGroupIds.includes(selectedGroupId);
+      
+      // Flexible week attendance intersection check
+      const activeGroupDays = activeGroup ? parseGroupDays(activeGroup.day) : [];
+      const isScheduledForGroupDays = activeGroup && s.grade === activeGroup.grade && activeGroupDays.some(d => studentDays.includes(d));
+      
+      const hasAttendanceTodayInThisGroup = attendance.some(a => a.studentId === s.id && a.date === selectedDate && a.groupId === selectedGroupId);
+      
+      if (!isPrimaryGroup && !isAlternativeGroup && !isScheduledForGroupDays && !hasAttendanceTodayInThisGroup) return false;
+    }
     
     return true;
   });
@@ -458,97 +524,91 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
         </div>
       )}
 
-      {/* ADMIN SIMULATION BAR FOR QR TESTING */}
-      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 text-right">
-        <div className="flex items-center gap-2 justify-start">
-          <HelpCircle className="w-4 h-4 text-slate-600" />
-          <h4 className="font-bold text-xs text-slate-800">منصة محاكاة كود كروت الطلاب (لتجربة الـ QR بغير كاميرا فعلية)</h4>
+      {/* Attendance stats summary - replacing simulation bar */}
+      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs text-right space-y-4">
+        <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+          <h4 className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 text-indigo-600" />
+            تفاصيل الحضور للمجموعة
+          </h4>
+          <span className="text-xs text-slate-505 font-bold font-sans">تاريخ اليوم المعتمد: {selectedDate}</span>
         </div>
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          بما أنك بحاجة لتجربة الكود في بيئة الحوسبة، انقر مباشرة على "مسح العضوية" لأي طالب لتسجيل حضوره كأنك مسحت رمزه QR فعلاً!
-        </p>
-        <div className="flex flex-wrap gap-2 justify-start">
-          {students.filter(s => s.status === 'approved').slice(0, 5).map(s => {
-            const isTodayChecked = attendance.find(a => a.studentId === s.id && a.date === new Date().toISOString().split('T')[0]);
-            
-            return (
-              <button
-                key={s.id}
-                onClick={() => processStudentQrScan(s.id)}
-                className={`px-3 py-1.5 border rounded-lg text-[10.5px] font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  isTodayChecked 
-                    ? 'bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100' 
-                    : 'bg-white text-slate-800 hover:bg-slate-50 border-slate-200'
-                }`}
-              >
-                <QrCode className="w-3.5 h-3.5" />
-                محاكاة مسح: {s.name.split(' ')[0]} {s.name.split(' ')[1] || ''}
-                {isTodayChecked && (
-                  <span className="text-[9px] bg-indigo-600 text-white px-1.5 py-0.2 rounded font-sans">
-                    حاضر
-                  </span>
-                )}
-              </button>
-            );
-          })}
-          {students.filter(s => s.status === 'approved').length > 5 && (
-            <span className="text-xs text-slate-400 self-center">... ومتوفر {students.filter(s => s.status === 'approved').length - 5} طالب آخر بالسجلات</span>
-          )}
+        
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 font-bold text-xs">
+          <div className="bg-slate-50 border border-slate-100 p-3 rounded-lg flex flex-col justify-between">
+            <span className="text-slate-500 text-[11px] mb-1">إجمالي المقيدين</span>
+            <strong className="text-slate-900 text-base font-sans">{totalRosterCount}</strong>
+          </div>
+          <div className="bg-emerald-50/75 border border-emerald-100 p-3 rounded-lg flex flex-col justify-between text-emerald-800">
+            <span className="text-emerald-600 text-[11px] mb-1">الحاضرين</span>
+            <strong className="text-emerald-700 text-base font-sans">{presentCount} <span className="text-[10px] text-emerald-600 font-normal">(منهم {lateCount} متأخر)</span></strong>
+          </div>
+          <div className="bg-red-50/75 border border-red-100 p-3 rounded-lg flex flex-col justify-between text-red-800">
+            <span className="text-red-600 text-[11px] mb-1">الغائبين اليوم</span>
+            <strong className="text-red-700 text-base font-sans">{absentCount}</strong>
+          </div>
+          <div className="bg-amber-50/75 border border-amber-100 p-3 rounded-lg flex flex-col justify-between text-amber-800">
+            <span className="text-amber-600 text-[11px] mb-1">المستأذنين مسبقاً</span>
+            <strong className="text-amber-700 text-base font-sans">{excusedCount}</strong>
+          </div>
+          <div className="bg-slate-900 text-white p-3 rounded-lg flex flex-col justify-between col-span-2 sm:col-span-1">
+            <span className="text-slate-400 text-[11px] mb-1">نسبة الحضور</span>
+            <div className="flex items-center justify-between gap-2">
+              <strong className="text-white text-base font-sans">{attendancePercentage}%</strong>
+              <div className="w-16 bg-slate-700 h-2 rounded-full overflow-hidden">
+                <div className="bg-emerald-500 h-full rounded-full animate-pulse" style={{ width: `${attendancePercentage}%` }} />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Stats and Group Attendance table */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 text-right">
-        {/* Attendance stats summary */}
-        <div className="bg-white p-5 rounded-xl shadow-xs border border-slate-200 space-y-4 h-fit">
-          <h4 className="font-bold text-sm text-slate-800 border-b border-slate-105 pb-3">تفاصيل الحضور للمجموعة</h4>
-          
-          <div className="space-y-3 font-bold text-xs text-slate-600">
-            <div className="flex justify-between items-center bg-slate-50/70 py-2 px-3 rounded-lg border border-slate-100">
-              <span>إجمالي المقيدين</span>
-              <strong className="text-slate-805 text-slate-900 text-sm font-sans">{totalRosterCount}</strong>
-            </div>
-            <div className="flex justify-between items-center bg-emerald-50/70 py-2 px-3 rounded-lg border border-emerald-100 text-emerald-800">
-              <span>حاضرين المسجلين</span>
-              <strong className="text-emerald-850 font-sans text-sm">{presentCount} (متأخر: {lateCount})</strong>
-            </div>
-            <div className="flex justify-between items-center bg-red-50/70 py-2 px-3 rounded-lg border border-red-100 text-red-850">
-              <span>الغائبين اليوم</span>
-              <strong className="text-red-750 font-sans text-sm">{absentCount}</strong>
-            </div>
-            <div className="flex justify-between items-center bg-amber-50/70 py-2 px-3 rounded-lg border border-amber-100 text-amber-850">
-              <span>المستأذنين مسبقاً</span>
-              <strong className="text-amber-750 font-sans text-sm">{excusedCount}</strong>
-            </div>
-          </div>
-
-          <div className="pt-3 border-t border-slate-105 text-center">
-            <p className="text-xs text-slate-450 text-slate-500">نسبة التحضير الإجمالية للمجموعة</p>
-            <h5 className="text-2xl font-bold text-slate-900 font-sans mt-1.5">{attendancePercentage}%</h5>
-            {/* Util Progress line */}
-            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-2.5">
-              <div className="bg-slate-900 h-full rounded-full" style={{ width: `${attendancePercentage}%` }} />
-            </div>
-          </div>
-        </div>
-
-        {/* Attendance interactive table registry */}
-        <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden md:col-span-3">
+      {/* Attendance interactive table registry */}
+      <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
           <div className="bg-slate-50/75 p-4 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div className="font-bold text-slate-900 text-sm">
               سجل التحضير اليدوي: {selectedGroupId === 'الكل' ? (selectedGrade === 'الكل' ? 'كل الطلاب المقيدين' : `طلاب ${selectedGrade}`) : (activeGroup ? activeGroup.name : 'لا يوجد')}
             </div>
             
-            {/* Quick search inside list */}
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute right-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="تصفية باسم الطالب المقيد..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pr-8 pl-3 py-1.5 bg-white border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none transition-all"
-              />
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              {/* Quick search inside list */}
+              <div className="relative w-full sm:w-48 lg:w-64">
+                <Search className="absolute right-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="تصفية باسم الطالب المقيد..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pr-8 pl-3 py-1.5 bg-white border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none transition-all"
+                />
+              </div>
+
+              {selectedGroupId !== 'الكل' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsFlexModalOpen(true);
+                    setFlexStudentId('');
+                    setFlexSearchQuery('');
+                  }}
+                  className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 hover:border-indigo-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-650 animate-pulse" />
+                  رصد حضور مرن / طالب زائر 🔄
+                </button>
+              )}
+
+              {filteredGroupStudents.length > 0 && (
+                <button
+                  type="button"
+                  id="mark-all-present-btn"
+                  onClick={handleMarkAllPresent}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs border border-emerald-600 hover:border-emerald-750"
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  تسجيل الحضور للكل 🟢
+                </button>
+              )}
             </div>
           </div>
 
@@ -584,7 +644,14 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                       <tr key={s.id} className="hover:bg-slate-50/40 transition-colors">
                         <td className="py-3.5 px-5 font-mono text-slate-900 font-bold">{s.code}</td>
                         <td className="py-3.5 px-5">
-                          <div className="font-bold text-slate-805 text-slate-800">{s.name}</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="font-bold text-slate-805 text-slate-800">{s.name}</div>
+                            {selectedGroupId !== 'الكل' && s.groupId !== selectedGroupId && (
+                              <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-150 text-[9px] px-2 py-0.5 rounded-full font-extrabold" title="حضور مرن بديل اليوم">
+                                حضور مرن 🔄 (الأساسية: {groups.find(g => g.id === s.groupId)?.name || 'غير محدد'})
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[10px] text-slate-400 mt-0.5">{s.school} - ({s.grade})</p>
                         </td>
                         <td className="py-3.5 px-5 text-slate-500 font-bold">
@@ -739,7 +806,6 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
             </table>
           </div>
         </div>
-      </div>
 
       {/* SCAN CONFIRMATION FLOATING TOAST */}
       {scanResult && (
@@ -954,6 +1020,37 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                 </select>
               </div>
 
+              {/* Group reassign select */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">المجموعة الدراسية الحالية لهذه الحصة</label>
+                <select
+                  value={editingAttendance.record.groupId}
+                  onChange={(e) => {
+                    const newGroupId = e.target.value;
+                    setEditingAttendance(prev => {
+                      if (!prev) return null;
+                      return {
+                        ...prev,
+                        record: {
+                          ...prev.record,
+                          groupId: newGroupId
+                        }
+                      };
+                    });
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none font-bold"
+                >
+                  {groups
+                    .filter(g => g.grade === editingAttendance.student.grade)
+                    .map(g => (
+                      <option key={g.id} value={g.id}>
+                        {g.name} {g.id === editingAttendance.student.groupId ? '⭐️ (المجموعة الأساسية)' : '🔄 (حضور بديل)'}
+                      </option>
+                    ))
+                  }
+                </select>
+              </div>
+
               {/* Check-In Time input */}
               {(editingAttendance.record.status === 'present' || editingAttendance.record.status === 'late') && (
                 <div className="grid grid-cols-2 gap-3">
@@ -1019,6 +1116,171 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
               </button>
               <button
                 onClick={() => setEditingAttendance(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FLEXIBLE ATTENDANCE / GUEST CHECK-IN MODAL */}
+      {isFlexModalOpen && selectedGroupId !== 'الكل' && activeGroup && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 text-right space-y-4 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 border border-slate-200">
+            <button 
+              onClick={() => setIsFlexModalOpen(false)}
+              className="absolute left-4 top-4 p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 rounded-lg cursor-pointer transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="bg-indigo-50 text-indigo-700 p-2 rounded-lg border border-indigo-100">
+                  <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />
+                </div>
+                <h3 className="text-base font-black text-slate-900 font-sans">رصد حضور مرن (طالب زائر)</h3>
+              </div>
+              <p className="text-xs text-slate-500">
+                يمكنك هنا رصد حضور طالب من مجموعة أخرى لحصة اليوم في مجموعة: <strong className="text-indigo-700 font-bold">{activeGroup.name}</strong> ({activeGroup.grade})
+              </p>
+            </div>
+
+            <div className="space-y-4 pt-2">
+              {/* Search input to find visitor student */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">البحث عن الطالب (بالاسم أو الكود)</label>
+                <div className="relative">
+                  <Search className="absolute right-3 top-3 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="اكتب كود أو اسم طالب من مجموعة أخرى..."
+                    value={flexSearchQuery}
+                    onChange={(e) => {
+                      setFlexSearchQuery(e.target.value);
+                      setFlexStudentId(''); // reset selection if query changes
+                    }}
+                    className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl text-xs text-right outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Candidates list */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">اختر الطالب من النتائج المطابقة لـ ({activeGroup.grade})</label>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl max-h-48 overflow-y-auto p-2 space-y-1">
+                  {(() => {
+                    const candidates = students.filter(s => {
+                      if (s.status !== 'approved') return false;
+                      if (s.grade !== activeGroup.grade) return false;
+                      
+                      // Cannot be primary or already configured as alternative (since those already show in main table)
+                      const isPrimary = s.groupId === selectedGroupId;
+                      const isAlternative = s.alternativeGroupIds && s.alternativeGroupIds.includes(selectedGroupId);
+                      if (isPrimary || isAlternative) return false;
+
+                      // Match query
+                      if (flexSearchQuery) {
+                        const q = flexSearchQuery.trim().toLowerCase();
+                        return s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q);
+                      }
+                      return true; // show all same grade approved students by default if query is empty
+                    });
+
+                    if (candidates.length === 0) {
+                      return <p className="text-center text-[11px] text-slate-400 italic py-6">لا يوجد طلاب مطابقين للبحث من نفس الصف.</p>;
+                    }
+
+                    return candidates.map(cand => {
+                      const candGroup = groups.find(g => g.id === cand.groupId);
+                      const isSelected = flexStudentId === cand.id;
+                      return (
+                        <div
+                          key={cand.id}
+                          onClick={() => setFlexStudentId(cand.id)}
+                          className={`p-2.5 rounded-lg border text-right cursor-pointer transition-all flex items-center justify-between text-xs ${
+                            isSelected 
+                              ? 'bg-indigo-50 border-indigo-300 ring-1 ring-indigo-300' 
+                              : 'bg-white hover:bg-indigo-50/30 border-slate-200/80 hover:border-indigo-200'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                              isSelected ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300'
+                            }`}>
+                              {isSelected && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                            </div>
+                            <div className="space-y-0.5">
+                              <span className="font-bold text-slate-800">{cand.name}</span>
+                              <span className="text-[10px] text-slate-400 block">كود: {cand.code} — المجموعة الأساسية: {candGroup ? candGroup.name : 'غير محدد'}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+
+              {/* Status Select */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">حالة حضور الزائر</label>
+                  <select
+                    value={flexStatus}
+                    onChange={(e) => setFlexStatus(e.target.value as 'present' | 'late')}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none font-bold"
+                  >
+                    <option value="present">حاضر (Present)</option>
+                    <option value="late">متأخر (Late)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">تاريخ الحصة</label>
+                  <input
+                    type="date"
+                    disabled
+                    value={selectedDate}
+                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-xs font-mono font-bold text-left outline-none cursor-not-allowed text-slate-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={!flexStudentId}
+                onClick={() => {
+                  const student = students.find(s => s.id === flexStudentId);
+                  if (!student) return;
+                  const timeNow = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+                  dbEngine.addAttendance({
+                    id: `${student.id}_${selectedDate}`,
+                    studentId: student.id,
+                    studentName: student.name,
+                    groupId: selectedGroupId,
+                    date: selectedDate,
+                    status: flexStatus,
+                    checkInTime: timeNow
+                  });
+                  setIsFlexModalOpen(false);
+                  setFlexStudentId('');
+                  onRefresh();
+                }}
+                className={`px-5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  flexStudentId 
+                    ? 'bg-indigo-650 hover:bg-indigo-700 text-white shadow-sm' 
+                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                }`}
+              >
+                رصد وتأكيد الحضور المرن
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsFlexModalOpen(false)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition cursor-pointer"
               >
                 إلغاء

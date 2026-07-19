@@ -132,7 +132,7 @@ export default function ReportsManager({
   onRefresh
 }: ReportsManagerProps) {
   // Tabs
-  const [activeTab, setActiveTab] = useState<'financial' | 'revenues' | 'attendance' | 'exams' | 'studentCard' | 'revisionSheets'>('financial');
+  const [activeTab, setActiveTab] = useState<'financial' | 'revenues' | 'attendance' | 'exams' | 'studentCard' | 'revisionSheets' | 'siblings'>('financial');
   const [rosterType, setRosterType] = useState<'revision' | 'attendance' | 'collection'>('revision');
 
   // Revenues filter state
@@ -199,7 +199,7 @@ export default function ReportsManager({
     return students.filter(s => {
       if (s.status !== 'approved') return false;
       const matchesGrade = selectedGrade === 'all' || s.grade === selectedGrade;
-      const matchesGroup = selectedGroupId === 'all' || s.groupId === selectedGroupId;
+      const matchesGroup = selectedGroupId === 'all' || s.groupId === selectedGroupId || (s.alternativeGroupIds && s.alternativeGroupIds.includes(selectedGroupId));
       return matchesGrade && matchesGroup;
     });
   }, [students, selectedGrade, selectedGroupId]);
@@ -488,7 +488,7 @@ export default function ReportsManager({
       const student = students.find(s => s.id === a.studentId);
       if (!student || student.status !== 'approved') return false;
       const matchesGrade = selectedGrade === 'all' || student.grade === selectedGrade;
-      const matchesGroup = selectedGroupId === 'all' || student.groupId === selectedGroupId;
+      const matchesGroup = selectedGroupId === 'all' || student.groupId === selectedGroupId || (student.alternativeGroupIds && student.alternativeGroupIds.includes(selectedGroupId));
       return matchesGrade && matchesGroup;
     });
 
@@ -740,6 +740,82 @@ export default function ReportsManager({
     };
   }, [individualStudent, attendance, examScores, exams, payments]);
 
+  // 4.5 SIBLING DETECTION & REPORT ENGINE
+  const siblingData = useMemo(() => {
+    const approvedStudents = students.filter(s => s.status === 'approved');
+    
+    // Group approved students by parent phone to find siblings
+    const phoneGroups: Record<string, Student[]> = {};
+    approvedStudents.forEach(s => {
+      if (!s.parentPhone) return;
+      const cleanPhone = s.parentPhone.trim().replace(/\D/g, '');
+      if (cleanPhone.length >= 7) {
+        if (!phoneGroups[cleanPhone]) {
+          phoneGroups[cleanPhone] = [];
+        }
+        phoneGroups[cleanPhone].push(s);
+      }
+    });
+
+    // Filter to families that actually have more than 1 student
+    const siblingFamilies = Object.values(phoneGroups).filter(group => group.length > 1);
+
+    // Flat list of students who have siblings in the system
+    const studentsWithSiblings = approvedStudents.filter(s => {
+      if (!s.parentPhone) return false;
+      const cleanPhone = s.parentPhone.trim().replace(/\D/g, '');
+      return cleanPhone.length >= 7 && (phoneGroups[cleanPhone]?.length || 0) > 1;
+    });
+
+    // Grouping these students with siblings by their class/grade
+    const studentsWithSiblingsByGrade: Record<GradeType, Array<{ student: Student; siblings: Student[] }>> = {
+      'الصف الرابع الابتدائي': [],
+      'الصف الخامس الابتدائي': [],
+      'الصف السادس الابتدائي': [],
+      'الصف الأول الإعدادي': [],
+      'الصف الثاني الإعدادي': [],
+      'الصف الثالث الإعدادي': []
+    };
+
+    studentsWithSiblings.forEach(student => {
+      const cleanPhone = student.parentPhone.trim().replace(/\D/g, '');
+      const family = phoneGroups[cleanPhone] || [];
+      const siblingsList = family.filter(s => s.id !== student.id);
+      
+      if (student.grade in studentsWithSiblingsByGrade) {
+        studentsWithSiblingsByGrade[student.grade].push({
+          student,
+          siblings: siblingsList
+        });
+      }
+    });
+
+    return {
+      siblingFamilies,
+      studentsWithSiblings,
+      studentsWithSiblingsByGrade,
+      phoneGroups
+    };
+  }, [students]);
+
+  const handleExportSiblingsToExcel = (gradeName: string, list: Array<{ student: Student; siblings: Student[] }>) => {
+    const data = list.map((item, index) => ({
+      'م': index + 1,
+      'كود الطالب': item.student.code,
+      'اسم الطالب': item.student.name,
+      'الصف الدراسي': item.student.grade,
+      'المجموعة': groups.find(g => g.id === item.student.groupId)?.name || 'غير محدد',
+      'تليفون ولي الأمر': item.student.parentPhone,
+      'عدد الإخوة بالسنتر': item.siblings.length,
+      'بيانات الإخوة بالسنتر': item.siblings.map(s => `${s.name} (${s.grade} - كود: ${s.code})`).join(' | ')
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'تقرير الإخوة');
+    XLSX.writeFile(workbook, `كشف_الطلاب_الإخوة_${gradeName.replace(/\s+/g, '_')}.xlsx`);
+  };
+
   const handlePrint = (elementId?: string) => {
     if (elementId) {
       const element = document.getElementById(elementId);
@@ -901,6 +977,16 @@ export default function ReportsManager({
         >
           <Printer className="w-4 h-4" />
           كشوف مراجعة البيانات وتأكيد الحجز
+        </button>
+
+        <button
+          onClick={() => setActiveTab('siblings')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'siblings' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <Users className="w-4 h-4 text-indigo-600" />
+          تقرير كشف الإخوة بكل صف
         </button>
       </div>
 
@@ -2815,7 +2901,7 @@ export default function ReportsManager({
 
             {/* 3. Group Hidden Print Targets */}
             {groups.map((group) => {
-              const groupStudents = students.filter(s => s.status === 'approved' && s.groupId === group.id);
+              const groupStudents = students.filter(s => s.status === 'approved' && (s.groupId === group.id || (s.alternativeGroupIds && s.alternativeGroupIds.includes(group.id))));
               const groupHeaders = getAttendanceHeaders(group.id, 'all', selectedMonth, groups);
               return (
                 <div key={group.id} id={`printable-roster-group-${group.id}`}>
@@ -2969,6 +3055,367 @@ export default function ReportsManager({
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'siblings' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
+          {/* Main Info Box */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2 no-print">
+            <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+              <Users className="w-5 h-5 text-indigo-600" />
+              تقرير نظام كشف وتتبع الإخوة الذكي بالسنتر
+            </h3>
+            <p className="text-xs text-slate-500 font-medium leading-relaxed">
+              يقوم هذا التقرير بربط حسابات الطلاب تلقائياً وتحديد من لديهم إخوة مسجلين بالسنتر في مادة العلوم بكافة الصفوف الدراسية (الرابع الابتدائي وحتى الثالث الإعدادي) بناءً على مطابقة رقم هاتف ولي الأمر المشترك. يساعد هذا التقرير الإداريين في مراجعة خصومات الإخوة وتنسيق تسليم الشهادات والتواصل العائلي.
+            </p>
+          </div>
+
+          {/* Sibling KPIs */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 no-print">
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">إجمالي الطلاب الذين لهم إخوة</p>
+                <h4 className="text-xl font-black text-slate-800 mt-1">{siblingData.studentsWithSiblings.length} طالب وطالبة</h4>
+                <p className="text-[10px] text-indigo-650 font-bold mt-0.5">من إجمالي المقيدين بالسنتر</p>
+              </div>
+              <div className="bg-indigo-50 text-indigo-700 p-3 rounded-xl border border-indigo-100">
+                <Users className="w-5 h-5" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">عدد العوائل / أسر الإخوة</p>
+                <h4 className="text-xl font-black text-emerald-600 mt-1">{siblingData.siblingFamilies.length} عائلة مشتركة</h4>
+                <p className="text-[10px] text-emerald-600 font-bold mt-0.5">عائلة لديها طالبين أو أكثر</p>
+              </div>
+              <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl border border-emerald-100">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between col-span-1 sm:col-span-2 lg:col-span-1">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">أعلى صف يحتوي على إخوة</p>
+                <h4 className="text-xl font-black text-blue-600 mt-1 font-sans">
+                  {(() => {
+                    let maxGrade: string = '—';
+                    let maxCount = 0;
+                    Object.entries(siblingData.studentsWithSiblingsByGrade).forEach(([grade, list]) => {
+                      const typedList = list as any[];
+                      if (typedList.length > maxCount) {
+                        maxCount = typedList.length;
+                        maxGrade = grade;
+                      }
+                    });
+                    return maxGrade === '—' ? 'لا يوجد' : `${maxGrade.split(' ')[1] || maxGrade} (${maxCount})`;
+                  })()}
+                </h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">الصف الأكثر كثافة عائلية</p>
+              </div>
+              <div className="bg-blue-50 text-blue-700 p-3 rounded-xl border border-blue-100">
+                <Star className="w-5 h-5" />
+              </div>
+            </div>
+          </div>
+
+          {selectedGrade === 'all' ? (
+            /* Dashboard view showing all grades card-by-card */
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 no-print">
+              {(Object.keys(siblingData.studentsWithSiblingsByGrade) as GradeType[]).map((gradeName, idx) => {
+                const list = siblingData.studentsWithSiblingsByGrade[gradeName];
+                return (
+                  <div key={gradeName} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md transition-all duration-205 flex flex-col justify-between space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <h4 className="font-extrabold text-xs text-slate-800">{gradeName}</h4>
+                        <span className="text-[10px] bg-indigo-50 text-indigo-750 font-bold px-2.5 py-0.5 rounded-full">
+                          {list.length} طالب له إخوة
+                        </span>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-150 mt-3 text-right">
+                        <span className="text-[10px] font-bold text-slate-450 block mb-2">عينة من الطلاب الإخوة بهذا الصف:</span>
+                        {list.length === 0 ? (
+                          <p className="text-[11px] text-slate-400 italic">لا يوجد طلاب لديهم إخوة مسجلين في هذا الصف.</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                            {list.slice(0, 5).map(item => (
+                              <div key={item.student.id} className="text-[11px] bg-white p-2 rounded-lg border border-slate-200/60 shadow-2xs">
+                                <strong className="text-slate-800 block font-bold">{item.student.name}</strong>
+                                <span className="text-[10px] text-indigo-600 font-semibold block mt-0.5">
+                                  إخوته: {item.siblings.map(sib => `${sib.name} (${sib.grade === item.student.grade ? 'نفس الصف' : sib.grade.split(' ')[1] || sib.grade})`).join('، ')}
+                                </span>
+                              </div>
+                            ))}
+                            {list.length > 5 && (
+                              <p className="text-[10px] text-slate-400 font-bold text-center mt-1">+{list.length - 5} طلاب آخرين...</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => handlePrint(`printable-siblings-grade-${idx}`)}
+                        disabled={list.length === 0}
+                        className="flex-1 py-2 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Printer className="w-4 h-4" />
+                        طباعة كشف الصف
+                      </button>
+                      <button
+                        onClick={() => handleExportSiblingsToExcel(gradeName, list)}
+                        disabled={list.length === 0}
+                        className="p-2 bg-slate-50 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed text-slate-600 border border-slate-200 rounded-xl transition cursor-pointer"
+                        title="تصدير كجدول Excel"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            /* Detailed view for single filtered grade */
+            <div className="space-y-6">
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 no-print">
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-slate-800 text-sm">
+                    معاينة كشف إخوة: {selectedGrade}
+                  </h4>
+                  <p className="text-xs text-slate-450 font-medium font-sans">
+                    تم العثور على {siblingData.studentsWithSiblingsByGrade[selectedGrade].length} طالب وطالبة لديهم إخوة مسجلين بالسنتر.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 w-full sm:w-auto">
+                  <button
+                    onClick={() => handleExportSiblingsToExcel(selectedGrade, siblingData.studentsWithSiblingsByGrade[selectedGrade])}
+                    disabled={siblingData.studentsWithSiblingsByGrade[selectedGrade].length === 0}
+                    className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200"
+                  >
+                    <Download className="w-4 h-4" />
+                    تصدير الكشف Excel
+                  </button>
+                  <button
+                    onClick={() => handlePrint('printable-siblings-active-grade')}
+                    disabled={siblingData.studentsWithSiblingsByGrade[selectedGrade].length === 0}
+                    className="flex-1 sm:flex-none px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                  >
+                    <Printer className="w-4 h-4" />
+                    طباعة كشف الإخوة
+                  </button>
+                </div>
+              </div>
+
+              {/* On-screen detailed table */}
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm no-print">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-xs font-sans">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
+                        <th className="py-3 px-4 w-12 text-center">م</th>
+                        <th className="py-3 px-4 w-24">كود الطالب</th>
+                        <th className="py-3 px-4">اسم الطالب رباعي</th>
+                        <th className="py-3 px-4">المجموعة الحالية</th>
+                        <th className="py-3 px-4">هاتف ولي الأمر</th>
+                        <th className="py-3 px-4 text-indigo-700">بيانات الإخوة بالسنتر</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {siblingData.studentsWithSiblingsByGrade[selectedGrade].length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="text-center py-12 text-slate-400 italic font-bold">
+                            لا يوجد طلاب لديهم إخوة مسجلين بالسنتر في هذا الصف الدراسي حالياً.
+                          </td>
+                        </tr>
+                      ) : (
+                        siblingData.studentsWithSiblingsByGrade[selectedGrade]
+                          .filter(item => selectedGroupId === 'all' || item.student.groupId === selectedGroupId)
+                          .map((item, idx) => (
+                            <tr key={item.student.id} className="hover:bg-slate-50/40">
+                              <td className="py-3 px-4 text-center font-mono font-bold text-slate-450">{idx + 1}</td>
+                              <td className="py-3 px-4 font-mono font-bold text-indigo-750">{item.student.code}</td>
+                              <td className="py-3 px-4 font-bold text-slate-800">{item.student.name}</td>
+                              <td className="py-3 px-4 font-semibold text-slate-650">
+                                {groups.find(g => g.id === item.student.groupId)?.name || 'غير محدد'}
+                              </td>
+                              <td className="py-3 px-4 font-mono font-medium text-slate-600">{item.student.parentPhone}</td>
+                              <td className="py-3 px-4 bg-indigo-50/15">
+                                <div className="space-y-1">
+                                  {item.siblings.map(sib => (
+                                    <div key={sib.id} className="flex items-center gap-2 justify-start">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                                      <span className="font-extrabold text-slate-800">{sib.name}</span>
+                                      <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-bold">
+                                        {sib.grade === item.student.grade ? 'نفس الصف الدراسي' : sib.grade}
+                                      </span>
+                                      <span className="text-[10px] text-slate-450">({groups.find(g => g.id === sib.groupId)?.name || 'مجموعة غير محددة'} — كود: {sib.code})</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hidden Printable Templates for Sibling Report */}
+          <div className="hidden">
+            {/* 1. All-Grades Hidden Print Targets */}
+            {(Object.keys(siblingData.studentsWithSiblingsByGrade) as GradeType[]).map((gradeName, idx) => {
+              const list = siblingData.studentsWithSiblingsByGrade[gradeName];
+              return (
+                <div key={idx} id={`printable-siblings-grade-${idx}`}>
+                  <div className="p-6 text-center border-b-2 border-slate-800 font-sans space-y-2">
+                    <h2 className="text-2xl font-black text-slate-900">مجموعة العلوم الحديثة — الأستاذ محمود أبوذكري</h2>
+                    <h3 className="text-md font-bold text-slate-700">كشف وتدقيق أسماء الطلاب الذين لديهم إخوة بالسنتر</h3>
+                    <div className="h-1" />
+                    <h1 className="text-lg font-black text-indigo-700 bg-slate-50 border border-slate-200 py-2.5 rounded-xl">
+                      الصف الدراسي المستهدف: {gradeName}
+                    </h1>
+                    <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mt-3 text-xs font-bold text-right">
+                      <div>المادة: العلوم والتأسيس العلمي</div>
+                      <div>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</div>
+                      <div>عدد الطلاب الذين لهم إخوة بالصف: {list.length} طالب</div>
+                      <div>المرجع: هاتف ولي الأمر المطابق</div>
+                    </div>
+                  </div>
+
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                        <th style={{ width: '80px' }}>كود الطالب</th>
+                        <th>اسم الطالب رباعي</th>
+                        <th style={{ width: '110px' }}>المجموعة</th>
+                        <th style={{ width: '100px' }}>هاتف ولي الأمر</th>
+                        <th>بيانات الإخوة المسجلين بالسنتر وصوفهم</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {list.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontStyle: 'italic' }}>
+                            لا توجد أسماء طلاب لديهم إخوة مسجلين في هذا الصف.
+                          </td>
+                        </tr>
+                      ) : (
+                        list.map((item, sIdx) => (
+                          <tr key={item.student.id}>
+                            <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{sIdx + 1}</td>
+                            <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{item.student.code}</td>
+                            <td style={{ fontWeight: 'bold' }}>{item.student.name}</td>
+                            <td>{groups.find(g => g.id === item.student.groupId)?.name || 'غير محدد'}</td>
+                            <td style={{ fontFamily: 'monospace' }}>{item.student.parentPhone}</td>
+                            <td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                {item.siblings.map(sib => (
+                                  <div key={sib.id} style={{ fontSize: '10px' }}>
+                                    • <strong>{sib.name}</strong> ({sib.grade === item.student.grade ? 'نفس الصف' : sib.grade} — كود: {sib.code})
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+
+                  <div className="mt-12 pt-6 border-t border-slate-200 grid grid-cols-2 text-xs">
+                    <div>
+                      <span className="font-bold block text-slate-400">توقيع المعلم:</span>
+                      <strong className="block mt-2 text-slate-800">الأستاذ محمود أبوذكري</strong>
+                    </div>
+                    <div style={{ textAlign: 'left' }}>
+                      <span className="font-bold block text-slate-400">توقيع المنسق الإداري:</span>
+                      <strong className="block mt-2">..........................................</strong>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* 2. Specific Active Grade Print Target */}
+            <div id="printable-siblings-active-grade">
+              <div className="p-6 text-center border-b-2 border-slate-800 font-sans space-y-2">
+                <h2 className="text-2xl font-black text-slate-900">مجموعة العلوم الحديثة — الأستاذ محمود أبوذكري</h2>
+                <h3 className="text-md font-bold text-slate-700">كشف وتدقيق أسماء الطلاب الذين لديهم إخوة بالسنتر</h3>
+                <div className="h-1" />
+                <h1 className="text-lg font-black text-indigo-700 bg-slate-50 border border-slate-200 py-2.5 rounded-xl">
+                  الصف الدراسي المختار: {selectedGrade}
+                </h1>
+                <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mt-3 text-xs font-bold text-right">
+                  <div>المادة: العلوم والتأسيس العلمي</div>
+                  <div>تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</div>
+                  <div>عدد الطلاب الذين لهم إخوة بالصف: {siblingData.studentsWithSiblingsByGrade[selectedGrade]?.length || 0} طالب</div>
+                  <div>المرجع: مطابقة هواتف أولياء الأمور</div>
+                </div>
+              </div>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: '40px', textAlign: 'center' }}>م</th>
+                    <th style={{ width: '80px' }}>كود الطالب</th>
+                    <th>اسم الطالب رباعي</th>
+                    <th style={{ width: '110px' }}>المجموعة</th>
+                    <th style={{ width: '100px' }}>هاتف ولي الأمر</th>
+                    <th>بيانات الإخوة المسجلين بالسنتر وصوفهم</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(siblingData.studentsWithSiblingsByGrade[selectedGrade] || []).length === 0 ? (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontStyle: 'italic' }}>
+                        لا توجد أسماء طلاب لديهم إخوة مسجلين في هذا الصف.
+                      </td>
+                    </tr>
+                  ) : (
+                    (siblingData.studentsWithSiblingsByGrade[selectedGrade] || []).map((item, sIdx) => (
+                      <tr key={item.student.id}>
+                        <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{sIdx + 1}</td>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{item.student.code}</td>
+                        <td style={{ fontWeight: 'bold' }}>{item.student.name}</td>
+                        <td>{groups.find(g => g.id === item.student.groupId)?.name || 'غير محدد'}</td>
+                        <td style={{ fontFamily: 'monospace' }}>{item.student.parentPhone}</td>
+                        <td>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {item.siblings.map(sib => (
+                              <div key={sib.id} style={{ fontSize: '10px' }}>
+                                • <strong>{sib.name}</strong> ({sib.grade === item.student.grade ? 'نفس الصف' : sib.grade} — كود: {sib.code})
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+
+              <div className="mt-12 pt-6 border-t border-slate-200 grid grid-cols-2 text-xs">
+                <div>
+                  <span className="font-bold block text-slate-400">توقيع المعلم:</span>
+                  <strong className="block mt-2 text-slate-800">الأستاذ محمود أبوذكري</strong>
+                </div>
+                <div style={{ textAlign: 'left' }}>
+                  <span className="font-bold block text-slate-400">توقيع المنسق الإداري:</span>
+                  <strong className="block mt-2">..........................................</strong>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

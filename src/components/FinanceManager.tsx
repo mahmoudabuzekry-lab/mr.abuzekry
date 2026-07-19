@@ -24,7 +24,7 @@ interface FinanceManagerProps {
 }
 
 export default function FinanceManager({ students, payments, prices, onRefresh }: FinanceManagerProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'prices' | 'blankSheet'>('history');
+  const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'prices' | 'blankSheet'>('debtors');
   
   // Cloud Sync tracking states
   const [isOnline, setIsOnline] = useState<boolean | null>(null);
@@ -112,6 +112,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const [filterMonth, setFilterMonth] = useState<string>(getCurrentArabicMonthName());
   const [filterGrade, setFilterGrade] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterPaymentStatus, setFilterPaymentStatus] = useState<'all' | 'paid' | 'unpaid'>('unpaid');
 
   // Record Payment search and filter states
   const [addSearchQuery, setAddSearchQuery] = useState('');
@@ -491,6 +492,18 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const getDebtors = () => {
     const activeStudents = students.filter(s => {
       if (s.status !== 'approved') return false;
+      
+      // Grade filter
+      if (filterGrade !== 'all' && s.grade !== filterGrade) return false;
+      
+      // Search filter
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const nameMatch = s.name.toLowerCase().includes(q);
+        const codeMatch = s.code.toLowerCase().includes(q);
+        if (!nameMatch && !codeMatch) return false;
+      }
+      
       return true;
     });
     const monthPayments = payments.filter(p => p.month === filterMonth);
@@ -510,28 +523,56 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
         balance,
         status: balance <= 0 ? 'paid' : 'debtor'
       };
-    }).filter(record => record.status === 'debtor' && record.amountDue > 0); // Exemptions are not debtors
+    }).filter(record => {
+      if (filterPaymentStatus === 'unpaid') {
+        return record.status === 'debtor' && record.amountDue > 0;
+      } else if (filterPaymentStatus === 'paid') {
+        return record.status === 'paid';
+      } else {
+        return true; // 'all'
+      }
+    });
   };
 
   // Excel Outflows Reporting
   const handleExportPaymentsExcel = () => {
-    const data = payments.map((p, idx) => ({
-      'م': idx + 1,
-      'رقم العملية': p.id,
-      'اسم الطالب': p.studentName,
-      'الصف الدراسي': p.grade,
-      'الشهر المالي': p.month,
-      'المبلغ المسدد': p.amountPaid,
-      'القيمة المطلوبة': p.amountDue,
-      'طريقة الدفع': p.paymentMethod,
-      'تاريخ السداد': p.date,
-      'ملاحظات': p.notes || ''
-    }));
+    if (activeSubTab === 'history') {
+      const data = filteredPayments.map((p, idx) => ({
+        'م': idx + 1,
+        'رقم العملية': p.id,
+        'اسم الطالب': p.studentName,
+        'الصف الدراسي': p.grade,
+        'الشهر المالي': p.month,
+        'المبلغ المسدد': p.amountPaid,
+        'القيمة المطلوبة': p.amountDue,
+        'طريقة الدفع': p.paymentMethod,
+        'تاريخ السداد': p.date,
+        'ملاحظات': p.notes || ''
+      }));
 
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'التقرير_المالي');
-    XLSX.writeFile(workbook, `سجل_المدفوعات_${filterMonth.replace(' ', '_')}.xlsx`);
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'التقرير_المالي');
+      XLSX.writeFile(workbook, `سجل_المدفوعات_${filterMonth.replace(' ', '_')}.xlsx`);
+    } else {
+      const data = debtorsList.map((record, idx) => ({
+        'م': idx + 1,
+        'كود الطالب': record.student.code,
+        'اسم الطالب': record.student.name,
+        'الصف الدراسي': record.student.grade,
+        'الشهر المالي': filterMonth,
+        'المبلغ المسدد': record.totalPaid,
+        'القيمة المطلوبة': record.amountDue,
+        'المتبقي المستحق': record.balance,
+        'الحالة': record.status === 'paid' ? 'مسدد بالكامل' : 'متأخرات/غير مسدد',
+        'رقم اتصال الوالد': record.student.parentPhone || ''
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'حالة_سداد_الطلاب');
+      XLSX.writeFile(workbook, `تقرير_حالة_السداد_${filterMonth.replace(' ', '_')}.xlsx`);
+    }
   };
 
   // Filter payments list
@@ -701,19 +742,22 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
 
         {/* Metric 2 */}
         <button
-          onClick={() => setActiveSubTab('debtors')}
+          onClick={() => {
+            setFilterPaymentStatus('unpaid');
+            setActiveSubTab('debtors');
+          }}
           className={`p-5 rounded-xl border transition-all text-right flex items-center justify-between cursor-pointer ${
-            activeSubTab === 'debtors'
+            activeSubTab === 'debtors' && filterPaymentStatus === 'unpaid'
               ? 'bg-slate-900 text-white border-slate-900'
               : 'bg-white border-slate-200 hover:border-slate-400'
           }`}
         >
           <div className="space-y-1">
-            <p className={`text-xs ${activeSubTab === 'debtors' ? 'text-slate-300' : 'text-slate-500'}`}>المتخلفين عن السداد</p>
-            <h4 className="text-xl font-bold font-sans">{debtorsList.length} طالب</h4>
-            <p className={`text-[10px] ${activeSubTab === 'debtors' ? 'text-slate-400' : 'text-red-650 font-bold'}`}>يتطلب تدخلاً ماليًا للمستحقات</p>
+            <p className={`text-xs ${activeSubTab === 'debtors' && filterPaymentStatus === 'unpaid' ? 'text-slate-300' : 'text-slate-500'}`}>المتخلفين عن السداد</p>
+            <h4 className="text-xl font-bold font-sans">{debtorsList.filter(d => d.status === 'debtor' && d.amountDue > 0).length} طالب</h4>
+            <p className={`text-[10px] ${activeSubTab === 'debtors' && filterPaymentStatus === 'unpaid' ? 'text-slate-400' : 'text-red-650 font-bold'}`}>يتطلب تدخلاً ماليًا للمستحقات</p>
           </div>
-          <div className={`p-3 rounded-lg ${activeSubTab === 'debtors' ? 'bg-slate-800 text-white border border-slate-700' : 'bg-red-50 text-red-650 border border-red-100'}`}>
+          <div className={`p-3 rounded-lg ${activeSubTab === 'debtors' && filterPaymentStatus === 'unpaid' ? 'bg-slate-800 text-white border border-slate-700' : 'bg-red-50 text-red-650 border border-red-100'}`}>
             <AlertTriangle className="w-5 h-5" />
           </div>
         </button>
@@ -729,7 +773,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
               <div 
                 className={`h-full rounded-full transition-all duration-300 ${
-                  collectionPercentage >= 80 ? 'bg-emerald-600' : 'bg-slate-905 bg-slate-800'
+                  collectionPercentage >= 80 ? 'bg-emerald-600' : 'bg-slate-800'
                 }`}
                 style={{ width: `${Math.min(collectionPercentage, 100)}%` }}
               />
@@ -742,13 +786,23 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
       {/* Navigation Sub-Tabs & Month Quick Selection */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4 no-print text-right">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
-          <div className="flex space-x-1.5 space-x-reverse">
+          <div className="flex space-x-1.5 space-x-reverse flex-wrap gap-y-2">
+            <button
+              onClick={() => setActiveSubTab('debtors')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeSubTab === 'debtors' 
+                  ? 'bg-slate-900 text-white' 
+                  : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              حالة سداد الطلاب 📊
+            </button>
             <button
               onClick={() => setActiveSubTab('history')}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeSubTab === 'history' 
                   ? 'bg-slate-900 text-white' 
-                  : 'bg-slate-50 text-slate-600 border border-slate-205 hover:bg-slate-100'
+                  : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}
             >
               سجل المقبوضات
@@ -758,7 +812,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
                 activeSubTab === 'add' 
                   ? 'bg-slate-900 text-white' 
-                  : 'bg-slate-50 text-slate-600 border border-slate-205 hover:bg-slate-100'
+                  : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}
             >
               <Plus className="w-3.5 h-3.5" />
@@ -769,7 +823,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
                 activeSubTab === 'blankSheet' 
                   ? 'bg-slate-900 text-white' 
-                  : 'bg-slate-50 text-slate-600 border border-slate-205 hover:bg-slate-100'
+                  : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}
             >
               <Printer className="w-3.5 h-3.5" />
@@ -780,7 +834,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
                 activeSubTab === 'prices' 
                   ? 'bg-slate-900 text-white' 
-                  : 'bg-slate-50 text-slate-600 border border-slate-205 hover:bg-slate-100'
+                  : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}
             >
               <Settings className="w-3.5 h-3.5" />
@@ -804,12 +858,12 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
 
         {/* Filters shown ONLY on receipts history and debtors */}
         {(activeSubTab === 'history' || activeSubTab === 'debtors') && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="relative">
               <Search className="absolute right-3 top-3 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="ابحث باسم الطالب المقيد..."
+                placeholder="ابحث باسم الطالب أو الكود..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none transition-all"
@@ -832,10 +886,29 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               </select>
             </div>
 
+            {/* Payment Status Filter */}
+            <div>
+              {activeSubTab === 'debtors' ? (
+                <select
+                  value={filterPaymentStatus}
+                  onChange={(e) => setFilterPaymentStatus(e.target.value as 'all' | 'paid' | 'unpaid')}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all font-bold text-slate-700"
+                >
+                  <option value="unpaid">حالة السداد: غير المسددين 🔴</option>
+                  <option value="paid">حالة السداد: المسددين والمعفيين 🟢</option>
+                  <option value="all">حالة السداد: كل الحالات ⚪</option>
+                </select>
+              ) : (
+                <div className="px-3 py-2 bg-slate-100 text-slate-400 border border-slate-200 rounded-lg text-xs text-center font-bold">
+                  حالة السداد: مسدد 🟢
+                </div>
+              )}
+            </div>
+
             <div className="flex justify-end">
               <button
                 onClick={handleExportPaymentsExcel}
-                className="px-4 py-2 bg-emerald-50 text-emerald-850 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold rounded-lg flex items-center gap-1 transition cursor-pointer"
+                className="w-full px-4 py-2 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold rounded-lg flex items-center justify-center gap-1 transition cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
                 تصدير السجل إكسل
@@ -1296,10 +1369,24 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
         {/* SUBTAB 3: DEBTORS */}
         {activeSubTab === 'debtors' && (
           <div className="overflow-x-auto text-right">
-            <div className="bg-amber-50/70 p-4 text-amber-900 text-xs font-bold border-b border-amber-100 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
-              <span>هذه القائمة ترصد الطلاب المعتمدين النشطين الذين لم يقيدوا أي مدفوعات كاملة لـ <strong>شهر {filterMonth}</strong> حتى الآن.</span>
-            </div>
+            {filterPaymentStatus === 'unpaid' && (
+              <div className="bg-amber-50/70 p-4 text-amber-900 text-xs font-bold border-b border-amber-100 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
+                <span>هذه القائمة ترصد الطلاب المعتمدين النشطين الذين لم يقيدوا أي مدفوعات كاملة لـ <strong>شهر {filterMonth}</strong> حتى الآن.</span>
+              </div>
+            )}
+            {filterPaymentStatus === 'paid' && (
+              <div className="bg-emerald-50/70 p-4 text-emerald-900 text-xs font-bold border-b border-emerald-100 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-emerald-700 flex-shrink-0" />
+                <span>هذه القائمة ترصد الطلاب المعتمدين النشطين الذين قاموا بسداد الاشتراكات بالكامل لـ <strong>شهر {filterMonth}</strong>.</span>
+              </div>
+            )}
+            {filterPaymentStatus === 'all' && (
+              <div className="bg-slate-50 p-4 text-slate-900 text-xs font-bold border-b border-slate-100 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-slate-750 flex-shrink-0" />
+                <span>هذه القائمة تعرض موقف الاشتراكات المالي العام لجميع الطلاب المعتمدين النشطين لـ <strong>شهر {filterMonth}</strong>.</span>
+              </div>
+            )}
 
             <table className="w-full text-xs text-right border-collapse">
               <thead>
@@ -1307,7 +1394,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                   <th className="py-3 px-6">كود الطالب</th>
                   <th className="py-3 px-6">اسم الطالب بالكامل</th>
                   <th className="py-3 px-6">الصف الدراسي والمسار</th>
-                  <th className="py-3 px-6 font-semibold">القيمة المستحقة المتبقية</th>
+                  <th className="py-3 px-6 font-semibold">موقف السداد للشهر المالي</th>
                   <th className="py-3 px-6 font-semibold">رقم الاتصال (الوالد)</th>
                   <th className="py-3 px-6 text-left">الإجراء المباشر</th>
                 </tr>
@@ -1316,37 +1403,47 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                 {debtorsList.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="text-center py-12 text-slate-400">
-                      تهانينا! الجميع قام بسداد هذا الشهر بالكامل أو لا يوجد متأخرات نشطة حالياً.
+                      لا يوجد نتائج مطابقة للفلاتر المحددة حالياً.
                     </td>
                   </tr>
                 ) : (
                   debtorsList.map(({ student, amountDue, balance }) => (
-                    <tr key={student.id} className="hover:bg-amber-50/20 transition-colors">
+                    <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="py-3.5 px-6 font-mono text-slate-500 font-bold">{student.code}</td>
                       <td className="py-3.5 px-6 font-bold text-slate-900">{student.name}</td>
                       <td className="py-3.5 px-6 text-slate-650">{student.grade}</td>
                       <td className="py-3.5 px-6">
-                        <span className="text-red-750 font-bold bg-red-50 border border-red-100 px-2.5 py-0.5 rounded text-xs font-mono">
-                          {balance} ج.م مطلوب (إجمالي: {amountDue})
-                        </span>
+                        {balance <= 0 ? (
+                          <span className="text-emerald-750 font-bold bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded text-xs">
+                            تم السداد بالكامل ✅ {amountDue === 0 && student.exemptionType === 'full' ? '(معفى كلياً)' : `(${amountDue} ج.م)`}
+                          </span>
+                        ) : (
+                          <span className="text-red-750 font-bold bg-red-50 border border-red-100 px-2.5 py-1 rounded text-xs font-mono">
+                            متبقي {balance} ج.م مطلوب (إجمالي: {amountDue}) 🔴
+                          </span>
+                        )}
                       </td>
                       <td className="py-3.5 px-6 font-mono font-bold text-slate-800">{student.parentPhone}</td>
                       <td className="py-3.5 px-6 text-left">
-                        <button
-                          onClick={() => {
-                            setPaymentForm({
-                              studentId: student.id,
-                              month: filterMonth,
-                              amountPaid: balance,
-                              paymentMethod: 'نقدي',
-                              notes: 'تسويه دفع متأخرات لشهر ' + filterMonth
-                            });
-                            setActiveSubTab('add');
-                          }}
-                          className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-850 transition cursor-pointer"
-                        >
-                          تحصيل السداد الفوري
-                        </button>
+                        {balance <= 0 ? (
+                          <span className="text-xs text-emerald-600 font-bold pl-4">مكتمل 🟢</span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setPaymentForm({
+                                studentId: student.id,
+                                month: filterMonth,
+                                amountPaid: balance,
+                                paymentMethod: 'نقدي',
+                                notes: 'تسويه دفع متأخرات لشهر ' + filterMonth
+                              });
+                              setActiveSubTab('add');
+                            }}
+                            className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-850 transition cursor-pointer"
+                          >
+                            تحصيل السداد الفوري
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))

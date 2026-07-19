@@ -220,6 +220,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
     school: '',
     address: '',
     groupId: '',
+    alternativeGroupIds: [] as string[],
     exemptionType: 'none' as ExemptionType,
     discountAmount: 0,
     notes: ''
@@ -502,6 +503,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
       school: newStudentForm.school,
       address: newStudentForm.address,
       groupId: targetGroupId,
+      alternativeGroupIds: newStudentForm.alternativeGroupIds || [],
       exemptionType: newStudentForm.exemptionType,
       discountAmount: Number(newStudentForm.discountAmount),
       notes: newStudentForm.notes,
@@ -517,6 +519,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
       school: '',
       address: '',
       groupId: '',
+      alternativeGroupIds: [],
       exemptionType: 'none',
       discountAmount: 0,
       notes: ''
@@ -1443,12 +1446,12 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                   value={newStudentForm.grade}
                   onChange={(e) => {
                     const grade = e.target.value as GradeType;
-                    // Auto select first group of new grade
                     const gradeGroups = groups.filter(g => g.grade === grade);
                     setNewStudentForm({ 
                       ...newStudentForm, 
                       grade,
-                      groupId: gradeGroups.length > 0 ? gradeGroups[0].id : ''
+                      groupId: gradeGroups.length > 0 ? gradeGroups[0].id : '',
+                      alternativeGroupIds: []
                     });
                   }}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:border-sky-500 focus:bg-white focus:ring-1 focus:ring-sky-500 rounded-xl text-right text-sm outline-hidden transition-all"
@@ -1468,7 +1471,14 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 <select
                   required
                   value={newStudentForm.groupId}
-                  onChange={(e) => setNewStudentForm({ ...newStudentForm, groupId: e.target.value })}
+                  onChange={(e) => {
+                    const selectedId = e.target.value;
+                    setNewStudentForm({
+                      ...newStudentForm,
+                      groupId: selectedId,
+                      alternativeGroupIds: (newStudentForm.alternativeGroupIds || []).filter(id => id !== selectedId)
+                    });
+                  }}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:border-sky-500 focus:bg-white focus:ring-1 focus:ring-sky-500 rounded-xl text-right text-sm outline-hidden transition-all"
                 >
                   <option value="">اختر المجموعة...</option>
@@ -1479,6 +1489,45 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                     ))
                   }
                 </select>
+              </div>
+
+              {/* Alternative Groups (Flexible Days) */}
+              <div className="md:col-span-2 bg-blue-50/40 p-4 rounded-xl border border-blue-100 space-y-2 text-right font-sans">
+                <label className="block text-xs font-bold text-blue-900">مجموعات حضور بديلة / إضافية (أيام مرنة للتحضير)</label>
+                <p className="text-[10px] text-blue-600 leading-relaxed">
+                  يمكن للمتعلم الحضور في هذه المجموعات كبديل أو كإضافة لمجموعته الأساسية (المستهدفة) لنفس الصف المقيد عليه. سيتم عرضه في كشوف رصد الحضور والغياب لهذه الأيام تلقائياً.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                  {groups
+                    .filter(g => g.grade === newStudentForm.grade && g.id !== newStudentForm.groupId)
+                    .map(g => {
+                      const isChecked = newStudentForm.alternativeGroupIds?.includes(g.id);
+                      return (
+                        <label key={g.id} className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 cursor-pointer hover:bg-blue-50/20 transition-all select-none">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              const updated = checked
+                                ? [...(newStudentForm.alternativeGroupIds || []), g.id]
+                                : (newStudentForm.alternativeGroupIds || []).filter(id => id !== g.id);
+                              setNewStudentForm({ ...newStudentForm, alternativeGroupIds: updated });
+                            }}
+                            className="w-4 h-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500 cursor-pointer"
+                          />
+                          <div className="text-right">
+                            <div className="text-xs font-bold text-gray-800">{g.name}</div>
+                            <div className="text-[10px] text-gray-500">({g.day} : {g.time})</div>
+                          </div>
+                        </label>
+                      );
+                    })
+                  }
+                  {groups.filter(g => g.grade === newStudentForm.grade && g.id !== newStudentForm.groupId).length === 0 && (
+                    <div className="text-xs text-gray-400 italic">لا توجد مجموعات أخرى متاحة في هذا الصف لتحديد أيام بديلة.</div>
+                  )}
+                </div>
               </div>
 
               {/* School */}
@@ -1660,62 +1709,75 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {importPreview.slice(0, 5).map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-50">
-                          <td className="p-3 font-semibold">{row['الاسم بالكامل'] || row['الاسم'] || row['Name'] || '—'}</td>
-                          <td className="p-3 font-mono">{row['رقم الهاتف'] || row['الموبايل'] || row['Phone'] || '—'}</td>
-                          <td className="p-3 font-mono font-medium text-slate-800">{row['رقم ولي الأمر'] || row['رقم الوالد'] || row['Parent Phone'] || '—'}</td>
-                          <td className="p-3">{row['الصف الدراسي'] || row['الصف'] || row['Grade'] || '—'}</td>
-                          <td className="p-3">{row['المدرسة'] || row['School'] || '—'}</td>
-                          <td className="p-3">{row['العنوان'] || row['Address'] || '—'}</td>
+                      {importPreview.slice(0, 50).map((row: any, index: number) => {
+                        const name = row['الاسم بالكامل'] || row['الاسم'] || row['Name'] || '-';
+                        const phone = row['رقم الهاتف'] || row['الموبايل'] || row['Phone'] || '-';
+                        const parentPhone = row['رقم ولي الأمر'] || row['رقم الوالد'] || row['Parent Phone'] || '-';
+                        const grade = row['الصف الدراسي'] || row['الصف'] || row['Grade'] || '-';
+                        const school = row['المدرسة'] || row['School'] || '-';
+                        const address = row['العنوان'] || row['Address'] || '-';
+                        return (
+                          <tr key={index} className="hover:bg-slate-50">
+                            <td className="p-3 font-semibold text-slate-800">{name}</td>
+                            <td className="p-3 font-mono">{phone}</td>
+                            <td className="p-3 font-mono">{parentPhone}</td>
+                            <td className="p-3 text-slate-500">{grade}</td>
+                            <td className="p-3 text-slate-500">{school}</td>
+                            <td className="p-3 text-slate-500">{address}</td>
+                          </tr>
+                        );
+                      })}
+                      {importPreview.length > 50 && (
+                        <tr>
+                          <td colSpan={6} className="p-3 text-center text-gray-400 bg-slate-50 font-medium">
+                            تم عرض أول 50 صفًا فقط من أصل {importPreview.length} صفاً...
+                          </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
-                {importPreview.length > 5 && (
-                  <p className="text-xs text-gray-400 italic text-left">... وهناك {importPreview.length - 5} سطر إضافي لم يعرض في المعاينة الفورية للأمان.</p>
-                )}
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* EDIT MODAL DIALOG */}
+      {/* EDIT STUDENT MODAL */}
       {editingStudent && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 text-right space-y-6 shadow-xl relative animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 md:p-8 space-y-6 shadow-2xl relative animate-in zoom-in-95 duration-150 text-right">
+            {/* Close Button */}
             <button 
               onClick={() => setEditingStudent(null)}
-              className="absolute left-4 top-4 p-2 bg-gray-50 hover:bg-gray-100 rounded-full text-gray-500 transition-all border"
+              className="absolute left-6 top-6 p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-500 transition-all cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
 
-            <h3 className="text-lg font-bold text-slate-800 border-b pb-2 flex items-center gap-2">
-              <Edit className="w-5 h-5 text-sky-600" />
-              تعديل سجل الطالب المستدام
-            </h3>
+            <div>
+              <span className="text-xs bg-sky-50 text-sky-700 px-3 py-1 rounded-full font-bold">تعديل بيانات الطالب</span>
+              <h3 className="text-xl font-extrabold text-slate-900 mt-2 font-sans">تحديث سجل الطالب</h3>
+            </div>
 
             <form onSubmit={handleSaveEdit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1">الاسم بالكامل</label>
+                <label className="block text-xs font-bold text-gray-600 mb-1">الاسم بالكامل *</label>
                 <input
                   type="text"
                   required
-                  value={editingStudent.name}
+                  value={editingStudent.name || ''}
                   onChange={(e) => setEditingStudent({ ...editingStudent, name: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white focus:border-sky-500 rounded-xl text-sm text-right"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1">كود الطالب الثابت</label>
+                <label className="block text-xs font-bold text-gray-600 mb-1">كود الطالب</label>
                 <input
                   type="text"
                   disabled
-                  value={editingStudent.code}
+                  value={editingStudent.code || ''}
                   className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-xl text-sm text-right font-mono text-gray-500 cursor-not-allowed"
                 />
               </div>
@@ -1724,18 +1786,18 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 <label className="block text-xs font-bold text-gray-600 mb-1">الموبايل الشخصي</label>
                 <input
                   type="tel"
-                  value={editingStudent.phone}
+                  value={editingStudent.phone || ''}
                   onChange={(e) => setEditingStudent({ ...editingStudent, phone: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white focus:border-sky-500 rounded-xl text-sm text-right font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1">تليفون الوالد / ولي الأمر</label>
+                <label className="block text-xs font-bold text-gray-600 mb-1">رقم هاتف ولي الأمر *</label>
                 <input
                   type="tel"
                   required
-                  value={editingStudent.parentPhone}
+                  value={editingStudent.parentPhone || ''}
                   onChange={(e) => setEditingStudent({ ...editingStudent, parentPhone: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white focus:border-sky-500 rounded-xl text-sm text-right font-mono"
                 />
@@ -1744,8 +1806,17 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1">الصف الأكاديمي</label>
                 <select
-                  value={editingStudent.grade}
-                  onChange={(e) => setEditingStudent({ ...editingStudent, grade: e.target.value as GradeType })}
+                  value={editingStudent.grade || ''}
+                  onChange={(e) => {
+                    const grade = e.target.value as GradeType;
+                    const gradeGroups = groups.filter(g => g.grade === grade);
+                    setEditingStudent({
+                      ...editingStudent,
+                      grade,
+                      groupId: gradeGroups.length > 0 ? gradeGroups[0].id : '',
+                      alternativeGroupIds: []
+                    });
+                  }}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white rounded-xl text-sm text-right"
                 >
                   <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
@@ -1758,10 +1829,17 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1">المجموعة</label>
+                <label className="block text-xs font-bold text-gray-600 mb-1">المجموعة الأساسية *</label>
                 <select
-                  value={editingStudent.groupId}
-                  onChange={(e) => setEditingStudent({ ...editingStudent, groupId: e.target.value })}
+                  value={editingStudent.groupId || ''}
+                  onChange={(e) => {
+                    const selectedId = e.target.value;
+                    setEditingStudent({
+                      ...editingStudent,
+                      groupId: selectedId,
+                      alternativeGroupIds: (editingStudent.alternativeGroupIds || []).filter(id => id !== selectedId)
+                    });
+                  }}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white rounded-xl text-sm text-right"
                 >
                   <option value="">اختر المجموعة...</option>
@@ -1774,11 +1852,50 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 </select>
               </div>
 
+              {/* Alternative Groups checkboxes in editing mode */}
+              <div className="md:col-span-2 bg-blue-50/40 p-4 rounded-xl border border-blue-100 space-y-2 text-right font-sans">
+                <label className="block text-xs font-bold text-blue-900">مجموعات حضور بديلة / إضافية (أيام مرنة للتحضير)</label>
+                <p className="text-[10px] text-blue-600 leading-relaxed">
+                  أيام الحضور البديلة المقترحة في هذا الصف للتحضير المرن.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                  {groups
+                    .filter(g => g.grade === editingStudent.grade && g.id !== editingStudent.groupId)
+                    .map(g => {
+                      const isChecked = editingStudent.alternativeGroupIds?.includes(g.id);
+                      return (
+                        <label key={g.id} className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 cursor-pointer hover:bg-blue-50/20 transition-all select-none">
+                          <input
+                            type="checkbox"
+                            checked={!!isChecked}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              const updated = checked
+                                ? [...(editingStudent.alternativeGroupIds || []), g.id]
+                                : (editingStudent.alternativeGroupIds || []).filter(id => id !== g.id);
+                              setEditingStudent({ ...editingStudent, alternativeGroupIds: updated });
+                            }}
+                            className="w-4 h-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500 cursor-pointer"
+                          />
+                          <div className="text-right">
+                            <div className="text-xs font-bold text-gray-800">{g.name}</div>
+                            <div className="text-[10px] text-gray-500">({g.day} : {g.time})</div>
+                          </div>
+                        </label>
+                      );
+                    })
+                  }
+                  {groups.filter(g => g.grade === editingStudent.grade && g.id !== editingStudent.groupId).length === 0 && (
+                    <div className="text-xs text-gray-400 italic font-medium">لا توجد مجموعات حضور بديلة متاحة.</div>
+                  )}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1">المدرسة</label>
                 <input
                   type="text"
-                  value={editingStudent.school}
+                  value={editingStudent.school || ''}
                   onChange={(e) => setEditingStudent({ ...editingStudent, school: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white focus:border-sky-500 rounded-xl text-sm text-right"
                 />
@@ -1788,7 +1905,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 <label className="block text-xs font-bold text-gray-600 mb-1">العنوان بالتفصيل</label>
                 <input
                   type="text"
-                  value={editingStudent.address}
+                  value={editingStudent.address || ''}
                   onChange={(e) => setEditingStudent({ ...editingStudent, address: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white focus:border-sky-500 rounded-xl text-sm text-right"
                 />
@@ -1797,13 +1914,13 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1">حالة الإعفاء المالي</label>
                 <select
-                  value={editingStudent.exemptionType}
+                  value={editingStudent.exemptionType || 'none'}
                   onChange={(e) => {
                     const exemptionType = e.target.value as ExemptionType;
                     setEditingStudent({ 
                       ...editingStudent, 
                       exemptionType,
-                      discountAmount: exemptionType !== 'partial' ? 0 : editingStudent.discountAmount 
+                      discountAmount: exemptionType !== 'partial' ? 0 : (editingStudent.discountAmount || 0)
                     });
                   }}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white rounded-xl text-sm text-right"
@@ -1820,7 +1937,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                   <input
                     type="number"
                     min={0}
-                    value={editingStudent.discountAmount}
+                    value={editingStudent.discountAmount || 0}
                     onChange={(e) => setEditingStudent({ ...editingStudent, discountAmount: Number(e.target.value) })}
                     className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-sm text-right font-mono"
                   />
