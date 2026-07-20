@@ -2161,7 +2161,7 @@ export default function App() {
 
       {/* Beautiful footer crediting الاستاذ محمود ابوذكري */}
       <footer className="bg-white border-t border-slate-200 py-8 text-center text-slate-400 text-xs mt-20 no-print">
-        <p className="font-bold text-slate-550">مجموعات العلوم المتكاملة — تكنولوجيا الذكاء المدرسي</p>
+        <p className="font-bold text-slate-550">مجموعات دروس العلوم مع الأستاذ / محمود أبوذكري</p>
         <p className="mt-1 leading-normal leading-relaxed text-slate-400">الحقوق محفوظة بمركز القائد العلمي للأستاذ محمود أبوذكري © 2026. طوّر نظامك لتعليم أكثر ذكاءً.</p>
       </footer>
 

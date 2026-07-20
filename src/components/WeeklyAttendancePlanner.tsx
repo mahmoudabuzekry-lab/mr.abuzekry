@@ -4,12 +4,12 @@
  * Weekly Attendance Days Planner / Organizer Component
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Student, Group, GradeType } from '../types';
 import { dbEngine } from '../db';
 import { 
   Calendar, Search, Check, Sparkles, Info, HelpCircle, 
-  RefreshCw, CheckSquare, Square, Filter
+  RefreshCw, CheckSquare, Square, Filter, Printer
 } from 'lucide-react';
 
 interface WeeklyAttendancePlannerProps {
@@ -46,6 +46,29 @@ export default function WeeklyAttendancePlanner({ students, groups, onRefresh }:
   });
 
   const gradeGroups = groups.filter(g => g.grade === selectedGrade);
+
+  // Calculate attendance count for each day of the week for the selected grade
+  const dayCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    WEEK_DAYS.forEach(day => {
+      counts[day] = 0;
+    });
+
+    const targetStudents = students.filter(s => s.status === 'approved' && s.grade === selectedGrade);
+    targetStudents.forEach(student => {
+      const primaryGroup = groups.find(g => g.id === student.groupId);
+      const defaultDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+      const checkedDays = student.attendanceDays || defaultDays;
+      
+      checkedDays.forEach(day => {
+        if (day in counts) {
+          counts[day]++;
+        }
+      });
+    });
+
+    return counts;
+  }, [students, groups, selectedGrade]);
 
   // Toggle a day's attendance for a student
   const handleToggleDay = (student: Student, day: string) => {
@@ -88,6 +111,91 @@ export default function WeeklyAttendancePlanner({ students, groups, onRefresh }:
     };
     dbEngine.updateStudent(updatedStudent);
     onRefresh();
+  };
+
+  // Print attendance planner table for manual work
+  const handlePrint = () => {
+    const element = document.getElementById('printable-weekly-attendance-planner');
+    if (!element) return;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'absolute';
+    iframe.style.width = '0px';
+    iframe.style.height = '0px';
+    iframe.style.border = 'none';
+    iframe.style.left = '-9999px';
+    iframe.style.top = '-9999px';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (!iframeDoc) {
+      window.print();
+      return;
+    }
+
+    let stylesHtml = '';
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((el) => {
+      stylesHtml += el.outerHTML;
+    });
+
+    iframeDoc.open();
+    iframeDoc.write(`
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+        <head>
+          <title>طباعة مخطط حضور الطلاب</title>
+          ${stylesHtml}
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap');
+            body {
+              background-color: white !important;
+              color: #0f172a !important;
+              padding: 20px !important;
+              font-family: 'Cairo', sans-serif !important;
+              direction: rtl !important;
+              text-align: right !important;
+            }
+            table {
+              width: 100% !important;
+              border-collapse: collapse !important;
+              margin-top: 15px !important;
+              font-size: 11px !important;
+            }
+            th, td {
+              border: 1px solid #000 !important;
+              padding: 8px 10px !important;
+              text-align: right !important;
+            }
+            th {
+              background-color: #f8fafc !important;
+              font-weight: bold !important;
+              color: #1e293b !important;
+            }
+            td {
+              color: #334155 !important;
+              font-weight: bold !important;
+            }
+          </style>
+        </head>
+        <body class="bg-white">
+          <div style="direction: rtl;">
+            ${element.innerHTML}
+          </div>
+          <script>
+            window.addEventListener('load', () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.parent.document.body.removeChild(window.frameElement);
+                }, 100);
+              }, 500);
+            });
+          </script>
+        </body>
+      </html>
+    `);
+    iframeDoc.close();
   };
 
   return (
@@ -155,6 +263,40 @@ export default function WeeklyAttendancePlanner({ students, groups, onRefresh }:
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pr-9 pl-3 py-2 bg-white border border-slate-200 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl text-xs text-right outline-none transition-all shadow-xs"
           />
+        </div>
+
+        {/* Print button */}
+        <button
+          onClick={handlePrint}
+          disabled={gradeStudents.length === 0}
+          className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-55 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95 shrink-0"
+          title="طباعة جدول أيام حضور الطلاب الحالي للعمل عليه يدوياً"
+        >
+          <Printer className="w-4 h-4" />
+          <span>طباعة الجدول الحالي 🖨️</span>
+        </button>
+      </div>
+
+      {/* Weekly Stats Section */}
+      <div className="bg-slate-50/60 border border-slate-200/80 p-4 rounded-xl space-y-2.5 animate-in fade-in slide-in-from-top-3 duration-250">
+        <h4 className="text-xs font-black text-slate-700 flex items-center justify-end gap-1.5">
+          <Calendar className="w-4 h-4 text-indigo-500" />
+          إحصائيات توزيع الحضور اليومي لطلاب {selectedGrade}:
+        </h4>
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+          {WEEK_DAYS.map(day => {
+            const count = dayCounts[day] || 0;
+            return (
+              <div 
+                key={day} 
+                className="bg-white border border-slate-150 p-2.5 rounded-lg text-center shadow-2xs hover:border-indigo-300 transition-all duration-150 flex flex-col items-center justify-center space-y-0.5"
+              >
+                <span className="text-[10px] font-bold text-slate-500">{day}</span>
+                <span className="text-sm font-black text-slate-800 font-sans">{count}</span>
+                <span className="text-[9px] font-bold text-slate-400">طلاب</span>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -311,6 +453,96 @@ export default function WeeklyAttendancePlanner({ students, groups, onRefresh }:
             عند رصد الحضور اليومي للمجموعة، سيتم عرض جميع الطلاب المقيدين بها، بالإضافة إلى أي طالب آخر تم تحديد نفس يوم الحصة كأحد أيام حضوره الأسبوعية هنا.
             بهذه الطريقة، إذا استأذن طالب في تغيير يوم حصته ليوم آخر، ما عليك سوى تفعيل اليوم البديل له في هذا الجدول، وسيظهر اسمه مباشرة في الحصتين!
           </p>
+        </div>
+      </div>
+
+      {/* Hidden Printable Template for Weekly Planner */}
+      <div className="hidden" id="printable-weekly-attendance-planner">
+        <div className="p-6 text-center border-b-2 border-slate-800 font-sans space-y-2" style={{ direction: 'rtl' }}>
+          <h2 className="text-2xl font-black text-slate-900" style={{ margin: '0 0 5px 0' }}>مجموعة العلوم الحديثة — الأستاذ محمود أبوذكري</h2>
+          <h3 className="text-sm font-bold text-slate-600" style={{ margin: '0 0 15px 0' }}>مخطط وجدول أيام الحضور الأسبوعية للطلاب (للعمل اليدوي والمراجعة)</h3>
+          <h1 className="text-md font-black text-indigo-700 bg-slate-50 border border-slate-200 py-2 rounded-xl" style={{ margin: '10px 0', padding: '10px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
+            الصف الدراسي: {selectedGrade}
+          </h1>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', maxWidth: '500px', margin: '15px auto 0 auto', fontSize: '11px', fontWeight: 'bold', textAlign: 'right' }}>
+            <div>المادة: العلوم والتأسيس العلمي</div>
+            <div>تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</div>
+            <div>إجمالي عدد طلاب الكشف: {gradeStudents.length} طالب وطالبة</div>
+            <div>طريقة الكشف: تلقائي / حضور مرن مخصص</div>
+          </div>
+        </div>
+
+        <table className="w-full text-right border-collapse text-xs mt-6" style={{ direction: 'rtl', borderCollapse: 'collapse', width: '100%', marginTop: '20px' }}>
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-300 text-slate-800 font-bold">
+              <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', width: '40px', backgroundColor: '#f8fafc' }}>م</th>
+              <th style={{ border: '1px solid #000', padding: '10px 8px', width: '80px', backgroundColor: '#f8fafc' }}>الكود</th>
+              <th style={{ border: '1px solid #000', padding: '10px 8px', backgroundColor: '#f8fafc' }}>اسم الطالب رباعي</th>
+              <th style={{ border: '1px solid #000', padding: '10px 8px', width: '120px', backgroundColor: '#f8fafc' }}>المجموعة الأساسية</th>
+              {WEEK_DAYS.map(day => (
+                <th key={day} style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', width: '70px', backgroundColor: '#f8fafc' }}>
+                  {day}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {gradeStudents.length === 0 ? (
+              <tr>
+                <td colSpan={4 + WEEK_DAYS.length} style={{ border: '1px solid #000', padding: '20px', textAlign: 'center', color: '#64748b', fontStyle: 'italic' }}>
+                  لا توجد أسماء طلاب مسجلين في هذا الكشف حالياً.
+                </td>
+              </tr>
+            ) : (
+              gradeStudents.map((student, idx) => {
+                const primaryGroup = groups.find(g => g.id === student.groupId);
+                const defaultDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+                const checkedDays = student.attendanceDays || defaultDays;
+
+                return (
+                  <tr key={student.id}>
+                    <td style={{ border: '1px solid #000', padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                    <td style={{ border: '1px solid #000', padding: '8px', fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                    <td style={{ border: '1px solid #000', padding: '8px', fontWeight: 'bold' }}>
+                      {student.name}
+                      {student.attendanceDays !== undefined && ' (مرن 🔄)'}
+                    </td>
+                    <td style={{ border: '1px solid #000', padding: '8px' }}>
+                      {primaryGroup ? primaryGroup.name : 'غير مسجل بمجموعة'}
+                    </td>
+                    {WEEK_DAYS.map(day => {
+                      const isChecked = checkedDays.includes(day);
+                      return (
+                        <td 
+                          key={day} 
+                          style={{ 
+                            border: '1px solid #000', 
+                            padding: '8px', 
+                            textAlign: 'center',
+                            backgroundColor: isChecked ? '#f1f5f9' : 'transparent',
+                            fontSize: '12px'
+                          }}
+                        >
+                          {isChecked ? '☑' : '☐'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+
+        <div className="mt-12 pt-6 border-t border-slate-300" style={{ display: 'flex', justifyContent: 'space-between', marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #cbd5e1' }}>
+          <div style={{ textAlign: 'right' }}>
+            <span style={{ display: 'block', fontSize: '11px', color: '#64748b', fontWeight: 'bold' }}>توقيع المعلم:</span>
+            <strong style={{ display: 'block', marginTop: '8px', fontSize: '12px', color: '#1e293b' }}>الأستاذ محمود أبوذكري</strong>
+          </div>
+          <div style={{ textAlign: 'left' }}>
+            <span style={{ display: 'block', fontSize: '11px', color: '#64748b', fontWeight: 'bold' }}>توقيع المنسق الإداري:</span>
+            <strong style={{ display: 'block', marginTop: '8px', fontSize: '12px', color: '#1e293b' }}>..........................................</strong>
+          </div>
         </div>
       </div>
     </div>
