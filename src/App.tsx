@@ -16,6 +16,7 @@ import DatabaseBackup from './components/DatabaseBackup';
 import ReportsManager from './components/ReportsManager';
 import WeeklyAttendancePlanner from './components/WeeklyAttendancePlanner';
 import { QRCodeSVG } from 'qrcode.react';
+import NotificationCenter from './components/NotificationCenter';
 
 // Icons
 import { 
@@ -1238,6 +1239,14 @@ export default function App() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Smart Notification Center & Mobile Push Alerts */}
+                  <NotificationCenter 
+                    groups={groups}
+                    students={students}
+                    userRole={userRole}
+                    onRefreshData={loadDatabase}
+                  />
 
                   {/* Grid metrics */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
