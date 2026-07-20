@@ -67,13 +67,24 @@ export default function NotificationCenter({ groups, students, userRole, onRefre
     }
   };
 
-  // Check if browser supports notifications
+  // Check if browser supports notifications and register Service Worker
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const supported = 'Notification' in window;
       setIsSupported(supported);
       if (supported) {
         setPermission(Notification.permission);
+        
+        // Register custom background Service Worker (for offline / closed-tab pushes)
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.register('/sw.js')
+            .then((reg) => {
+              console.log('Service Worker registered for background push alerts:', reg.scope);
+            })
+            .catch((err) => {
+              console.warn('Service Worker registration failed:', err);
+            });
+        }
       }
     }
   }, []);
