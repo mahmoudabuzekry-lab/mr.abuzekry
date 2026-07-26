@@ -132,8 +132,44 @@ export default function ReportsManager({
   onRefresh
 }: ReportsManagerProps) {
   // Tabs
-  const [activeTab, setActiveTab] = useState<'financial' | 'revenues' | 'attendance' | 'exams' | 'studentCard' | 'revisionSheets' | 'siblings'>('financial');
-  const [rosterType, setRosterType] = useState<'revision' | 'attendance' | 'collection'>('revision');
+  const [activeTab, setActiveTab] = useState<'financial' | 'revenues' | 'attendance' | 'weeklyStats' | 'exams' | 'studentCard' | 'revisionSheets' | 'siblings'>('financial');
+  const [weeklyStatsViewMode, setWeeklyStatsViewMode] = useState<'recorded' | 'scheduled'>('recorded');
+  const [rosterType, setRosterType] = useState<'revision' | 'attendance' | 'flexibleAttendance' | 'collection'>('revision');
+  const [flexibleDayFilter, setFlexibleDayFilter] = useState<string>('all');
+  const [flexibleTypeFilter, setFlexibleTypeFilter] = useState<'all' | 'flexibleOnly' | 'regularOnly'>('all');
+
+  // Helper function to parse group days from string
+  const parseDaysList = (dayStr: string): string[] => {
+    if (!dayStr) return [];
+    return dayStr
+      .split(/ و |,|،|and/)
+      .map(d => d.trim())
+      .filter(Boolean);
+  };
+
+  // Helper to resolve student flexible schedule and days
+  const getStudentFlexibleSchedule = (student: Student, groupsList: Group[]) => {
+    const primaryGroup = groupsList.find(g => g.id === student.groupId);
+    const primaryDays = primaryGroup ? parseDaysList(primaryGroup.day) : [];
+    const customDays = student.attendanceDays && student.attendanceDays.length > 0 ? student.attendanceDays : primaryDays;
+    
+    const altGroupIds = student.alternativeGroupIds || [];
+    const altGroups = groupsList.filter(g => altGroupIds.includes(g.id));
+    const altDays = altGroups.flatMap(g => parseDaysList(g.day));
+
+    const allScheduledDays = Array.from(new Set([...customDays, ...altDays]));
+    const isFlexible = altGroupIds.length > 0 || (student.attendanceDays && student.attendanceDays.length > 0);
+
+    return {
+      primaryGroup,
+      primaryDays,
+      customDays,
+      altGroups,
+      altDays,
+      allScheduledDays,
+      isFlexible
+    };
+  };
 
   // Revenues filter state
   const [revenueViewMode, setRevenueViewMode] = useState<'daily' | 'monthly'>('daily');
@@ -147,16 +183,29 @@ export default function ReportsManager({
   const [selectedGrade, setSelectedGrade] = useState<'all' | GradeType>('all');
   const [selectedGroupId, setSelectedGroupId] = useState<'all' | string>('all');
   
-  // Available Months (Dynamically computed from payments and current month)
+  // Available Months (All 12 Arabic months of the academic year + any custom months from payments)
   const currentMonth = getCurrentArabicMonthName();
   const availableMonths = useMemo(() => {
-    const list = new Set<string>();
-    list.add(currentMonth);
-    // Add months from payments
+    const monthsSet = new Set<string>([
+      'أغسطس',
+      'سبتمبر',
+      'أكتوبر',
+      'نوفمبر',
+      'ديسمبر',
+      'يناير',
+      'فبراير',
+      'مارس',
+      'أبريل',
+      'مايو',
+      'يونيو',
+      'يوليو'
+    ]);
+    if (currentMonth) monthsSet.add(currentMonth);
+    // Add custom months from payments if any (e.g., custom year format)
     payments.forEach(p => {
-      if (p.month) list.add(p.month);
+      if (p.month) monthsSet.add(p.month);
     });
-    return Array.from(list);
+    return Array.from(monthsSet);
   }, [payments, currentMonth]);
 
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonth);
@@ -203,6 +252,24 @@ export default function ReportsManager({
       return matchesGrade && matchesGroup;
     });
   }, [students, selectedGrade, selectedGroupId]);
+
+  // Filtered active students for flexible attendance roster options
+  const displayedActiveStudents = useMemo(() => {
+    if (rosterType !== 'flexibleAttendance') return activeStudents;
+    return activeStudents.filter(student => {
+      const sched = getStudentFlexibleSchedule(student, groups);
+      if (flexibleDayFilter !== 'all' && !sched.allScheduledDays.includes(flexibleDayFilter)) {
+        return false;
+      }
+      if (flexibleTypeFilter === 'flexibleOnly' && !sched.isFlexible) {
+        return false;
+      }
+      if (flexibleTypeFilter === 'regularOnly' && sched.isFlexible) {
+        return false;
+      }
+      return true;
+    });
+  }, [activeStudents, rosterType, flexibleDayFilter, flexibleTypeFilter, groups]);
 
   // Helper: Calculate dynamic attendance headers
   const activeHeaders = useMemo(() => {
@@ -363,6 +430,30 @@ export default function ReportsManager({
       }));
       sheetName = 'تحصيل اشتراكات يدوي';
       fileName = `كشف_تحصيل_${gradeName.replace(/\s+/g, '_')}`;
+    } else if (rosterType === 'flexibleAttendance') {
+      data = list.map((s, index) => {
+        const sched = getStudentFlexibleSchedule(s, groups);
+        return {
+          'م': index + 1,
+          'كود الطالب': s.code,
+          'الاسم الكامل': s.name,
+          'الصف الدراسي': s.grade,
+          'المجموعة الأساسية': sched.primaryGroup?.name || 'غير محدد',
+          'مجموعات الحضور المرن (البديلة)': sched.altGroups.map(g => g.name).join('، ') || 'لا يوجد',
+          'أيام المخطط الأسبوعي المعتمدة': sched.allScheduledDays.join('، ') || 'غير محدد',
+          'تليفون ولي الأمر': s.parentPhone,
+          'السبت': '',
+          'الأحد': '',
+          'الاثنين': '',
+          'الثلاثاء': '',
+          'الأربعاء': '',
+          'الخميس': '',
+          'الجمعة': '',
+          'ملاحظات الغياب اليدوي': s.notes || ''
+        };
+      });
+      sheetName = 'الغياب اليدوي للحضور المرن';
+      fileName = `كشف_الغياب_المرن_${gradeName.replace(/\s+/g, '_')}`;
     }
 
     const worksheet = XLSX.utils.json_to_sheet(data);
@@ -816,6 +907,197 @@ export default function ReportsManager({
     XLSX.writeFile(workbook, `كشف_الطلاب_الإخوة_${gradeName.replace(/\s+/g, '_')}.xlsx`);
   };
 
+  // ==========================================
+  // 6. WEEKLY DAY ATTENDANCE STATS CALCULATION
+  // ==========================================
+  const weeklyDayAttendanceStats = useMemo(() => {
+    const daysList = ['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'];
+    const gradesList: GradeType[] = [
+      'الصف الرابع الابتدائي',
+      'الصف الخامس الابتدائي',
+      'الصف السادس الابتدائي',
+      'الصف الأول الإعدادي',
+      'الصف الثاني الإعدادي',
+      'الصف الثالث الإعدادي'
+    ];
+
+    const getArabicDayName = (dateStr: string): string => {
+      if (!dateStr) return '';
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return '';
+      const days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+      return days[date.getDay()];
+    };
+
+    const filteredAttendanceLogs = attendance.filter(a => {
+      if (!a.date) return false;
+      if (selectedMonth && selectedMonth !== 'all') {
+        const monthParts = selectedMonth.split(/\s+/);
+        const mName = monthParts[0];
+        if (mName && ARABIC_MONTHS_MAP[mName]) {
+          const expectedMonthNum = ARABIC_MONTHS_MAP[mName];
+          const recordDate = new Date(a.date);
+          if (!isNaN(recordDate.getTime())) {
+            if ((recordDate.getMonth() + 1) !== expectedMonthNum) {
+              return false;
+            }
+          }
+        }
+      }
+      return true;
+    });
+
+    const gradesData = gradesList
+      .filter(g => selectedGrade === 'all' || g === selectedGrade)
+      .map(gradeName => {
+        const gradeStudents = students.filter(s => s.status === 'approved' && s.grade === gradeName);
+        const gradeGroups = groups.filter(g => g.grade === gradeName && (selectedGroupId === 'all' || g.id === selectedGroupId));
+
+        const groupStats = gradeGroups.map(grp => {
+          const grpStudents = gradeStudents.filter(s => s.groupId === grp.id);
+          const enrolledCount = grpStudents.length;
+
+          const dayCounts: Record<string, { recordedCount: number; scheduledCount: number; sessionsCount: number }> = {};
+          
+          daysList.forEach(day => {
+            const recorded = filteredAttendanceLogs.filter(a => {
+              const student = students.find(s => s.id === a.studentId);
+              const isGroupMatch = a.groupId === grp.id || (student && student.groupId === grp.id);
+              if (!isGroupMatch) return false;
+              if (a.status !== 'present' && a.status !== 'late') return false;
+              return getArabicDayName(a.date) === day;
+            });
+
+            const uniqueDates = new Set(
+              filteredAttendanceLogs
+                .filter(a => a.groupId === grp.id && getArabicDayName(a.date) === day)
+                .map(a => a.date)
+            );
+
+            const scheduled = gradeStudents.filter(s => {
+              const sched = getStudentFlexibleSchedule(s, groups);
+              return sched.allScheduledDays.includes(day) && (s.groupId === grp.id || sched.altGroups.some(ag => ag.id === grp.id));
+            });
+
+            dayCounts[day] = {
+              recordedCount: recorded.length,
+              scheduledCount: scheduled.length,
+              sessionsCount: uniqueDates.size
+            };
+          });
+
+          const totalRecordedWeek = daysList.reduce((sum, d) => sum + dayCounts[d].recordedCount, 0);
+          const totalScheduledWeek = daysList.reduce((sum, d) => sum + dayCounts[d].scheduledCount, 0);
+
+          return {
+            group: grp,
+            enrolledCount,
+            dayCounts,
+            totalRecordedWeek,
+            totalScheduledWeek
+          };
+        });
+
+        const gradeDayTotals: Record<string, { recordedCount: number; scheduledCount: number }> = {};
+        daysList.forEach(day => {
+          gradeDayTotals[day] = {
+            recordedCount: groupStats.reduce((sum, gs) => sum + gs.dayCounts[day].recordedCount, 0),
+            scheduledCount: groupStats.reduce((sum, gs) => sum + gs.dayCounts[day].scheduledCount, 0)
+          };
+        });
+
+        const gradeTotalRecordedWeek = groupStats.reduce((sum, gs) => sum + gs.totalRecordedWeek, 0);
+        const gradeTotalScheduledWeek = groupStats.reduce((sum, gs) => sum + gs.totalScheduledWeek, 0);
+        const gradeEnrolledTotal = groupStats.reduce((sum, gs) => sum + gs.enrolledCount, 0);
+
+        return {
+          gradeName,
+          groupStats,
+          gradeDayTotals,
+          gradeTotalRecordedWeek,
+          gradeTotalScheduledWeek,
+          gradeEnrolledTotal
+        };
+      });
+
+    const centerDayTotals: Record<string, { recordedCount: number; scheduledCount: number }> = {};
+    daysList.forEach(day => {
+      centerDayTotals[day] = {
+        recordedCount: gradesData.reduce((sum, gd) => sum + gd.gradeDayTotals[day].recordedCount, 0),
+        scheduledCount: gradesData.reduce((sum, gd) => sum + gd.gradeDayTotals[day].scheduledCount, 0)
+      };
+    });
+
+    const centerTotalRecordedWeek = gradesData.reduce((sum, gd) => sum + gd.gradeTotalRecordedWeek, 0);
+    const centerTotalScheduledWeek = gradesData.reduce((sum, gd) => sum + gd.gradeTotalScheduledWeek, 0);
+    const centerTotalEnrolled = gradesData.reduce((sum, gd) => sum + gd.gradeEnrolledTotal, 0);
+
+    let peakDay = 'السبت';
+    let maxCount = -1;
+    daysList.forEach(day => {
+      const cnt = weeklyStatsViewMode === 'recorded' ? centerDayTotals[day].recordedCount : centerDayTotals[day].scheduledCount;
+      if (cnt > maxCount) {
+        maxCount = cnt;
+        peakDay = day;
+      }
+    });
+
+    return {
+      daysList,
+      gradesData,
+      centerDayTotals,
+      centerTotalRecordedWeek,
+      centerTotalScheduledWeek,
+      centerTotalEnrolled,
+      peakDay,
+      maxCount
+    };
+  }, [students, groups, attendance, selectedGrade, selectedGroupId, selectedMonth, weeklyStatsViewMode]);
+
+  const handleExportWeeklyDayStatsToExcel = () => {
+    const rows: any[] = [];
+    
+    weeklyDayAttendanceStats.gradesData.forEach(gd => {
+      gd.groupStats.forEach(gs => {
+        const row: any = {
+          'الصف الدراسي': gd.gradeName,
+          'اسم المجموعة': gs.group.name,
+          'موعد المجموعة': gs.group.time ? `${gs.group.day} (${gs.group.time})` : gs.group.day,
+          'عدد المقيدين بالمجموعة': gs.enrolledCount,
+          'السبت': weeklyStatsViewMode === 'recorded' ? gs.dayCounts['السبت'].recordedCount : gs.dayCounts['السبت'].scheduledCount,
+          'الأحد': weeklyStatsViewMode === 'recorded' ? gs.dayCounts['الأحد'].recordedCount : gs.dayCounts['الأحد'].scheduledCount,
+          'الاثنين': weeklyStatsViewMode === 'recorded' ? gs.dayCounts['الاثنين'].recordedCount : gs.dayCounts['الاثنين'].scheduledCount,
+          'الثلاثاء': weeklyStatsViewMode === 'recorded' ? gs.dayCounts['الثلاثاء'].recordedCount : gs.dayCounts['الثلاثاء'].scheduledCount,
+          'الأربعاء': weeklyStatsViewMode === 'recorded' ? gs.dayCounts['الأربعاء'].recordedCount : gs.dayCounts['الأربعاء'].scheduledCount,
+          'الخميس': weeklyStatsViewMode === 'recorded' ? gs.dayCounts['الخميس'].recordedCount : gs.dayCounts['الخميس'].scheduledCount,
+          'الجمعة': weeklyStatsViewMode === 'recorded' ? gs.dayCounts['الجمعة'].recordedCount : gs.dayCounts['الجمعة'].scheduledCount,
+          'إجمالي حضور الأسبوع': weeklyStatsViewMode === 'recorded' ? gs.totalRecordedWeek : gs.totalScheduledWeek
+        };
+        rows.push(row);
+      });
+
+      rows.push({
+        'الصف الدراسي': `إجمالي ${gd.gradeName}`,
+        'اسم المجموعة': '---',
+        'موعد المجموعة': '---',
+        'عدد المقيدين بالمجموعة': gd.gradeEnrolledTotal,
+        'السبت': weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals['السبت'].recordedCount : gd.gradeDayTotals['السبت'].scheduledCount,
+        'الأحد': weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals['الأحد'].recordedCount : gd.gradeDayTotals['الأحد'].scheduledCount,
+        'الاثنين': weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals['الاثنين'].recordedCount : gd.gradeDayTotals['الاثنين'].scheduledCount,
+        'الثلاثاء': weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals['الثلاثاء'].recordedCount : gd.gradeDayTotals['الثلاثاء'].scheduledCount,
+        'الأربعاء': weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals['الأربعاء'].recordedCount : gd.gradeDayTotals['الأربعاء'].scheduledCount,
+        'الخميس': weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals['الخميس'].recordedCount : gd.gradeDayTotals['الخميس'].scheduledCount,
+        'الجمعة': weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals['الجمعة'].recordedCount : gd.gradeDayTotals['الجمعة'].scheduledCount,
+        'إجمالي حضور الأسبوع': weeklyStatsViewMode === 'recorded' ? gd.gradeTotalRecordedWeek : gd.gradeTotalScheduledWeek
+      });
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'إحصائيات الحضور الأسبوعية');
+    XLSX.writeFile(workbook, `تقرير_احصائيات_الحضور_اليومي_${selectedMonth.replace(/\s+/g, '_')}.xlsx`);
+  };
+
   const handlePrint = (elementId?: string) => {
     if (elementId) {
       const element = document.getElementById(elementId);
@@ -947,6 +1229,16 @@ export default function ReportsManager({
         >
           <ListTodo className="w-4 h-4" />
           تقرير المواظبة والغياب المتكرر
+        </button>
+
+        <button
+          onClick={() => setActiveTab('weeklyStats')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'weeklyStats' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <Calendar className="w-4 h-4 text-amber-300" />
+          إحصائيات الحضور اليومي والصفوف
         </button>
 
         <button
@@ -1815,6 +2107,332 @@ export default function ReportsManager({
       )}
 
       {/* ========================================================= */}
+      {/* 2.5. TAB: WEEKLY DAY ATTENDANCE STATISTICAL REPORT         */}
+      {/* ========================================================= */}
+      {activeTab === 'weeklyStats' && (
+        <div className="space-y-6">
+          {/* Controls & Mode Switcher */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 no-print">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-indigo-600" />
+                  تقرير إحصائيات عدد الحضور حسب أيام الأسبوع والصفوف والمجموعات
+                </h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">
+                  يقدم هذا التقرير تفصيلاً رقمياً لكثافة وعدد الحضور لكل يوم من أيام الأسبوع (السبت - الجمعة) مقسماً لكل صف دراسي ولكل مجموعة على حِدة.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                <button
+                  onClick={handleExportWeeklyDayStatsToExcel}
+                  className="flex-1 md:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 border border-slate-200 cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  تصدير إحصائيات الأسبوع Excel
+                </button>
+                <button
+                  onClick={() => handlePrint('printable-weekly-day-stats')}
+                  className="flex-1 md:flex-none px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  طباعة تقرير الإحصائيات
+                </button>
+              </div>
+            </div>
+
+            {/* Mode Selector and Month/Grade Indicators */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-150">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">نوع الإحصاء المعروض:</label>
+                <div className="flex bg-slate-100 p-1 rounded-xl">
+                  <button
+                    onClick={() => setWeeklyStatsViewMode('recorded')}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition ${
+                      weeklyStatsViewMode === 'recorded'
+                        ? 'bg-white text-indigo-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    الحضور الفعلي المرصود 📝
+                  </button>
+                  <button
+                    onClick={() => setWeeklyStatsViewMode('scheduled')}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition ${
+                      weeklyStatsViewMode === 'scheduled'
+                        ? 'bg-white text-indigo-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    الطلاب المجدولين المقيدين 📅
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">الصف الدراسي المحدد:</label>
+                <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs text-slate-700">
+                  {selectedGrade === 'all' ? 'جميع الصفوف الدراسية' : selectedGrade}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">المجموعة أو الشهر المحدد:</label>
+                <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs text-slate-700">
+                  {selectedGroupId === 'all' ? 'جميع المجموعات' : groups.find(g => g.id === selectedGroupId)?.name} — شهر {selectedMonth}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 no-print">
+            <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">إجمالي المقيدين بالمركز</p>
+                <h4 className="text-xl font-black text-slate-800 mt-1">{weeklyDayAttendanceStats.centerTotalEnrolled} طالب</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">مقبولون في مجموعات العلوم</p>
+              </div>
+              <div className="bg-slate-50 text-slate-600 p-3 rounded-xl border border-slate-100">
+                <Users className="w-5 h-5 text-indigo-600" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">اليوم الأكثر كثافة إقبالاً</p>
+                <h4 className="text-xl font-black text-indigo-700 mt-1">{weeklyDayAttendanceStats.peakDay}</h4>
+                <p className="text-[10px] text-indigo-500 font-bold mt-0.5">
+                  {weeklyDayAttendanceStats.maxCount} {weeklyStatsViewMode === 'recorded' ? 'حضور مسجل' : 'طالب مجدول'}
+                </p>
+              </div>
+              <div className="bg-indigo-50 text-indigo-600 p-3 rounded-xl border border-indigo-100">
+                <Sparkles className="w-5 h-5 text-indigo-600" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">
+                  {weeklyStatsViewMode === 'recorded' ? 'إجمالي تسجيلات حضور الأسبوع' : 'إجمالي الحضور الأسبوعي المتوقع'}
+                </p>
+                <h4 className="text-xl font-black text-emerald-600 mt-1">
+                  {weeklyStatsViewMode === 'recorded' ? weeklyDayAttendanceStats.centerTotalRecordedWeek : weeklyDayAttendanceStats.centerTotalScheduledWeek}
+                </h4>
+                <p className="text-[10px] text-emerald-500 font-bold mt-0.5">عبر جميع المجموعات</p>
+              </div>
+              <div className="bg-emerald-50 text-emerald-600 p-3 rounded-xl border border-emerald-100">
+                <CheckCircle className="w-5 h-5 text-emerald-600" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">الصفوف المغطاة بالتقرير</p>
+                <h4 className="text-xl font-black text-blue-600 mt-1">{weeklyDayAttendanceStats.gradesData.length} صفوف</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">المرحلة الابتدائية والإعدادية</p>
+              </div>
+              <div className="bg-blue-50 text-blue-600 p-3 rounded-xl border border-blue-100">
+                <BookOpen className="w-5 h-5 text-blue-600" />
+              </div>
+            </div>
+          </div>
+
+          {/* Breakdown Tables By Grade */}
+          <div className="space-y-6 no-print">
+            {weeklyDayAttendanceStats.gradesData.map(gd => (
+              <div key={gd.gradeName} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-3">
+                  <h4 className="font-black text-slate-800 text-sm flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-600"></span>
+                    {gd.gradeName}
+                  </h4>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded-lg font-bold">
+                      إجمالي الطلاب المقيدين: <strong className="font-mono text-indigo-700">{gd.gradeEnrolledTotal}</strong>
+                    </span>
+                    <span className="bg-indigo-50 text-indigo-800 px-3 py-1 rounded-lg font-bold">
+                      حضور الأسبوع: <strong className="font-mono">{weeklyStatsViewMode === 'recorded' ? gd.gradeTotalRecordedWeek : gd.gradeTotalScheduledWeek}</strong>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-600 font-extrabold border-b border-slate-200">
+                        <th className="py-2.5 px-3">المجموعة</th>
+                        <th className="py-2.5 px-3">موعد المجموعة والأيام</th>
+                        <th className="py-2.5 px-3 text-center">المقيدين</th>
+                        {weeklyDayAttendanceStats.daysList.map(day => (
+                          <th key={day} className="py-2.5 px-2 text-center bg-slate-100/60 font-black">{day}</th>
+                        ))}
+                        <th className="py-2.5 px-3 text-center bg-indigo-50/70 text-indigo-900 font-black">إجمالي الأسبوع</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {gd.groupStats.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="py-6 text-center text-slate-400 italic">
+                            لا توجد مجموعات دراسية مضافة لهذا الصف.
+                          </td>
+                        </tr>
+                      ) : (
+                        gd.groupStats.map(gs => (
+                          <tr key={gs.group.id} className="hover:bg-slate-50/60">
+                            <td className="py-2.5 px-3 font-bold text-slate-800">{gs.group.name}</td>
+                            <td className="py-2.5 px-3 text-slate-500 font-medium">
+                              {gs.group.day} {gs.group.time && `(${gs.group.time})`}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-700">{gs.enrolledCount}</td>
+                            {weeklyDayAttendanceStats.daysList.map(day => {
+                              const count = weeklyStatsViewMode === 'recorded' ? gs.dayCounts[day].recordedCount : gs.dayCounts[day].scheduledCount;
+                              return (
+                                <td key={day} className={`py-2.5 px-2 text-center font-mono font-bold ${
+                                  count > 0 ? 'text-indigo-900 bg-indigo-50/20' : 'text-slate-300'
+                                }`}>
+                                  {count > 0 ? (
+                                    <span className="inline-block px-2 py-0.5 rounded bg-indigo-50 border border-indigo-150 text-indigo-950 font-black">
+                                      {count}
+                                    </span>
+                                  ) : (
+                                    '0'
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="py-2.5 px-3 text-center font-mono font-black text-indigo-700 bg-indigo-50/40">
+                              {weeklyStatsViewMode === 'recorded' ? gs.totalRecordedWeek : gs.totalScheduledWeek}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-100/80 font-black text-slate-800 border-t-2 border-slate-200">
+                        <td colSpan={2} className="py-2.5 px-3 text-indigo-950">مجموع {gd.gradeName}:</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{gd.gradeEnrolledTotal}</td>
+                        {weeklyDayAttendanceStats.daysList.map(day => (
+                          <td key={day} className="py-2.5 px-2 text-center font-mono text-indigo-900 font-extrabold">
+                            {weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals[day].recordedCount : gd.gradeDayTotals[day].scheduledCount}
+                          </td>
+                        ))}
+                        <td className="py-2.5 px-3 text-center font-mono font-black text-indigo-800 bg-indigo-100/60">
+                          {weeklyStatsViewMode === 'recorded' ? gd.gradeTotalRecordedWeek : gd.gradeTotalScheduledWeek}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Printable Section for Weekly Day Attendance Statistics */}
+          <div id="printable-weekly-day-stats" className="hidden print:block p-4 space-y-6 bg-white dir-rtl text-right">
+            <div className="text-center border-b-2 border-slate-800 pb-4">
+              <h2 className="text-2xl font-black text-slate-900 mb-1">مركز الأستاذ محمود أبو زكريا للعلوم والتأسيس</h2>
+              <h3 className="text-lg font-bold text-slate-700">تقرير إحصائيات الحضور حسب أيام الأسبوع والصفوف والمجموعات</h3>
+              <p className="text-xs text-slate-500 mt-1 font-bold">
+                شهر: {selectedMonth} — {weeklyStatsViewMode === 'recorded' ? 'البيانات بناءً على سجلات الحضور الفعلي المرصودة' : 'البيانات بناءً على الطلاب المجدولين بالجدول الأسبوعي'}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">تاريخ الاستخراج: {new Date().toLocaleDateString('ar-EG')}</p>
+            </div>
+
+            {weeklyDayAttendanceStats.gradesData.map(gd => (
+              <div key={gd.gradeName} className="space-y-2 mb-6">
+                <h4 className="text-sm font-black text-slate-900 border-r-4 border-indigo-700 pr-2">
+                  {gd.gradeName} (إجمالي المقيدين: {gd.gradeEnrolledTotal} طالب)
+                </h4>
+                <table className="w-full text-right text-xs border-collapse border border-slate-300">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-800 font-extrabold border-b border-slate-300">
+                      <th className="p-2 border border-slate-300">اسم المجموعة</th>
+                      <th className="p-2 border border-slate-300">الموعد</th>
+                      <th className="p-2 border border-slate-300 text-center">المقيدين</th>
+                      {weeklyDayAttendanceStats.daysList.map(day => (
+                        <th key={day} className="p-2 border border-slate-300 text-center">{day}</th>
+                      ))}
+                      <th className="p-2 border border-slate-300 text-center">مجموع الأسبوع</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gd.groupStats.map(gs => (
+                      <tr key={gs.group.id}>
+                        <td className="p-2 border border-slate-300 font-bold">{gs.group.name}</td>
+                        <td className="p-2 border border-slate-300">{gs.group.day}</td>
+                        <td className="p-2 border border-slate-300 text-center font-bold">{gs.enrolledCount}</td>
+                        {weeklyDayAttendanceStats.daysList.map(day => {
+                          const count = weeklyStatsViewMode === 'recorded' ? gs.dayCounts[day].recordedCount : gs.dayCounts[day].scheduledCount;
+                          return (
+                            <td key={day} className="p-2 border border-slate-300 text-center font-bold">
+                              {count || '—'}
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 border border-slate-300 text-center font-black bg-slate-50">
+                          {weeklyStatsViewMode === 'recorded' ? gs.totalRecordedWeek : gs.totalScheduledWeek}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-200 font-black border-t-2 border-slate-400">
+                      <td colSpan={2} className="p-2 border border-slate-300">إجمالي {gd.gradeName}</td>
+                      <td className="p-2 border border-slate-300 text-center">{gd.gradeEnrolledTotal}</td>
+                      {weeklyDayAttendanceStats.daysList.map(day => (
+                        <td key={day} className="p-2 border border-slate-300 text-center">
+                          {weeklyStatsViewMode === 'recorded' ? gd.gradeDayTotals[day].recordedCount : gd.gradeDayTotals[day].scheduledCount}
+                        </td>
+                      ))}
+                      <td className="p-2 border border-slate-300 text-center bg-slate-300">
+                        {weeklyStatsViewMode === 'recorded' ? gd.gradeTotalRecordedWeek : gd.gradeTotalScheduledWeek}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ))}
+
+            {/* Center Grand Total */}
+            <div className="pt-4 border-t-2 border-slate-800 space-y-2">
+              <h4 className="text-sm font-black text-slate-900">المجموع الكلي العام لجميع المجموعات والصفوف بالسنتر</h4>
+              <table className="w-full text-right text-xs border-collapse border border-slate-400 bg-slate-100">
+                <thead>
+                  <tr className="bg-slate-300 font-black">
+                    <th className="p-2 border border-slate-400">إجمالي مقيدي السنتر</th>
+                    {weeklyDayAttendanceStats.daysList.map(day => (
+                      <th key={day} className="p-2 border border-slate-400 text-center">{day}</th>
+                    ))}
+                    <th className="p-2 border border-slate-400 text-center">إجمالي الأسبوع الكامل</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="font-black text-sm">
+                    <td className="p-2 border border-slate-400 text-center">{weeklyDayAttendanceStats.centerTotalEnrolled} طالب</td>
+                    {weeklyDayAttendanceStats.daysList.map(day => (
+                      <td key={day} className="p-2 border border-slate-400 text-center">
+                        {weeklyStatsViewMode === 'recorded' ? weeklyDayAttendanceStats.centerDayTotals[day].recordedCount : weeklyDayAttendanceStats.centerDayTotals[day].scheduledCount}
+                      </td>
+                    ))}
+                    <td className="p-2 border border-slate-400 text-center bg-indigo-100 text-indigo-900">
+                      {weeklyStatsViewMode === 'recorded' ? weeklyDayAttendanceStats.centerTotalRecordedWeek : weeklyDayAttendanceStats.centerTotalScheduledWeek}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-between items-center pt-8 text-xs font-bold text-slate-600">
+              <div>توقيع إداري المتابعة والسنتر: ............................</div>
+              <div>اعتماد أ/ محمود أبو زكريا: ............................</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
       {/* 3. TAB: EXAMS ACADEMIC PERFORMANCE ANALYSIS               */}
       {/* ========================================================= */}
       {activeTab === 'exams' && (
@@ -2289,20 +2907,22 @@ export default function ReportsManager({
               <Printer className="w-5 h-5 text-indigo-650" />
               {rosterType === 'revision' && 'كشوف مراجعة وتصحيح البيانات وتأكيد الحجز يدويًا'}
               {rosterType === 'attendance' && 'كشوف تسجيل حضور وغياب الطلاب يدوياً'}
+              {rosterType === 'flexibleAttendance' && 'كشف تسجيل الغياب اليدوي للحضور المرن ومخطط الحصص الأسبوعية'}
               {rosterType === 'collection' && 'كشوف تسجيل تحصيل الاشتراكات والمصروفات يدوياً'}
             </h3>
             <p className="text-xs text-slate-500 font-medium leading-relaxed">
               {rosterType === 'revision' && 'تتيح لك هذه المنطقة طباعة قوائم ورقية منظمة لطلاب كل صف دراسي، مُهيأة للمطابقة الميدانية ومراجعة وتصحيح بيانات المتعلمين وتوقيع تأكيد الحجز والتحصيل يدويًا في السنتر.'}
               {rosterType === 'attendance' && 'تتيح لك طباعة دفاتر ورقية مخصصة لتسجيل حضور وغياب الطلاب يدوياً لكل حصة من الحصص الـ 6 القادمة للمجموعة، لمتابعة الانضباط الفعلي داخل السنتر.'}
+              {rosterType === 'flexibleAttendance' && 'تتيح لك طباعة ومتابعة ورقية مخصصة لتسجيل الغياب اليدوي وفق جدول الحضور المرن والمجموعات البديلة المعتمدة لكل طالب وحسب أيام المخطط الأسبوعي.'}
               {rosterType === 'collection' && 'تتيح لك طباعة كشوف ورقية خاصة لتسجيل سداد الاشتراكات الشهرية وتدوين قيمة المبالغ والخصومات يدوياً وتوقيع المستلم مع تدوين رقم الإيصال الورقي.'}
             </p>
           </div>
 
           {/* Roster Type Selector Pills (no-print) */}
-          <div className="flex flex-wrap gap-2 bg-slate-100 p-1.5 rounded-2xl max-w-2xl border border-slate-200/60 no-print">
+          <div className="flex flex-wrap gap-2 bg-slate-100 p-1.5 rounded-2xl max-w-4xl border border-slate-200/60 no-print">
             <button
               onClick={() => setRosterType('revision')}
-              className={`flex-1 min-w-[150px] py-2 px-4 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              className={`flex-1 min-w-[140px] py-2 px-3 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
                 rosterType === 'revision' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200/50 hover:text-slate-900'
               }`}
             >
@@ -2311,7 +2931,7 @@ export default function ReportsManager({
             </button>
             <button
               onClick={() => setRosterType('attendance')}
-              className={`flex-1 min-w-[150px] py-2 px-4 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              className={`flex-1 min-w-[140px] py-2 px-3 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
                 rosterType === 'attendance' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200/50 hover:text-slate-900'
               }`}
             >
@@ -2319,8 +2939,17 @@ export default function ReportsManager({
               حضور وغياب يدوي
             </button>
             <button
+              onClick={() => setRosterType('flexibleAttendance')}
+              className={`flex-1 min-w-[170px] py-2 px-3 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                rosterType === 'flexibleAttendance' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200/50 hover:text-slate-900'
+              }`}
+            >
+              <Calendar className="w-4 h-4 text-amber-300" />
+              الغياب اليدوي بالحضور المرن
+            </button>
+            <button
               onClick={() => setRosterType('collection')}
-              className={`flex-1 min-w-[150px] py-2 px-4 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              className={`flex-1 min-w-[140px] py-2 px-3 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
                 rosterType === 'collection' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200/50 hover:text-slate-900'
               }`}
             >
@@ -2426,37 +3055,76 @@ export default function ReportsManager({
             /* Detailed Preview View: Single Filtered Grade */
             <div className="space-y-6">
               {/* Roster Controls & Info (no-print) */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 no-print">
-                <div className="space-y-1">
-                  <h4 className="font-extrabold text-slate-800 text-sm">
-                    معاينة كشف: {selectedGrade}
-                    {selectedGroupId !== 'all' && ` — مجموعة: ${groups.find(g => g.id === selectedGroupId)?.name}`}
-                  </h4>
-                  <p className="text-xs text-slate-450 font-medium">
-                    {rosterType === 'revision' && `يحتوي كشف المراجعة هذا على ${activeStudents.length} طالب وطالبة مطابقين لخيارات الفلترة.`}
-                    {rosterType === 'attendance' && `يحتوي كشف تسجيل الحضور هذا على ${activeStudents.length} خانة لمتابعة الانضباط للحصص الـ 6 القادمة.`}
-                    {rosterType === 'collection' && `يحتوي كشف تسجيل التحصيل هذا على ${activeStudents.length} اسم لتوثيق سداد شهر ${currentMonth} يدوياً.`}
-                  </p>
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4 no-print">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div className="space-y-1">
+                    <h4 className="font-extrabold text-slate-800 text-sm">
+                      معاينة كشف: {selectedGrade}
+                      {selectedGroupId !== 'all' && ` — مجموعة: ${groups.find(g => g.id === selectedGroupId)?.name}`}
+                    </h4>
+                    <p className="text-xs text-slate-450 font-medium">
+                      {rosterType === 'revision' && `يحتوي كشف المراجعة هذا على ${displayedActiveStudents.length} طالب وطالبة مطابقين لخيارات الفلترة.`}
+                      {rosterType === 'attendance' && `يحتوي كشف تسجيل الحضور هذا على ${displayedActiveStudents.length} خانة لمتابعة الانضباط للحصص الـ 6 القادمة.`}
+                      {rosterType === 'flexibleAttendance' && `يحتوي كشف تسجيل الغياب اليدوي على ${displayedActiveStudents.length} طالب حسب جدول الحضور المرن والمخطط الأسبوعي.`}
+                      {rosterType === 'collection' && `يحتوي كشف تسجيل التحصيل هذا على ${displayedActiveStudents.length} اسم لتوثيق سداد شهر ${currentMonth} يدوياً.`}
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <button
+                      onClick={() => handleExportRosterToExcel(selectedGrade, displayedActiveStudents)}
+                      disabled={displayedActiveStudents.length === 0}
+                      className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200"
+                    >
+                      <Download className="w-4 h-4" />
+                      تصدير الكشف Excel
+                    </button>
+                    <button
+                      onClick={() => handlePrint('printable-active-roster')}
+                      disabled={displayedActiveStudents.length === 0}
+                      className="flex-1 sm:flex-none px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                    >
+                      <Printer className="w-4 h-4" />
+                      طباعة الكشف اليدوي
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex gap-2 w-full sm:w-auto">
-                  <button
-                    onClick={() => handleExportRosterToExcel(selectedGrade, activeStudents)}
-                    disabled={activeStudents.length === 0}
-                    className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200"
-                  >
-                    <Download className="w-4 h-4" />
-                    تصدير الكشف Excel
-                  </button>
-                  <button
-                    onClick={() => handlePrint('printable-active-roster')}
-                    disabled={activeStudents.length === 0}
-                    className="flex-1 sm:flex-none px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-                  >
-                    <Printer className="w-4 h-4" />
-                    طباعة الكشف اليدوي
-                  </button>
-                </div>
+                {/* Sub-filters for Flexible Attendance */}
+                {rosterType === 'flexibleAttendance' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-150 text-xs">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">تصفية حسب اليوم المخصص بمخطط الأسبوع:</label>
+                      <select
+                        value={flexibleDayFilter}
+                        onChange={(e) => setFlexibleDayFilter(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      >
+                        <option value="all">جميع أيام الأسبوع (السبت - الجمعة)</option>
+                        <option value="السبت">السبت</option>
+                        <option value="الأحد">الأحد</option>
+                        <option value="الاثنين">الاثنين</option>
+                        <option value="الثلاثاء">الثلاثاء</option>
+                        <option value="الأربعاء">الأربعاء</option>
+                        <option value="الخميس">الخميس</option>
+                        <option value="الجمعة">الجمعة</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">تصفية حسب نمط حجز الحضور:</label>
+                      <select
+                        value={flexibleTypeFilter}
+                        onChange={(e) => setFlexibleTypeFilter(e.target.value as any)}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      >
+                        <option value="all">جميع الطلاب المقبولين بالصف</option>
+                        <option value="flexibleOnly">طلاب الحضور المرن والمجموعات البديلة فقط ⭐</option>
+                        <option value="regularOnly">طلاب المجموعة الأساسية فقط</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Screen Preview Table */}
@@ -2488,6 +3156,18 @@ export default function ReportsManager({
                             <th className="py-3 px-4 text-slate-450 font-medium italic">ملاحظات وسلوك الطالب (معاينة)</th>
                           </>
                         )}
+                        {rosterType === 'flexibleAttendance' && (
+                          <>
+                            <th className="py-3 px-4">المجموعة الأساسية</th>
+                            <th className="py-3 px-4">الحضور المرن (البدائل)</th>
+                            <th className="py-3 px-4">أيام المخطط المعتمدة</th>
+                            <th className="py-3 px-4">هاتف ولي الأمر</th>
+                            {['سبت', 'أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة'].map((day, dIdx) => (
+                              <th key={dIdx} className="py-3 px-2 text-center whitespace-nowrap">{day}</th>
+                            ))}
+                            <th className="py-3 px-4 text-slate-450 font-medium italic">ملاحظات الغياب اليدوي</th>
+                          </>
+                        )}
                         {rosterType === 'collection' && (
                           <>
                             <th className="py-3 px-4">المجموعة</th>
@@ -2501,73 +3181,118 @@ export default function ReportsManager({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {activeStudents.length === 0 ? (
+                      {displayedActiveStudents.length === 0 ? (
                         <tr>
-                          <td colSpan={rosterType === 'revision' ? 9 : rosterType === 'attendance' ? (5 + activeHeaders.length + 1) : 9} className="text-center py-12 text-slate-400 italic font-bold">
-                            لا يوجد طلاب مقبولين مسجلين في هذا الصف الدراسي/المجموعة حالياً.
+                          <td colSpan={rosterType === 'revision' ? 9 : rosterType === 'attendance' ? (5 + activeHeaders.length + 1) : rosterType === 'flexibleAttendance' ? 16 : 9} className="text-center py-12 text-slate-400 italic font-bold">
+                            لا يوجد طلاب مقبولين مسجلين في هذا الصف الدراسي/المجموعة حالياً تطابق خيارات الفلترة المحددة.
                           </td>
                         </tr>
                       ) : (
-                        activeStudents.map((student, index) => (
-                          <tr key={student.id} className="hover:bg-slate-50/40">
-                            <td className="py-3 px-4 text-center font-mono font-bold text-slate-450">{index + 1}</td>
-                            <td className="py-3 px-4 font-mono font-bold text-indigo-750">{student.code}</td>
-                            <td className="py-3 px-4 font-bold text-slate-800">{student.name}</td>
-                            
-                            {rosterType === 'revision' && (
-                              <>
-                                <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.phone || '—'}</td>
-                                <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
-                                <td className="py-3 px-4 font-semibold text-slate-700">
-                                  {groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}
-                                </td>
-                                <td className="py-3 px-4 text-slate-500">{student.school || '—'}</td>
-                                <td className="py-3 px-4 bg-slate-50/25">
-                                  <span className="text-[10px] text-slate-350 italic">عمود فارغ للتدوين اليدوي عند الطباعة</span>
-                                </td>
-                                <td className="py-3 px-4 bg-slate-50/25 text-center">
-                                  <span className="inline-block w-4 h-4 border border-slate-200 rounded"></span>
-                                </td>
-                              </>
-                            )}
-                            
-                            {rosterType === 'attendance' && (
-                              <>
-                                <td className="py-3 px-4 font-semibold text-slate-700">
-                                  {groups.find(g => g.id === student.groupId)?.name || 'غير حدد'}
-                                </td>
-                                <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
-                                {activeHeaders.map((_, sIdx) => (
-                                  <td key={sIdx} className="py-3 px-4 text-center">
-                                    <span className="inline-block w-3.5 h-3.5 border border-slate-200 rounded-sm"></span>
+                        displayedActiveStudents.map((student, index) => {
+                          const sched = getStudentFlexibleSchedule(student, groups);
+                          return (
+                            <tr key={student.id} className="hover:bg-slate-50/40">
+                              <td className="py-3 px-4 text-center font-mono font-bold text-slate-450">{index + 1}</td>
+                              <td className="py-3 px-4 font-mono font-bold text-indigo-750">{student.code}</td>
+                              <td className="py-3 px-4 font-bold text-slate-800">{student.name}</td>
+                              
+                              {rosterType === 'revision' && (
+                                <>
+                                  <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.phone || '—'}</td>
+                                  <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
+                                  <td className="py-3 px-4 font-semibold text-slate-700">
+                                    {groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}
                                   </td>
-                                ))}
-                                <td className="py-3 px-4 bg-slate-50/25">
-                                  <span className="text-[10px] text-slate-350 italic">عمود تدوين الغياب والسلوك</span>
-                                </td>
-                              </>
-                            )}
-                            
-                            {rosterType === 'collection' && (
-                              <>
-                                <td className="py-3 px-4 font-semibold text-slate-700">
-                                  {groups.find(g => g.id === student.groupId)?.name || 'غير حدد'}
-                                </td>
-                                <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
-                                <td className="py-3 px-4 font-bold text-slate-700">{selectedMonth}</td>
-                                <td className="py-3 px-4 bg-slate-50/25">
-                                  <span className="text-[10px] text-slate-350 italic">كتابة المبلغ المستلم</span>
-                                </td>
-                                <td className="py-3 px-4 bg-slate-50/25">
-                                  <span className="text-[10px] text-slate-350 italic">رقم الإيصال السنتر</span>
-                                </td>
-                                <td className="py-3 px-4 bg-slate-50/25 text-center">
-                                  <span className="text-[10px] text-slate-350 italic">توقيع الموظف</span>
-                                </td>
-                              </>
-                            )}
-                          </tr>
-                        ))
+                                  <td className="py-3 px-4 text-slate-500">{student.school || '—'}</td>
+                                  <td className="py-3 px-4 bg-slate-50/25">
+                                    <span className="text-[10px] text-slate-350 italic">عمود فارغ للتدوين اليدوي عند الطباعة</span>
+                                  </td>
+                                  <td className="py-3 px-4 bg-slate-50/25 text-center">
+                                    <span className="inline-block w-4 h-4 border border-slate-200 rounded"></span>
+                                  </td>
+                                </>
+                              )}
+                              
+                              {rosterType === 'attendance' && (
+                                <>
+                                  <td className="py-3 px-4 font-semibold text-slate-700">
+                                    {groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}
+                                  </td>
+                                  <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
+                                  {activeHeaders.map((_, sIdx) => (
+                                    <td key={sIdx} className="py-3 px-4 text-center">
+                                      <span className="inline-block w-3.5 h-3.5 border border-slate-200 rounded-sm"></span>
+                                    </td>
+                                  ))}
+                                  <td className="py-3 px-4 bg-slate-50/25">
+                                    <span className="text-[10px] text-slate-350 italic">عمود تدوين الغياب والسلوك</span>
+                                  </td>
+                                </>
+                              )}
+
+                              {rosterType === 'flexibleAttendance' && (
+                                <>
+                                  <td className="py-3 px-4 font-semibold text-slate-700">
+                                    {sched.primaryGroup?.name || 'غير محدد'}
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    {sched.altGroups.length > 0 ? (
+                                      <div className="flex flex-wrap gap-1">
+                                        {sched.altGroups.map(ag => (
+                                          <span key={ag.id} className="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[10px] font-bold">
+                                            {ag.name}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400 font-normal">عادي</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <div className="flex flex-wrap gap-1">
+                                      {sched.allScheduledDays.map(day => (
+                                        <span key={day} className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded text-[10px] font-bold">
+                                          {day}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
+                                  {['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'].map((day, dIdx) => {
+                                    const isScheduled = sched.allScheduledDays.includes(day);
+                                    return (
+                                      <td key={dIdx} className="py-3 px-2 text-center">
+                                        <span className={`inline-block w-4 h-4 border rounded ${isScheduled ? 'border-indigo-400 bg-indigo-50/50' : 'border-slate-200 bg-slate-50/20'}`}></span>
+                                      </td>
+                                    );
+                                  })}
+                                  <td className="py-3 px-4 bg-slate-50/25">
+                                    <span className="text-[10px] text-slate-350 italic">تدوين السبب / الاستئذان</span>
+                                  </td>
+                                </>
+                              )}
+                              
+                              {rosterType === 'collection' && (
+                                <>
+                                  <td className="py-3 px-4 font-semibold text-slate-700">
+                                    {groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}
+                                  </td>
+                                  <td className="py-3 px-4 font-mono font-medium text-slate-600">{student.parentPhone}</td>
+                                  <td className="py-3 px-4 font-bold text-slate-700">{selectedMonth}</td>
+                                  <td className="py-3 px-4 bg-slate-50/25">
+                                    <span className="text-[10px] text-slate-350 italic">كتابة المبلغ المستلم</span>
+                                  </td>
+                                  <td className="py-3 px-4 bg-slate-50/25">
+                                    <span className="text-[10px] text-slate-350 italic">رقم الإيصال السنتر</span>
+                                  </td>
+                                  <td className="py-3 px-4 bg-slate-50/25 text-center">
+                                    <span className="text-[10px] text-slate-350 italic">توقيع الموظف</span>
+                                  </td>
+                                </>
+                              )}
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -2591,6 +3316,7 @@ export default function ReportsManager({
                     <h1 className="text-xl font-black text-blue-700 bg-slate-50 border border-slate-200 py-2.5 rounded-xl">
                       {rosterType === 'revision' && 'كشف مراجعة وتصحيح بيانات الطلاب وتأكيد الحجز يدويًا'}
                       {rosterType === 'attendance' && 'كشف تسجيل حضور وغياب الطلاب يدوياً (دفتر متابعة السنتر)'}
+                      {rosterType === 'flexibleAttendance' && 'كشف تسجيل الغياب اليدوي وفق جدول الحضور المرن والمخطط الأسبوعي'}
                       {rosterType === 'collection' && 'كشف تسجيل تحصيل اشتراكات ومصروفات الطلاب يدوياً'}
                     </h1>
                     <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mt-3 text-xs font-bold text-right">
@@ -2685,6 +3411,60 @@ export default function ReportsManager({
                     </table>
                   )}
 
+                  {rosterType === 'flexibleAttendance' && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '35px', textAlign: 'center' }}>م</th>
+                          <th style={{ width: '75px' }}>كود الطالب</th>
+                          <th style={{ width: '160px' }}>اسم الطالب رباعي</th>
+                          <th style={{ width: '80px' }}>المجموعة</th>
+                          <th style={{ width: '100px' }}>جدول الحضور</th>
+                          <th style={{ width: '85px' }}>تليفون ولي الأمر</th>
+                          {['سبت', 'أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة'].map((day, dIdx) => (
+                            <th key={dIdx} style={{ width: '35px', textAlign: 'center', fontSize: '9px' }}>{day}</th>
+                          ))}
+                          <th>ملاحظات الغياب والتنقلات</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gradeStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={14} style={{ textAlign: 'center', padding: '30px' }}>
+                              لا توجد أسماء مسجلة ومقبولة حالياً في هذا الصف الدراسي.
+                            </td>
+                          </tr>
+                        ) : (
+                          gradeStudents.map((student, idx) => {
+                            const sched = getStudentFlexibleSchedule(student, groups);
+                            return (
+                              <tr key={student.id}>
+                                <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                                <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                                <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                                <td>{sched.primaryGroup?.name || 'غير محدد'}</td>
+                                <td style={{ fontSize: '10px' }}>
+                                  {sched.allScheduledDays.join(' — ')}
+                                  {sched.isFlexible && <span style={{ color: '#d97706', fontWeight: 'bold', display: 'block' }}>(حضور مرن)</span>}
+                                </td>
+                                <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                                {['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'].map((day, dIdx) => {
+                                  const isScheduled = sched.allScheduledDays.includes(day);
+                                  return (
+                                    <td key={dIdx} style={{ textAlign: 'center', backgroundColor: isScheduled ? '#f8fafc' : '#ffffff' }}>
+                                      <span style={{ display: 'inline-block', width: '11px', height: '11px', border: isScheduled ? '1.5px solid #4f46e5' : '1px solid #cbd5e1', borderRadius: '2px' }}></span>
+                                    </td>
+                                  );
+                                })}
+                                <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+
                   {rosterType === 'collection' && (
                     <table>
                       <thead>
@@ -2749,12 +3529,13 @@ export default function ReportsManager({
                 <h1 className="text-xl font-black text-blue-700 bg-slate-50 border border-slate-200 py-2.5 rounded-xl">
                   {rosterType === 'revision' && 'كشف مراجعة وتصحيح بيانات الطلاب وتأكيد الحجز يدويًا'}
                   {rosterType === 'attendance' && 'كشف تسجيل حضور وغياب الطلاب يدوياً (دفتر متابعة السنتر)'}
+                  {rosterType === 'flexibleAttendance' && 'كشف تسجيل الغياب اليدوي وفق جدول الحضور المرن والمخطط الأسبوعي'}
                   {rosterType === 'collection' && 'كشف تسجيل تحصيل اشتراكات ومصروفات الطلاب يدوياً'}
                 </h1>
                 <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mt-3 text-xs font-bold text-right">
                   <div>الصف الدراسي المختار: {selectedGrade}</div>
                   <div>تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</div>
-                  <div>إجمالي المقيدين بالكشف: {activeStudents.length} طالب وطالبة</div>
+                  <div>إجمالي المقيدين بالكشف: {displayedActiveStudents.length} طالب وطالبة</div>
                   {selectedGroupId !== 'all' && (
                     <div>المجموعة: {groups.find(g => g.id === selectedGroupId)?.name}</div>
                   )}
@@ -2778,14 +3559,14 @@ export default function ReportsManager({
                     </tr>
                   </thead>
                   <tbody>
-                    {activeStudents.length === 0 ? (
+                    {displayedActiveStudents.length === 0 ? (
                       <tr>
                         <td colSpan={9} style={{ textAlign: 'center', padding: '30px' }}>
                           لا توجد أسماء مسجلة ومقبولة حالياً تطابق خيارات التصفية المحددة.
                         </td>
                       </tr>
                     ) : (
-                      activeStudents.map((student, idx) => (
+                      displayedActiveStudents.map((student, idx) => (
                         <tr key={student.id}>
                           <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
                           <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
@@ -2821,14 +3602,14 @@ export default function ReportsManager({
                     </tr>
                   </thead>
                   <tbody>
-                    {activeStudents.length === 0 ? (
+                    {displayedActiveStudents.length === 0 ? (
                       <tr>
                         <td colSpan={5 + activeHeaders.length + 1} style={{ textAlign: 'center', padding: '30px' }}>
                           لا توجد أسماء مسجلة ومقبولة حالياً تطابق خيارات التصفية المحددة.
                         </td>
                       </tr>
                     ) : (
-                      activeStudents.map((student, idx) => (
+                      displayedActiveStudents.map((student, idx) => (
                         <tr key={student.id}>
                           <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
                           <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
@@ -2841,6 +3622,60 @@ export default function ReportsManager({
                           <td style={{ minHeight: '35px' }}>&nbsp;</td>
                         </tr>
                       ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+
+              {rosterType === 'flexibleAttendance' && (
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '35px', textAlign: 'center' }}>م</th>
+                      <th style={{ width: '75px' }}>كود الطالب</th>
+                      <th style={{ width: '160px' }}>اسم الطالب رباعي</th>
+                      <th style={{ width: '80px' }}>المجموعة</th>
+                      <th style={{ width: '100px' }}>جدول الحضور</th>
+                      <th style={{ width: '85px' }}>تليفون ولي الأمر</th>
+                      {['سبت', 'أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة'].map((day, dIdx) => (
+                        <th key={dIdx} style={{ width: '35px', textAlign: 'center', fontSize: '9px' }}>{day}</th>
+                      ))}
+                      <th>ملاحظات الغياب والتنقلات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayedActiveStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={14} style={{ textAlign: 'center', padding: '30px' }}>
+                          لا توجد أسماء مسجلة ومقبولة حالياً تطابق خيارات التصفية المحددة.
+                        </td>
+                      </tr>
+                    ) : (
+                      displayedActiveStudents.map((student, idx) => {
+                        const sched = getStudentFlexibleSchedule(student, groups);
+                        return (
+                          <tr key={student.id}>
+                            <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                            <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                            <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                            <td>{sched.primaryGroup?.name || 'غير محدد'}</td>
+                            <td style={{ fontSize: '10px' }}>
+                              {sched.allScheduledDays.join(' — ')}
+                              {sched.isFlexible && <span style={{ color: '#d97706', fontWeight: 'bold', display: 'block' }}>(حضور مرن)</span>}
+                            </td>
+                            <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                            {['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'].map((day, dIdx) => {
+                              const isScheduled = sched.allScheduledDays.includes(day);
+                              return (
+                                <td key={dIdx} style={{ textAlign: 'center', backgroundColor: isScheduled ? '#f8fafc' : '#ffffff' }}>
+                                  <span style={{ display: 'inline-block', width: '11px', height: '11px', border: isScheduled ? '1.5px solid #4f46e5' : '1px solid #cbd5e1', borderRadius: '2px' }}></span>
+                                </td>
+                              );
+                            })}
+                            <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -2912,6 +3747,7 @@ export default function ReportsManager({
                     <h1 className="text-xl font-black text-blue-700 bg-slate-50 border border-slate-200 py-2.5 rounded-xl">
                       {rosterType === 'revision' && 'كشف مراجعة وتصحيح بيانات الطلاب وتأكيد الحجز يدويًا'}
                       {rosterType === 'attendance' && 'كشف تسجيل حضور وغياب الطلاب يدوياً (دفتر متابعة السنتر)'}
+                      {rosterType === 'flexibleAttendance' && 'كشف تسجيل الغياب اليدوي وفق جدول الحضور المرن والمخطط الأسبوعي'}
                       {rosterType === 'collection' && 'كشف تسجيل تحصيل اشتراكات ومصروفات الطلاب يدوياً'}
                     </h1>
                     <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mt-3 text-xs font-bold text-right">
@@ -2998,6 +3834,58 @@ export default function ReportsManager({
                               <td style={{ minHeight: '35px' }}>&nbsp;</td>
                             </tr>
                           ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {rosterType === 'flexibleAttendance' && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '35px', textAlign: 'center' }}>م</th>
+                          <th style={{ width: '75px' }}>كود الطالب</th>
+                          <th style={{ width: '160px' }}>اسم الطالب رباعي</th>
+                          <th style={{ width: '100px' }}>جدول الحضور</th>
+                          <th style={{ width: '85px' }}>تليفون ولي الأمر</th>
+                          {['سبت', 'أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة'].map((day, dIdx) => (
+                            <th key={dIdx} style={{ width: '35px', textAlign: 'center', fontSize: '9px' }}>{day}</th>
+                          ))}
+                          <th>ملاحظات الغياب والتنقلات</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {groupStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={13} style={{ textAlign: 'center', padding: '30px' }}>
+                              لا توجد أسماء مسجلة ومقبولة حالياً في هذه المجموعة.
+                            </td>
+                          </tr>
+                        ) : (
+                          groupStudents.map((student, idx) => {
+                            const sched = getStudentFlexibleSchedule(student, groups);
+                            return (
+                              <tr key={student.id}>
+                                <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
+                                <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{student.code}</td>
+                                <td style={{ fontWeight: 'bold' }}>{student.name}</td>
+                                <td style={{ fontSize: '10px' }}>
+                                  {sched.allScheduledDays.join(' — ')}
+                                  {sched.isFlexible && <span style={{ color: '#d97706', fontWeight: 'bold', display: 'block' }}>(حضور مرن)</span>}
+                                </td>
+                                <td style={{ fontFamily: 'monospace' }}>{student.parentPhone}</td>
+                                {['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'].map((day, dIdx) => {
+                                  const isScheduled = sched.allScheduledDays.includes(day);
+                                  return (
+                                    <td key={dIdx} style={{ textAlign: 'center', backgroundColor: isScheduled ? '#f8fafc' : '#ffffff' }}>
+                                      <span style={{ display: 'inline-block', width: '11px', height: '11px', border: isScheduled ? '1.5px solid #4f46e5' : '1px solid #cbd5e1', borderRadius: '2px' }}></span>
+                                    </td>
+                                  );
+                                })}
+                                <td style={{ minHeight: '35px' }}>&nbsp;</td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>

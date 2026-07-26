@@ -194,6 +194,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterGrade, setFilterGrade] = useState<string>('all');
   const [filterGroup, setFilterGroup] = useState<string>('all');
+  const [filterGroupType, setFilterGroupType] = useState<'all' | 'standard' | 'special'>('all');
   const [filterExemption, setFilterExemption] = useState<string>('all');
 
   // Single student states
@@ -232,6 +233,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
     alternativeGroupIds: [] as string[],
     exemptionType: 'none' as ExemptionType,
     discountAmount: 0,
+    customPrice: undefined as number | undefined,
     notes: ''
   });
 
@@ -515,6 +517,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
       alternativeGroupIds: newStudentForm.alternativeGroupIds || [],
       exemptionType: newStudentForm.exemptionType,
       discountAmount: Number(newStudentForm.discountAmount),
+      customPrice: newStudentForm.customPrice ? Number(newStudentForm.customPrice) : undefined,
       notes: newStudentForm.notes,
       status: 'approved' // Created by teacher = approved automatically
     });
@@ -531,6 +534,7 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
       alternativeGroupIds: [],
       exemptionType: 'none',
       discountAmount: 0,
+      customPrice: undefined,
       notes: ''
     });
     
@@ -912,7 +916,14 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
     const matchesGroup = filterGroup === 'all' || student.groupId === filterGroup;
     const matchesExemption = filterExemption === 'all' || student.exemptionType === filterExemption;
 
-    return matchesSearch && matchesGrade && matchesGroup && matchesExemption;
+    const group = groups.find(g => g.id === student.groupId);
+    const isSpecialGroup = group?.isSpecial || group?.type === 'special' || (student.customPrice !== undefined && student.customPrice > 0);
+    const matchesGroupType = 
+      filterGroupType === 'all' ||
+      (filterGroupType === 'special' && isSpecialGroup) ||
+      (filterGroupType === 'standard' && !isSpecialGroup);
+
+    return matchesSearch && matchesGrade && matchesGroup && matchesExemption && matchesGroupType;
   });
 
   const approvedCount = students.filter(s => s.status === 'approved').length;
@@ -1076,6 +1087,19 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
               </select>
             </div>
 
+            {/* Group Type Filter */}
+            <div>
+              <select
+                value={filterGroupType}
+                onChange={(e) => setFilterGroupType(e.target.value as any)}
+                className="w-full px-3 py-2 bg-amber-50/60 border border-amber-200 focus:border-amber-400 focus:bg-white rounded-lg text-xs font-bold text-amber-950 outline-none transition-all text-right"
+              >
+                <option value="all">كل أنواع المجموعات (عادية + خاصة)</option>
+                <option value="standard">المجموعات العادية فقط</option>
+                <option value="special">المجموعات الخاصة (VIP ⭐)</option>
+              </select>
+            </div>
+
             {/* Group Filter */}
             <div>
               <select
@@ -1083,11 +1107,13 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 onChange={(e) => setFilterGroup(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none transition-all text-right"
               >
-                <option value="all">كل المجموعات</option>
+                <option value="all">كل المجموعات المحدد لها</option>
                 {groups
                   .filter(g => filterGrade === 'all' || g.grade === filterGrade)
                   .map(g => (
-                    <option key={g.id} value={g.id}>{g.name} ({g.grade})</option>
+                    <option key={g.id} value={g.id}>
+                      {g.name} ({g.grade}) {g.isSpecial || g.type === 'special' ? '⭐ [خاصة]' : ''}
+                    </option>
                   ))
                 }
               </select>
@@ -1176,7 +1202,14 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                         </td>
                         <td className="py-3.5 px-6">
                           <div className="font-medium text-slate-700">{s.grade}</div>
-                          <div className="text-[10px] text-slate-600 bg-slate-100/85 font-bold inline-block px-2 py-0.5 mt-1 rounded">{group ? group.name : 'غير مخصصة'}</div>
+                          <div className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded ${
+                            group?.isSpecial || group?.type === 'special'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : 'bg-slate-100/85 text-slate-600'
+                          }`}>
+                            {group ? group.name : 'غير مخصصة'}
+                            {(group?.isSpecial || group?.type === 'special') && ' ⭐'}
+                          </div>
                         </td>
                         <td className="py-3.5 px-6">
                           <div className="text-slate-700">{s.school}</div>
@@ -1187,8 +1220,10 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                           <div className="text-slate-800 font-bold">الأب: {s.parentPhone}</div>
                         </td>
                         <td className="py-3.5 px-6">
-                          {s.exemptionType === 'none' ? (
-                            <span className="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-0.5 border border-slate-200 rounded font-bold">عادي ({prices[s.grade]} ج.م)</span>
+                          {s.customPrice !== undefined && s.customPrice > 0 ? (
+                            <span className="text-[10px] bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-0.5 rounded font-bold">سعر مخصص ({s.customPrice} ج.م)</span>
+                          ) : s.exemptionType === 'none' ? (
+                            <span className="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-0.5 border border-slate-200 rounded font-bold">عادي ({group?.customPrice || prices[s.grade]} ج.م)</span>
                           ) : s.exemptionType === 'full' ? (
                             <span className="text-[10px] bg-emerald-50 text-emerald-800 px-2.5 py-0.5 rounded font-bold border border-emerald-100">إعفاء كامل (مكرمة)</span>
                           ) : (
@@ -1567,6 +1602,20 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                 />
               </div>
 
+              {/* Custom Student Price */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">سعر اشتراك فردي مخصص للطالب (ج.م) - اختياري</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={newStudentForm.customPrice ?? ''}
+                  onChange={(e) => setNewStudentForm({ ...newStudentForm, customPrice: e.target.value ? Number(e.target.value) : undefined })}
+                  placeholder="اتركه فارغاً لتطبيق سعر المجموعة/الصف"
+                  className="w-full px-4 py-2 bg-slate-50 border border-gray-200 focus:border-sky-500 focus:bg-white focus:ring-1 focus:ring-sky-500 rounded-xl text-right text-sm outline-hidden transition-all font-mono"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">تحديد سعر خاص لهذا الطالب يلغي التسعير التلقائي للصف أو المجموعة.</p>
+              </div>
+
               {/* Exemption Type */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">حالة الإعفاء المالي والاشتراك</label>
@@ -1922,6 +1971,19 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                   onChange={(e) => setEditingStudent({ ...editingStudent, address: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white focus:border-sky-500 rounded-xl text-sm text-right"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1">سعر اشتراك مخصص لهذا الطالب (ج.م)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editingStudent.customPrice ?? ''}
+                  onChange={(e) => setEditingStudent({ ...editingStudent, customPrice: e.target.value ? Number(e.target.value) : undefined })}
+                  placeholder="اتركه فارغاً لاستخدام سعر المجموعة/الصف"
+                  className="w-full px-3 py-2 bg-slate-50 border border-gray-200 focus:bg-white focus:border-sky-500 rounded-xl text-sm text-right font-mono"
+                />
+                <p className="text-[10px] text-gray-500 mt-0.5">اتركه فارغاً للاستناد لسعر المجموعة/الصف التلقائي</p>
               </div>
 
               <div>

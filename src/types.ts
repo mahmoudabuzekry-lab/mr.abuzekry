@@ -33,6 +33,7 @@ export interface Student {
   status: StudentStatus;
   exemptionType: ExemptionType;
   discountAmount: number; // For partial exemptions
+  customPrice?: number; // سعر اشتراك مخصص فردي للطالب (اختياري)
   isSiblingApproved?: boolean; // Whether duplicate accounts have been approved as siblings
   createdAt: string;
 }
@@ -46,6 +47,10 @@ export interface Group {
   maxCapacity: number;
   location: string;
   currentCount: number;
+  isSpecial?: boolean; // هل هي مجموعة خاصة/مميزة (VIP)
+  type?: 'standard' | 'special'; // نوع المجموعة (عادية / خاصة)
+  customPrice?: number; // سعر الاشتراك الشهري المخصص للمجموعة الخاصة (ج.م)
+  notes?: string; // مميزات أو ملاحظات المجموعة الخاصة
 }
 
 export interface Payment {
@@ -128,7 +133,7 @@ export function doesMonthPrecedeDate(monthStr: string, dateIsoStr: string): bool
   const parts = normalizedStr.split(/\s+/).filter(Boolean);
   
   let targetMonth = 1;
-  let targetYear = 2026;
+  let targetYear = 0;
   let yearFound = false;
   
   for (const part of parts) {
@@ -146,29 +151,33 @@ export function doesMonthPrecedeDate(monthStr: string, dateIsoStr: string): bool
     }
   }
 
-  // If year is not found explicitly, infer it based on academic session (August to December -> 2025, others -> 2026)
-  if (!yearFound) {
-    if (targetMonth >= 8) {
-      targetYear = 2025;
-    } else {
-      targetYear = 2026;
-    }
-  }
-  
   const regDate = new Date(dateIsoStr);
   if (isNaN(regDate.getTime())) return false;
   
   const regYear = regDate.getFullYear();
   const regMonth = regDate.getMonth() + 1;
-  
-  if (targetYear < regYear) {
-    return true;
+
+  if (yearFound) {
+    const targetAbs = targetYear * 12 + targetMonth;
+    const regAbs = regYear * 12 + regMonth;
+    return targetAbs < regAbs;
   }
-  if (targetYear === regYear && targetMonth < regMonth) {
-    return true;
-  }
-  
-  return false;
+
+  // If year is not explicitly specified in monthStr:
+  // Determine which academic year session the student was registered in.
+  // Standard academic year starts around July/August (month 7 or 8).
+  // If registered in July-Dec (regMonth >= 7), acadStartYear = regYear.
+  // If registered in Jan-Jun (regMonth < 7), acadStartYear = regYear - 1.
+  const acadStartYear = regMonth >= 7 ? regYear : regYear - 1;
+
+  // Months 8..12 (Aug..Dec) belong to acadStartYear.
+  // Months 1..7 (Jan..Jul) belong to acadStartYear + 1.
+  targetYear = targetMonth >= 8 ? acadStartYear : acadStartYear + 1;
+
+  const targetAbs = targetYear * 12 + targetMonth;
+  const regAbs = regYear * 12 + regMonth;
+
+  return targetAbs < regAbs;
 }
 
 export function getCurrentArabicMonthName(): string {

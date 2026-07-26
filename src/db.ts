@@ -26,6 +26,7 @@ const STORAGE_KEYS = {
   WHATSAPP_TEMPLATES: 'abuzekry_templates',
   GRADE_PRICES: 'abuzekry_grade_prices',
   BILLING_START_MONTH: 'abuzekry_billing_start_month',
+  BILLING_END_MONTH: 'abuzekry_billing_end_month',
   GRADE_MONTH_DISCOUNTS: 'abuzekry_grade_month_discounts',
 };
 
@@ -382,6 +383,17 @@ class LocalDatabase {
     }
   }
 
+  public getBillingEndMonth(): string {
+    return this.get(STORAGE_KEYS.BILLING_END_MONTH, 'يونيو');
+  }
+
+  public setBillingEndMonth(month: string): void {
+    this.set(STORAGE_KEYS.BILLING_END_MONTH, month);
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
+      syncEntityToFirebase('billingEndMonth' as any, [month]);
+    }
+  }
+
   public getGradeMonthDiscounts(): Array<{ id: string; grade: GradeType; month: string; discount: number }> {
     return this.get(STORAGE_KEYS.GRADE_MONTH_DISCOUNTS, []);
   }
@@ -407,24 +419,81 @@ class LocalDatabase {
     }
   }
 
+  public isMonthOutsideBillingRange(month: string, startMonth?: string, endMonth?: string): boolean {
+    const sMonth = startMonth || this.getBillingStartMonth();
+    const eMonth = endMonth || this.getBillingEndMonth();
+
+    if (!month || !sMonth || !eMonth) return false;
+
+    const ARABIC_MONTHS_MAP: { [key: string]: number } = {
+      'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4,
+      'مايو': 5, 'يونيو': 6, 'يوليو': 7, 'أغسطس': 8,
+      'سبتمبر': 9, 'أكتوبر': 10, 'نوفمبر': 11, 'ديسمبر': 12
+    };
+
+    const getMonthVal = (str: string): number => {
+      for (const [mName, mVal] of Object.entries(ARABIC_MONTHS_MAP)) {
+        if (str.includes(mName)) return mVal;
+      }
+      return 0;
+    };
+
+    const getYearVal = (str: string): number | null => {
+      const match = str.match(/\b(20\d\d)\b/);
+      return match ? parseInt(match[1], 10) : null;
+    };
+
+    const monthVal = getMonthVal(month);
+    const startVal = getMonthVal(sMonth);
+    const endVal = getMonthVal(eMonth);
+
+    if (monthVal === 0 || startVal === 0 || endVal === 0) return false;
+
+    const monthYear = getYearVal(month);
+    const startYear = getYearVal(sMonth);
+    let endYear = getYearVal(eMonth);
+
+    if (startYear !== null && endYear === null) {
+      endYear = startVal > endVal ? startYear + 1 : startYear;
+    }
+
+    if (monthYear !== null && startYear !== null && endYear !== null) {
+      const mAbs = monthYear * 12 + monthVal;
+      const sAbs = startYear * 12 + startVal;
+      const eAbs = endYear * 12 + endVal;
+      return mAbs < sAbs || mAbs > eAbs;
+    }
+
+    // Cyclic academic year check without explicit years
+    if (startVal <= endVal) {
+      return monthVal < startVal || monthVal > endVal;
+    } else {
+      // Spans year boundary (e.g. Aug (8) to Jun (6))
+      // Active if monthVal >= startVal OR monthVal <= endVal
+      return !(monthVal >= startVal || monthVal <= endVal);
+    }
+  }
+
   public isMonthBeforeStartMonth(month: string, startMonth: string): boolean {
-    const MONTHS = [
-      'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر', 'يناير',
-      'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو'
-    ];
-    const monthIdx = MONTHS.indexOf(month);
-    const startIdx = MONTHS.indexOf(startMonth);
-    if (monthIdx === -1 || startIdx === -1) return false;
-    return monthIdx < startIdx;
+    return this.isMonthOutsideBillingRange(month, startMonth);
   }
 
   public calculateStudentDue(student: Student, month: string): number {
     const prices = this.getPrices();
-    const basePrice = prices[student.grade] || 0;
+    let basePrice = prices[student.grade] || 0;
+
+    // Check individual student custom price or special group custom price override
+    if (student.customPrice !== undefined && student.customPrice > 0) {
+      basePrice = student.customPrice;
+    } else if (student.groupId) {
+      const group = this.getGroups().find(g => g.id === student.groupId);
+      if (group && group.customPrice !== undefined && group.customPrice > 0) {
+        basePrice = group.customPrice;
+      }
+    }
     
-    // Check global start month
-    const startMonth = this.getBillingStartMonth();
-    if (this.isMonthBeforeStartMonth(month, startMonth)) {
+    // Check global start & end month billing range
+    if (this.isMonthOutsideBillingRange(month)) {
       return 0;
     }
     
@@ -960,6 +1029,7 @@ class LocalDatabase {
       templates: this.getTemplates(),
       prices: this.getPrices(),
       billingStartMonth: this.getBillingStartMonth(),
+      billingEndMonth: this.getBillingEndMonth(),
       gradeMonthDiscounts: this.getGradeMonthDiscounts(),
       registrationSettings: this.getRegistrationSettings(),
       version: '1.0.0',
@@ -980,6 +1050,7 @@ class LocalDatabase {
       if (parsed.templates) this.setTemplates(parsed.templates);
       if (parsed.prices) this.setPrices(parsed.prices);
       if (parsed.billingStartMonth) this.setBillingStartMonth(parsed.billingStartMonth);
+      if (parsed.billingEndMonth) this.setBillingEndMonth(parsed.billingEndMonth);
       if (parsed.gradeMonthDiscounts) this.setGradeMonthDiscounts(parsed.gradeMonthDiscounts);
       if (parsed.registrationSettings) this.setRegistrationSettings(parsed.registrationSettings);
       return true;

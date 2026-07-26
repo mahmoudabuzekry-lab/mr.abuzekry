@@ -455,7 +455,9 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                 {groups
                   .filter(g => selectedGrade === 'الكل' || g.grade === selectedGrade)
                   .map(g => (
-                    <option key={g.id} value={g.id}>{g.name} - ({g.grade})</option>
+                    <option key={g.id} value={g.id}>
+                      {g.name} - ({g.grade}) {g.isSpecial || g.type === 'special' ? '⭐ [خاصة]' : ''}
+                    </option>
                   ))
                 }
               </select>
