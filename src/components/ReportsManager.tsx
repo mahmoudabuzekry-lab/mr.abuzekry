@@ -91,6 +91,92 @@ const getGroupSessionsInMonth = (group: Group, monthStr: string) => {
   return sessions;
 };
 
+const ensureDateString = (d: any): string => {
+  if (!d) return '';
+  if (typeof d === 'string') return d;
+  if (d instanceof Date && !isNaN(d.getTime())) {
+    return d.toISOString().split('T')[0];
+  }
+  if (typeof d === 'object' && d !== null && 'toDate' in d && typeof (d as any).toDate === 'function') {
+    try {
+      return (d as any).toDate().toISOString().split('T')[0];
+    } catch (e) {
+      return '';
+    }
+  }
+  if (typeof d === 'number') {
+    try {
+      return new Date(d).toISOString().split('T')[0];
+    } catch (e) {
+      return '';
+    }
+  }
+  return String(d);
+};
+
+const isDateInSelectedMonth = (dateVal: any, monthStr: string): boolean => {
+  if (!dateVal || !monthStr || monthStr === 'all') return true;
+  const dateStr = ensureDateString(dateVal);
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.includes('-')) return true;
+  const parts = dateStr.split('-');
+  if (parts.length < 2) return true;
+  const monthNum = parseInt(parts[1], 10);
+
+  let targetMonthNum = 0;
+  for (const [mName, mVal] of Object.entries(ARABIC_MONTHS_MAP)) {
+    if (monthStr.includes(mName)) {
+      targetMonthNum = mVal;
+      break;
+    }
+  }
+  if (targetMonthNum === 0) return true;
+  return monthNum === targetMonthNum;
+};
+
+const isDateInSelectedWeek = (dateVal: any, weekStr: string): boolean => {
+  if (!dateVal || !weekStr || weekStr === 'all') return true;
+  const dateStr = ensureDateString(dateVal);
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.includes('-')) return true;
+  const parts = dateStr.split('-');
+  if (parts.length < 3) return true;
+  const dayNum = parseInt(parts[2], 10);
+  if (isNaN(dayNum)) return true;
+
+  if (weekStr === '1') return dayNum >= 1 && dayNum <= 7;
+  if (weekStr === '2') return dayNum >= 8 && dayNum <= 14;
+  if (weekStr === '3') return dayNum >= 15 && dayNum <= 21;
+  if (weekStr === '4') return dayNum >= 22 && dayNum <= 31;
+  return true;
+};
+
+const getStartOfWeek = (d: Date = new Date()): Date => {
+  const date = new Date(d);
+  const day = date.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+  const diff = (day + 1) % 7; // days since Saturday in Egyptian calendar
+  date.setDate(date.getDate() - diff);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const getEndOfWeek = (d: Date = new Date()): Date => {
+  const start = getStartOfWeek(d);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6); // Friday
+  end.setHours(23, 59, 59, 999);
+  return end;
+};
+
+const isDateInCurrentWeek = (dateVal: any): boolean => {
+  if (!dateVal) return false;
+  const dateStr = ensureDateString(dateVal);
+  if (!dateStr) return false;
+  const dateObj = new Date(dateStr);
+  if (isNaN(dateObj.getTime())) return false;
+  const start = getStartOfWeek();
+  const end = getEndOfWeek();
+  return dateObj >= start && dateObj <= end;
+};
+
 const getAttendanceHeaders = (groupId: string, grade: string, monthStr: string, groups: Group[]) => {
   if (groupId !== 'all') {
     const group = groups.find(g => g.id === groupId);
@@ -182,6 +268,7 @@ export default function ReportsManager({
   // General Filters
   const [selectedGrade, setSelectedGrade] = useState<'all' | GradeType>('all');
   const [selectedGroupId, setSelectedGroupId] = useState<'all' | string>('all');
+  const [selectedWeek, setSelectedWeek] = useState<string>('all');
   
   // Available Months (All 12 Arabic months of the academic year + any custom months from payments)
   const currentMonth = getCurrentArabicMonthName();
@@ -580,36 +667,74 @@ export default function ReportsManager({
       if (!student || student.status !== 'approved') return false;
       const matchesGrade = selectedGrade === 'all' || student.grade === selectedGrade;
       const matchesGroup = selectedGroupId === 'all' || student.groupId === selectedGroupId || (student.alternativeGroupIds && student.alternativeGroupIds.includes(selectedGroupId));
-      return matchesGrade && matchesGroup;
+      const matchesMonth = isDateInSelectedMonth(a.date, selectedMonth);
+      const matchesWeek = isDateInSelectedWeek(a.date, selectedWeek);
+      return matchesGrade && matchesGroup && matchesMonth && matchesWeek;
     });
 
     const uniqueDates = Array.from(new Set(filteredRecords.map(r => r.date))).sort();
     
     // Calculate stats per student
     const studentList = activeStudents.map(student => {
-      const studentAttendance = attendance.filter(a => a.studentId === student.id);
-      
-      const total = studentAttendance.length;
-      const present = studentAttendance.filter(a => a.status === 'present').length;
-      const late = studentAttendance.filter(a => a.status === 'late').length;
-      const absent = studentAttendance.filter(a => a.status === 'absent').length;
-      const excused = studentAttendance.filter(a => a.status === 'excused').length;
+      const primaryGroup = groups.find(g => g.id === student.groupId);
 
-      const attendanceRate = total > 0 ? Math.round(((present + late) / total) * 100) : 100;
+      // Filter attendance in selected month & selected week
+      const monthAttendance = attendance.filter(a => 
+        a.studentId === student.id && 
+        isDateInSelectedMonth(a.date, selectedMonth) &&
+        isDateInSelectedWeek(a.date, selectedWeek)
+      );
+      
+      const present = monthAttendance.filter(a => a.status === 'present').length;
+      const late = monthAttendance.filter(a => a.status === 'late').length;
+      const absent = monthAttendance.filter(a => a.status === 'absent').length;
+      const excused = monthAttendance.filter(a => a.status === 'excused').length;
+      const monthAttended = present + late;
+
+      // Required sessions in selected month & week
+      const groupScheduledSessions = primaryGroup ? getGroupSessionsInMonth(primaryGroup, selectedMonth) : [];
+      let targetScheduledSessions = groupScheduledSessions;
+      if (selectedWeek !== 'all') {
+        targetScheduledSessions = groupScheduledSessions.filter(dateStr => isDateInSelectedWeek(dateStr, selectedWeek));
+      }
+
+      const defaultRequired = selectedWeek === 'all' ? 8 : (primaryGroup ? getGroupDays(primaryGroup.day).length : 2);
+      const requiredMonthly = Math.max(targetScheduledSessions.length > 0 ? targetScheduledSessions.length : defaultRequired, monthAttendance.length, 1);
+      const monthlyRate = Math.min(100, Math.round((monthAttended / requiredMonthly) * 100));
+
+      // Filter attendance in current week or selected week
+      const weekAttendance = attendance.filter(a => a.studentId === student.id && (
+        selectedWeek !== 'all'
+          ? isDateInSelectedMonth(a.date, selectedMonth) && isDateInSelectedWeek(a.date, selectedWeek)
+          : isDateInCurrentWeek(a.date)
+      ));
+      const weekPresent = weekAttendance.filter(a => a.status === 'present').length;
+      const weekLate = weekAttendance.filter(a => a.status === 'late').length;
+      const weekAttended = weekPresent + weekLate;
+
+      const groupDaysCount = primaryGroup ? getGroupDays(primaryGroup.day).length : 2;
+      const requiredWeekly = Math.max(groupDaysCount || 2, weekAttendance.length, 1);
+      const weeklyRate = Math.min(100, Math.round((weekAttended / requiredWeekly) * 100));
 
       return {
         student,
-        total,
+        total: monthAttendance.length,
+        requiredMonthly,
+        monthAttended,
         present,
         late,
         absent,
         excused,
-        rate: attendanceRate
+        rate: monthlyRate,
+        monthlyRate,
+        weeklyRate,
+        requiredWeekly,
+        weekAttended
       };
     });
 
-    // High absence students (absent >= 2 times)
-    const criticalAbsentees = studentList.filter(s => s.absent >= 2).sort((a, b) => b.absent - a.absent);
+    // High absence students (absent >= 2 times or monthlyRate < 75%)
+    const criticalAbsentees = studentList.filter(s => s.absent >= 2 || s.monthlyRate < 75).sort((a, b) => b.absent - a.absent);
 
     const totalAttendanceEntries = filteredRecords.length;
     const totalPresents = filteredRecords.filter(r => r.status === 'present' || r.status === 'late').length;
@@ -622,7 +747,7 @@ export default function ReportsManager({
       uniqueDatesCount: uniqueDates.length,
       totalAttendanceEntries
     };
-  }, [activeStudents, attendance, selectedGrade, selectedGroupId, students]);
+  }, [activeStudents, attendance, selectedGrade, selectedGroupId, selectedMonth, selectedWeek, groups, students]);
 
   const handleExportAttendanceToExcel = () => {
     const data = attendanceStats.studentList.map(item => ({
@@ -631,18 +756,21 @@ export default function ReportsManager({
       'الصف الدراسي': item.student.grade,
       'المجموعة': groups.find(g => g.id === item.student.groupId)?.name || 'غير محدد',
       'تليفون ولي الأمر': item.student.parentPhone,
-      'إجمالي حصص الرصد': item.total,
+      'الشهر المالي': selectedMonth,
+      'الحصص المطلوبة شهرياً': item.requiredMonthly,
+      'الحصص المحضورة شهرياً': item.monthAttended,
       'مرات الحضور': item.present,
       'مرات التأخير': item.late,
       'مرات الغياب بدون إذن': item.absent,
       'مرات الغياب بإذن': item.excused,
-      'نسبة المواظبة %': `${item.rate}%`
+      'معدل الانضباط الأسبوعي %': `${item.weeklyRate}%`,
+      'معدل الانضباط الشهري %': `${item.monthlyRate}%`
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'تقرير_الغياب');
-    XLSX.writeFile(workbook, `كشف_المواظبة_العلوم_ابو_ذكري.xlsx`);
+    XLSX.writeFile(workbook, `كشف_المواظبة_العلوم_شهر_${selectedMonth.replace(/\s+/g, '_')}.xlsx`);
   };
 
   // ==========================================
@@ -1284,13 +1412,13 @@ export default function ReportsManager({
 
       {/* Primary Filters Panel (no-print) */}
       {activeTab !== 'studentCard' && activeTab !== 'revenues' && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 grid grid-cols-1 sm:grid-cols-3 gap-4 shadow-sm no-print">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 shadow-sm no-print">
           <div>
             <label className="block text-[11px] font-bold text-slate-500 mb-1.5">تصفية حسب الصف الدراسي</label>
             <select
               value={selectedGrade}
               onChange={(e) => handleGradeChange(e.target.value as any)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none font-bold"
             >
               <option value="all">كل الصفوف الدراسية</option>
               <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
@@ -1307,7 +1435,7 @@ export default function ReportsManager({
             <select
               value={selectedGroupId}
               onChange={(e) => setSelectedGroupId(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none font-bold"
             >
               <option value="all">كل المجموعات التعليمية</option>
               {filteredGroups.map(g => (
@@ -1316,28 +1444,41 @@ export default function ReportsManager({
             </select>
           </div>
 
-          {(activeTab === 'financial' || activeTab === 'revisionSheets') && (
-            <div>
-              <label className="block text-[11px] font-bold text-slate-500 mb-1.5">{activeTab === 'revisionSheets' ? 'الشهر المستهدف لتسجيل الحضور' : 'الشهر المالي المستهدف'}</label>
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none font-bold"
-              >
-                {availableMonths.map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div>
+            <label className="block text-[11px] font-bold text-slate-500 mb-1.5">الشهر المالي / المستهدف</label>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none font-bold"
+            >
+              {availableMonths.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold text-slate-500 mb-1.5">الأسبوع المستهدف في الشهر</label>
+            <select
+              value={selectedWeek}
+              onChange={(e) => setSelectedWeek(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none font-bold text-blue-700 bg-blue-50/50"
+            >
+              <option value="all">كل أسابيع الشهر (الشهر بالكامل)</option>
+              <option value="1">الأسبوع الأول (الأيام 1 - 7)</option>
+              <option value="2">الأسبوع الثاني (الأيام 8 - 14)</option>
+              <option value="3">الأسبوع الثالث (الأيام 15 - 21)</option>
+              <option value="4">الأسبوع الرابع (الأيام 22 - 31)</option>
+            </select>
+          </div>
 
           {activeTab === 'exams' && (
-            <div>
+            <div className="col-span-1 sm:col-span-2 md:col-span-4">
               <label className="block text-[11px] font-bold text-slate-500 mb-1.5">اختر الامتحان المراد تحليله *</label>
               <select
                 value={selectedExamId}
                 onChange={(e) => setSelectedExamId(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-lg text-xs outline-none font-bold"
                 disabled={filteredExams.length === 0}
               >
                 {filteredExams.length === 0 ? (
@@ -2058,40 +2199,52 @@ export default function ReportsManager({
                 <table className="w-full text-right text-xs">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
-                      <th className="py-3 px-4">كود</th>
-                      <th className="py-3 px-4">اسم الطالب</th>
-                      <th className="py-3 px-4">الصف</th>
-                      <th className="py-3 px-4">رصد</th>
-                      <th className="py-3 px-4 text-center">حضور</th>
-                      <th className="py-3 px-4 text-center">تأخير</th>
-                      <th className="py-3 px-4 text-center">غياب</th>
-                      <th className="py-3 px-4 text-center">بإذن</th>
-                      <th className="py-3 px-4 text-left">معدل الانضباط</th>
+                      <th className="py-3 px-3">كود</th>
+                      <th className="py-3 px-3">اسم الطالب</th>
+                      <th className="py-3 px-3">الصف</th>
+                      <th className="py-3 px-3 text-center">رصد الشهر</th>
+                      <th className="py-3 px-3 text-center">حضور</th>
+                      <th className="py-3 px-3 text-center">تأخير</th>
+                      <th className="py-3 px-3 text-center">غياب</th>
+                      <th className="py-3 px-3 text-center">بإذن</th>
+                      <th className="py-3 px-3 text-center">معدل الانضباط الأسبوعي</th>
+                      <th className="py-3 px-3 text-left">معدل الانضباط الشهري</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {attendanceStats.studentList.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="text-center py-10 text-slate-400 italic">
+                        <td colSpan={10} className="text-center py-10 text-slate-400 italic">
                           لا يوجد طلاب يطابقون هذه الفئات.
                         </td>
                       </tr>
                     ) : (
-                      attendanceStats.studentList.map(({ student, total, present, late, absent, excused, rate }) => (
+                      attendanceStats.studentList.map(({ student, requiredMonthly, monthAttended, present, late, absent, excused, weeklyRate, monthlyRate, requiredWeekly, weekAttended }) => (
                         <tr key={student.id} className="hover:bg-slate-50/50">
-                          <td className="py-2.5 px-4 font-mono font-bold text-slate-400">{student.code}</td>
-                          <td className="py-2.5 px-4 font-bold text-slate-800">{student.name}</td>
-                          <td className="py-2.5 px-4 text-slate-500">{student.grade.replace('الصف ', '')}</td>
-                          <td className="py-2.5 px-4 font-mono text-slate-500">{total} حِصص</td>
-                          <td className="py-2.5 px-4 text-center font-mono font-bold text-emerald-600 bg-emerald-50/20">{present}</td>
-                          <td className="py-2.5 px-4 text-center font-mono font-bold text-amber-600">{late}</td>
-                          <td className="py-2.5 px-4 text-center font-mono font-bold text-red-500 bg-red-50/10">{absent}</td>
-                          <td className="py-2.5 px-4 text-center font-mono text-slate-400">{excused}</td>
-                          <td className="py-2.5 px-4 text-left">
-                            <span className={`inline-block font-mono font-black text-xs ${
-                              rate >= 90 ? 'text-emerald-600' : rate >= 75 ? 'text-blue-600' : rate >= 50 ? 'text-amber-600' : 'text-red-500'
+                          <td className="py-2.5 px-3 font-mono font-bold text-slate-400">{student.code}</td>
+                          <td className="py-2.5 px-3 font-bold text-slate-800">{student.name}</td>
+                          <td className="py-2.5 px-3 text-slate-500">{student.grade.replace('الصف ', '')}</td>
+                          <td className="py-2.5 px-3 text-center font-mono text-slate-600 font-bold bg-slate-50/60 rounded-lg">
+                            {monthAttended}/{requiredMonthly}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-600 bg-emerald-50/20">{present}</td>
+                          <td className="py-2.5 px-3 text-center font-mono font-bold text-amber-600">{late}</td>
+                          <td className="py-2.5 px-3 text-center font-mono font-bold text-red-500 bg-red-50/10">{absent}</td>
+                          <td className="py-2.5 px-3 text-center font-mono text-slate-400">{excused}</td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className={`inline-flex items-center gap-1 font-mono font-black text-xs px-2.5 py-1 rounded-full border ${
+                              weeklyRate >= 90 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : weeklyRate >= 75 ? 'text-blue-700 bg-blue-50 border-blue-200' : weeklyRate >= 50 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-red-700 bg-red-50 border-red-200'
                             }`}>
-                              {rate}%
+                              {weeklyRate}%
+                              <span className="text-[10px] font-medium opacity-75">({weekAttended}/{requiredWeekly})</span>
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-left">
+                            <span className={`inline-flex items-center gap-1 font-mono font-black text-xs px-2.5 py-1 rounded-full border ${
+                              monthlyRate >= 90 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : monthlyRate >= 75 ? 'text-blue-700 bg-blue-50 border-blue-200' : monthlyRate >= 50 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-red-700 bg-red-50 border-red-200'
+                            }`}>
+                              {monthlyRate}%
+                              <span className="text-[10px] font-medium opacity-75">({monthAttended}/{requiredMonthly})</span>
                             </span>
                           </td>
                         </tr>

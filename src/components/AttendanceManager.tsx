@@ -5,11 +5,12 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { dbEngine } from '../db';
-import { Student, Group, Attendance } from '../types';
+import { Student, Group, Attendance, ARABIC_MONTHS_MAP } from '../types';
 import { 
   Calendar, Users, QrCode, Camera, CheckCircle2, AlertTriangle, 
   Clock, X, Search, Check, AlertCircle, HelpCircle, LogIn, LogOut,
-  MessageSquare, Sparkles, Send, Info, Trash2, Edit, CheckSquare, Volume2
+  MessageSquare, Sparkles, Send, Info, Trash2, Edit, CheckSquare, Volume2,
+  RefreshCw, UserCheck, Plus, Filter, History, FileText
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
@@ -21,12 +22,73 @@ const parseGroupDays = (dayStr: string): string[] => {
     .filter(Boolean);
 };
 
-const getArabicDayName = (dateStr: string): string => {
+const ensureDateString = (d: any): string => {
+  if (!d) return '';
+  if (typeof d === 'string') return d;
+  if (d instanceof Date && !isNaN(d.getTime())) {
+    return d.toISOString().split('T')[0];
+  }
+  if (typeof d === 'object' && d !== null && 'toDate' in d && typeof (d as any).toDate === 'function') {
+    try {
+      return (d as any).toDate().toISOString().split('T')[0];
+    } catch (e) {
+      return '';
+    }
+  }
+  if (typeof d === 'number') {
+    try {
+      return new Date(d).toISOString().split('T')[0];
+    } catch (e) {
+      return '';
+    }
+  }
+  return String(d);
+};
+
+const getArabicDayName = (dateVal: any): string => {
+  if (!dateVal) return '';
+  const dateStr = ensureDateString(dateVal);
   if (!dateStr) return '';
   const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '';
   const dayIndex = date.getDay(); // 0 is Sunday, 1 is Monday, etc.
   const dayNames = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
-  return dayNames[dayIndex];
+  return dayNames[dayIndex] || '';
+};
+
+const isDateInSelectedMonth = (dateVal: any, monthStr: string): boolean => {
+  if (!dateVal || !monthStr || monthStr === 'all') return true;
+  const dateStr = ensureDateString(dateVal);
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.includes('-')) return true;
+  const parts = dateStr.split('-');
+  if (parts.length < 2) return true;
+  const monthNum = parseInt(parts[1], 10);
+
+  let targetMonthNum = 0;
+  for (const [mName, mVal] of Object.entries(ARABIC_MONTHS_MAP)) {
+    if (monthStr.includes(mName)) {
+      targetMonthNum = mVal;
+      break;
+    }
+  }
+  if (targetMonthNum === 0) return true;
+  return monthNum === targetMonthNum;
+};
+
+const isDateInSelectedWeek = (dateVal: any, weekStr: string): boolean => {
+  if (!dateVal || !weekStr || weekStr === 'all') return true;
+  const dateStr = ensureDateString(dateVal);
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.includes('-')) return true;
+  const parts = dateStr.split('-');
+  if (parts.length < 3) return true;
+  const dayNum = parseInt(parts[2], 10);
+  if (isNaN(dayNum)) return true;
+
+  if (weekStr === '1') return dayNum >= 1 && dayNum <= 7;
+  if (weekStr === '2') return dayNum >= 8 && dayNum <= 14;
+  if (weekStr === '3') return dayNum >= 15 && dayNum <= 21;
+  if (weekStr === '4') return dayNum >= 22 && dayNum <= 31;
+  return true;
 };
 
 interface AttendanceManagerProps {
@@ -37,11 +99,32 @@ interface AttendanceManagerProps {
 }
 
 export default function AttendanceManager({ students, groups, attendance, onRefresh }: AttendanceManagerProps) {
+  const [activeTab, setActiveTab] = useState<'daily' | 'all_dates'>('daily');
+
   const [selectedGrade, setSelectedGrade] = useState<string>('الكل');
   const [selectedGroupId, setSelectedGroupId] = useState<string>('الكل');
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [searchQuery, setSearchQuery] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // State for All-Dates Attendance Search and Management
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [historySelectedStudentId, setHistorySelectedStudentId] = useState<string>('all');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
+  const [historyGroupFilter, setHistoryGroupFilter] = useState<string>('all');
+  const [historyMonthFilter, setHistoryMonthFilter] = useState<string>('all');
+  const [historyWeekFilter, setHistoryWeekFilter] = useState<string>('all');
+
+  // State for Retroactive Attendance Addition Modal
+  const [isAddHistoryModalOpen, setIsAddHistoryModalOpen] = useState(false);
+  const [addHistoryForm, setAddHistoryForm] = useState({
+    studentId: '',
+    date: new Date().toISOString().split('T')[0],
+    groupId: '',
+    status: 'present' as 'present' | 'absent' | 'late' | 'excused',
+    checkInTime: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+    checkOutTime: ''
+  });
 
   // State for Editing Attendance Record
   const [editingAttendance, setEditingAttendance] = useState<{
@@ -160,12 +243,118 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     setNotificationModal(prev => ({ ...prev, isOpen: false }));
   };
   
+  // Helper to parse time string like "04:00 م" or "16:00" into minutes past midnight
+  const parseTimeToMinutes = (timeStr: string): number | null => {
+    if (!timeStr) return null;
+    const isPM = /م|مساء|pm/i.test(timeStr);
+    const isAM = /ص|صباح|am/i.test(timeStr);
+    
+    const match = timeStr.match(/(\d{1,2}):(\d{2})/);
+    if (!match) return null;
+    
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    
+    if (isPM && hours < 12) hours += 12;
+    if (isAM && hours === 12) hours = 0;
+    
+    return hours * 60 + minutes;
+  };
+
+  const evaluateScheduleMismatch = (
+    student: Student,
+    groups: Group[],
+    selectedDate: string,
+    selectedGroupId: string,
+    scanTimeStr: string
+  ) => {
+    const primaryGroup = groups.find(g => g.id === student.groupId);
+    const altGroups = groups.filter(g => student.alternativeGroupIds?.includes(g.id));
+    const activeSelectedGroup = groups.find(g => g.id === selectedGroupId && selectedGroupId !== 'الكل');
+
+    const todayDayName = getArabicDayName(selectedDate);
+    
+    const primaryDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+    const altDays = altGroups.flatMap(g => parseGroupDays(g.day));
+    const customDays = student.attendanceDays || [];
+    const allScheduledDays = Array.from(new Set([...primaryDays, ...altDays, ...customDays]));
+
+    const isWrongDay = allScheduledDays.length > 0 && !allScheduledDays.includes(todayDayName);
+
+    let isWrongGroup = false;
+    if (activeSelectedGroup) {
+      const isAssignedToActive = student.groupId === activeSelectedGroup.id || 
+        (student.alternativeGroupIds && student.alternativeGroupIds.includes(activeSelectedGroup.id));
+      if (!isAssignedToActive) {
+        isWrongGroup = true;
+      }
+    }
+
+    let isWrongTime = false;
+    const targetGroupForTime = activeSelectedGroup || primaryGroup;
+    let scheduledTimeStr = targetGroupForTime?.time || '';
+    
+    if (scheduledTimeStr.includes('|')) {
+      const segments = scheduledTimeStr.split('|');
+      const todaySeg = segments.find(s => s.includes(todayDayName));
+      if (todaySeg && todaySeg.includes(':')) {
+        scheduledTimeStr = todaySeg.split(':').slice(1).join(':').trim();
+      }
+    }
+
+    const groupMinutes = parseTimeToMinutes(scheduledTimeStr);
+    const scanMinutes = parseTimeToMinutes(scanTimeStr);
+
+    if (groupMinutes !== null && scanMinutes !== null) {
+      const diff = Math.abs(scanMinutes - groupMinutes);
+      if (diff > 60) { // Difference greater than 60 minutes
+        isWrongTime = true;
+      }
+    }
+
+    const reasons: string[] = [];
+    if (isWrongDay) {
+      reasons.push(`اليوم (${todayDayName}) ليس ضمن أيام حضور الطالب المعتمدة (${allScheduledDays.join('، ') || 'غير محددة'})`);
+    }
+    if (isWrongGroup && activeSelectedGroup) {
+      reasons.push(`الطالب مقيد بـ "${primaryGroup?.name || 'مجموعة أخرى'}"، بينما الجلسة الحالية لمجموعة: "${activeSelectedGroup.name}"`);
+    }
+    if (isWrongTime && scheduledTimeStr) {
+      reasons.push(`توقيت مجموعة الطالب (${scheduledTimeStr}) يختلف عن وقت المسح الحاضر (${scanTimeStr})`);
+    }
+
+    const hasMismatch = isWrongDay || isWrongGroup || isWrongTime;
+
+    return {
+      hasMismatch,
+      isWrongDay,
+      isWrongGroup,
+      isWrongTime,
+      reasons,
+      officialGroupName: primaryGroup?.name || 'غير محددة',
+      officialGroupTime: scheduledTimeStr || primaryGroup?.time || 'غير محدد',
+      officialGroupDays: allScheduledDays,
+      activeGroupName: activeSelectedGroup?.name
+    };
+  };
+
   // Custom QR Scan Overlay state
   const [scanResult, setScanResult] = useState<{
     student: Student;
     status: 'success' | 'warning';
     paymentStatus: 'paid' | 'not_paid' | 'exempt';
     checkInTime?: string;
+    scheduleMismatch?: {
+      hasMismatch: boolean;
+      isWrongDay: boolean;
+      isWrongGroup: boolean;
+      isWrongTime: boolean;
+      reasons: string[];
+      officialGroupName: string;
+      officialGroupTime: string;
+      officialGroupDays: string[];
+      activeGroupName?: string;
+    };
   } | null>(null);
   const [scanErrorMessage, setScanErrorMessage] = useState<string | null>(null);
 
@@ -370,21 +559,150 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
       }
     }
 
-    // Play high-volume audio alert on successful scan
-    playQrScanAlertSound(status === 'warning');
+    // Determine schedule & timing mismatch
+    const scheduleMismatch = evaluateScheduleMismatch(student, groups, selectedDate, selectedGroupId, timeNow);
+
+    if (scheduleMismatch.hasMismatch) {
+      status = 'warning';
+    }
+
+    // Play high-volume audio alert on scan (plays warning chime if missing payment or schedule mismatch)
+    playQrScanAlertSound(status === 'warning' || scheduleMismatch.hasMismatch);
 
     setScanResult({
       student,
       status,
       paymentStatus,
-      checkInTime
+      checkInTime,
+      scheduleMismatch
     });
+
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    // Keep warning open longer (12 seconds) so teacher can select an action button
+    scanTimeoutRef.current = setTimeout(() => {
+      setScanResult(null);
+    }, scheduleMismatch.hasMismatch ? 12000 : 2500);
+
+    onRefresh();
+  };
+
+  // Schedule Mismatch Action Handlers
+  const handleConfirmFlexAttendance = () => {
+    if (!scanResult) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const recordGroupId = (selectedGroupId && selectedGroupId !== 'الكل') ? selectedGroupId : scanResult.student.groupId;
+    
+    dbEngine.addAttendance({
+      id: `${scanResult.student.id}_${todayStr}`,
+      studentId: scanResult.student.id,
+      studentName: scanResult.student.name,
+      groupId: recordGroupId,
+      date: todayStr,
+      status: 'present',
+      checkInTime: scanResult.checkInTime || new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    });
+    
+    setScanResult(prev => prev ? {
+      ...prev,
+      status: 'success',
+      scheduleMismatch: prev.scheduleMismatch ? { ...prev.scheduleMismatch, hasMismatch: false } : undefined
+    } : null);
 
     if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
     scanTimeoutRef.current = setTimeout(() => {
       setScanResult(null);
-    }, 1800);
+    }, 1500);
 
+    onRefresh();
+  };
+
+  const handleTransferStudentGroup = () => {
+    if (!scanResult || !selectedGroupId || selectedGroupId === 'الكل') return;
+    const activeGroup = groups.find(g => g.id === selectedGroupId);
+    if (!activeGroup) return;
+
+    const updatedStudent: Student = {
+      ...scanResult.student,
+      groupId: selectedGroupId
+    };
+
+    dbEngine.updateStudent(updatedStudent);
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    dbEngine.addAttendance({
+      id: `${scanResult.student.id}_${todayStr}`,
+      studentId: scanResult.student.id,
+      studentName: scanResult.student.name,
+      groupId: selectedGroupId,
+      date: todayStr,
+      status: 'present',
+      checkInTime: scanResult.checkInTime || new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    });
+
+    setScanResult(prev => prev ? {
+      ...prev,
+      student: updatedStudent,
+      status: 'success',
+      scheduleMismatch: undefined
+    } : null);
+
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    scanTimeoutRef.current = setTimeout(() => {
+      setScanResult(null);
+    }, 2000);
+
+    onRefresh();
+  };
+
+  const handleMarkLateException = () => {
+    if (!scanResult) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const recordGroupId = (selectedGroupId && selectedGroupId !== 'الكل') ? selectedGroupId : scanResult.student.groupId;
+    
+    dbEngine.addAttendance({
+      id: `${scanResult.student.id}_${todayStr}`,
+      studentId: scanResult.student.id,
+      studentName: scanResult.student.name,
+      groupId: recordGroupId,
+      date: todayStr,
+      status: 'late',
+      checkInTime: scanResult.checkInTime || new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    });
+
+    setScanResult(prev => prev ? {
+      ...prev,
+      status: 'success',
+      scheduleMismatch: undefined
+    } : null);
+
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    scanTimeoutRef.current = setTimeout(() => {
+      setScanResult(null);
+    }, 1500);
+
+    onRefresh();
+  };
+
+  const handleSendMismatchWhatsApp = () => {
+    if (!scanResult) return;
+    let cleanPhone = scanResult.student.parentPhone.replace(/\D/g, '');
+    if (cleanPhone.startsWith('01')) {
+      cleanPhone = `20${cleanPhone}`;
+    }
+
+    const officialGroup = scanResult.scheduleMismatch?.officialGroupName || 'المجموعة الرسمية';
+    const officialTime = scanResult.scheduleMismatch?.officialGroupTime || '';
+    const msg = `السلام عليكم يا فندم، نود إحاطتكم علماً بأن الطالب/ة ${scanResult.student.name} حضر اليوم لدرس العلوم في غير موعد مجموعته الرسمية (${officialGroup} - ${officialTime}). تم تسجيل حضوره استثنائياً اليوم. شكرًا لتعاونكم. الأستاذ محمود أبوذكري.`;
+
+    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+    window.open(waUrl, '_blank');
+  };
+
+  const handleCancelScanAttendance = () => {
+    if (!scanResult) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    dbEngine.deleteAttendance(`${scanResult.student.id}_${todayStr}`, scanResult.student.id, todayStr);
+    setScanResult(null);
     onRefresh();
   };
 
@@ -498,8 +816,104 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
   const totalRosterCount = groupStudents.length;
   const attendancePercentage = totalRosterCount > 0 ? Math.round((presentCount / totalRosterCount) * 100) : 0;
 
+  // Helper to change status for any historical attendance record directly
+  const handleUpdateHistoricalStatus = (record: Attendance, newStatus: 'present' | 'absent' | 'late' | 'excused') => {
+    if (record.status === newStatus) return;
+    const timeNow = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    dbEngine.addAttendance({
+      ...record,
+      status: newStatus,
+      checkInTime: (newStatus === 'present' || newStatus === 'late') ? (record.checkInTime || timeNow) : record.checkInTime
+    });
+    onRefresh();
+  };
+
+  // Filter all attendance records across ALL dates
+  const filteredHistoryRecords = attendance.filter(record => {
+    const student = students.find(s => s.id === record.studentId);
+    
+    if (historySelectedStudentId !== 'all' && record.studentId !== historySelectedStudentId) {
+      return false;
+    }
+
+    if (historyStatusFilter !== 'all' && record.status !== historyStatusFilter) {
+      return false;
+    }
+
+    if (historyGroupFilter !== 'all' && record.groupId !== historyGroupFilter) {
+      return false;
+    }
+
+    if (historyMonthFilter !== 'all' && !isDateInSelectedMonth(record.date, historyMonthFilter)) {
+      return false;
+    }
+
+    if (historyWeekFilter !== 'all' && !isDateInSelectedWeek(record.date, historyWeekFilter)) {
+      return false;
+    }
+
+    if (historySearchQuery.trim()) {
+      const q = historySearchQuery.trim().toLowerCase();
+      const matchName = record.studentName?.toLowerCase().includes(q) || student?.name.toLowerCase().includes(q);
+      const matchCode = student?.code.toLowerCase().includes(q);
+      const matchPhone = student?.phone?.includes(q) || student?.parentPhone?.includes(q);
+      const matchDate = record.date.includes(q);
+      if (!matchName && !matchCode && !matchPhone && !matchDate) return false;
+    }
+
+    return true;
+  }).sort((a, b) => b.date.localeCompare(a.date));
+
+  const historyPresentCount = filteredHistoryRecords.filter(r => r.status === 'present' || r.status === 'late').length;
+  const historyAbsentCount = filteredHistoryRecords.filter(r => r.status === 'absent').length;
+  const historyLateCount = filteredHistoryRecords.filter(r => r.status === 'late').length;
+  const historyExcusedCount = filteredHistoryRecords.filter(r => r.status === 'excused').length;
+
+  const selectedStudentProfile = historySelectedStudentId !== 'all' 
+    ? students.find(s => s.id === historySelectedStudentId) 
+    : (historySearchQuery.trim() && filteredHistoryRecords.length > 0
+        ? students.find(s => s.id === filteredHistoryRecords[0]?.studentId)
+        : null);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-200" id="attendance-manager">
+      {/* MODE SWITCHER TABS */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between bg-slate-100 p-1.5 rounded-2xl border border-slate-200 gap-2">
+        <div className="flex items-center gap-2 w-full">
+          <button
+            type="button"
+            onClick={() => setActiveTab('daily')}
+            className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl font-extrabold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              activeTab === 'daily'
+                ? 'bg-white text-slate-900 shadow-sm border border-slate-200/80 ring-1 ring-black/5'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <Calendar className="w-4 h-4 text-emerald-600" />
+            <span>دفتر التحضير اليومي (تاريخ محدد)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('all_dates')}
+            className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl font-extrabold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              activeTab === 'all_dates'
+                ? 'bg-white text-indigo-900 shadow-sm border border-slate-200/80 ring-1 ring-indigo-500/10'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <Search className="w-4 h-4 text-indigo-600" />
+            <span>البحث الشامل في سجلات حضور وغياب الطالب (كل التواريخ)</span>
+            <span className="bg-indigo-100 text-indigo-700 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full">
+              {attendance.length} سجل
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* DAILY ATTENDANCE ROSTER VIEW */}
+      {activeTab === 'daily' && (
+        <>
       {/* Upper Control Bar */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-right">
         {/* Select Group & Date */}
@@ -843,6 +1257,20 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                           <div className="flex items-center justify-center gap-1.5">
                             <button
                               type="button"
+                              onClick={() => {
+                                setActiveTab('all_dates');
+                                setHistorySelectedStudentId(s.id);
+                                setHistorySearchQuery(s.name);
+                              }}
+                              className="p-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg inline-flex items-center gap-1 cursor-pointer transition-colors shadow-xs hover:shadow-sm"
+                              title="عرض كافة تواريخ حضور وغياب الطالب دون تقيد بتاريخ اليوم"
+                            >
+                              <Search className="w-3.5 h-3.5 text-indigo-600" />
+                              <span className="text-[10px] font-bold hidden xl:inline">السجل الشامل</span>
+                            </button>
+
+                            <button
+                              type="button"
                               onClick={() => handleOpenNotificationModal(s)}
                               className="p-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 rounded-lg inline-flex items-center gap-1 cursor-pointer transition-colors shadow-xs hover:shadow-sm"
                               title="إرسال إشعار ولي الأمر"
@@ -912,11 +1340,435 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
             </table>
           </div>
         </div>
+        </>
+      )}
+
+      {/* ALL DATES ATTENDANCE & ABSENCE HISTORY SEARCH VIEW */}
+      {activeTab === 'all_dates' && (
+        <div className="space-y-6 animate-in fade-in duration-200 text-right">
+          {/* Header & Controls Panel */}
+          <div className="bg-white p-5 rounded-2xl shadow-xs border border-slate-200 space-y-4">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                  <Search className="w-5 h-5 text-indigo-600" />
+                  البحث الشامل في سجلات حضور وغياب المتعلمين (كافة التواريخ)
+                </h3>
+                <p className="text-slate-500 text-xs mt-1">
+                  البحث والاستعلام عن أي طالب ورصد حالة حضوره أو غيابه عبر كل التواريخ المسجلة بالمركز مع إمكانية التعديل السريع المباشر.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddHistoryModalOpen(true);
+                  setAddHistoryForm({
+                    studentId: historySelectedStudentId !== 'all' ? historySelectedStudentId : (students[0]?.id || ''),
+                    date: new Date().toISOString().split('T')[0],
+                    groupId: selectedGroupId !== 'الكل' ? selectedGroupId : (groups[0]?.id || ''),
+                    status: 'present',
+                    checkInTime: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+                    checkOutTime: ''
+                  });
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                إضافة سجل حضور/غياب بتاريخ سابق ➕
+              </button>
+            </div>
+
+            {/* Filter Options */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-right">
+              {/* Search Input */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">البحث باسم الطالب أو الكود أو الهاتف</label>
+                <div className="relative">
+                  <Search className="absolute right-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="اكتب اسم الطالب أو كوده..."
+                    value={historySearchQuery}
+                    onChange={(e) => setHistorySearchQuery(e.target.value)}
+                    className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-400 rounded-xl text-xs font-bold outline-none transition"
+                  />
+                </div>
+              </div>
+
+              {/* Student Selector */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">تحديد طالب محدد</label>
+                <select
+                  value={historySelectedStudentId}
+                  onChange={(e) => setHistorySelectedStudentId(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-bold outline-none cursor-pointer"
+                >
+                  <option value="all">كل المتعلمين ({students.length})</option>
+                  {students.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.code}) - {s.grade}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Status Filter */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">تصفية حسب حالة الحضور والغياب</label>
+                <select
+                  value={historyStatusFilter}
+                  onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-bold outline-none cursor-pointer"
+                >
+                  <option value="all">جميع الحالات</option>
+                  <option value="present">🟢 حاضر فقط</option>
+                  <option value="late">⏰ متأخر فقط</option>
+                  <option value="absent">🔴 غائب فقط</option>
+                  <option value="excused">⚪ مستأذن فقط</option>
+                </select>
+              </div>
+
+              {/* Group Filter */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">تصفية حسب المجموعة الدراسية</label>
+                <select
+                  value={historyGroupFilter}
+                  onChange={(e) => setHistoryGroupFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-bold outline-none cursor-pointer"
+                >
+                  <option value="all">كل المجموعات الدراسية</option>
+                  {groups.map(g => (
+                    <option key={g.id} value={g.id}>
+                      {g.name} - ({g.grade})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Month Filter */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">تصفية حسب الشهر</label>
+                <select
+                  value={historyMonthFilter}
+                  onChange={(e) => setHistoryMonthFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-bold outline-none cursor-pointer text-indigo-700 font-black"
+                >
+                  <option value="all">كل الشهور</option>
+                  <option value="سبتمبر">سبتمبر</option>
+                  <option value="أكتوبر">أكتوبر</option>
+                  <option value="نوفمبر">نوفمبر</option>
+                  <option value="ديسمبر">ديسمبر</option>
+                  <option value="يناير">يناير</option>
+                  <option value="فبراير">فبراير</option>
+                  <option value="مارس">مارس</option>
+                  <option value="أبريل">أبريل</option>
+                  <option value="مايو">مايو</option>
+                  <option value="يونيو">يونيو</option>
+                  <option value="يوليو">يوليو</option>
+                  <option value="أغسطس">أغسطس</option>
+                </select>
+              </div>
+
+              {/* Week Filter */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">تصفية حسب الأسبوع في الشهر</label>
+                <select
+                  value={historyWeekFilter}
+                  onChange={(e) => setHistoryWeekFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-bold outline-none cursor-pointer text-indigo-700 font-black bg-indigo-50/50"
+                >
+                  <option value="all">كل أسابيع الشهر</option>
+                  <option value="1">الأسبوع الأول (الأيام 1 - 7)</option>
+                  <option value="2">الأسبوع الثاني (الأيام 8 - 14)</option>
+                  <option value="3">الأسبوع الثالث (الأيام 15 - 21)</option>
+                  <option value="4">الأسبوع الرابع (الأيام 22 - 31)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Student Profile Card (if single student selected or found) */}
+          {selectedStudentProfile && (
+            <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-5 rounded-2xl shadow-md border border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-3">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-mono font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 px-2 py-0.5 rounded-md">
+                    كود الطالب: {selectedStudentProfile.code}
+                  </span>
+                  <h4 className="text-lg font-black text-white">{selectedStudentProfile.name}</h4>
+                  <p className="text-xs text-slate-300">
+                    الصف: <strong>{selectedStudentProfile.grade}</strong> — المجموعة الأساسية: <strong>{groups.find(g => g.id === selectedStudentProfile.groupId)?.name || 'غير محددة'}</strong>
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenNotificationModal(selectedStudentProfile)}
+                    className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    تنبيه ولي الأمر (WhatsApp)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistorySelectedStudentId('all');
+                      setHistorySearchQuery('');
+                    }}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition cursor-pointer"
+                  >
+                    عرض الكل
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
+                  <span className="text-slate-400 block text-[11px] mb-1">إجمالي الجلسات المسجلة</span>
+                  <strong className="text-white text-base font-sans font-black">{filteredHistoryRecords.length} حصة</strong>
+                </div>
+                <div className="bg-emerald-950/60 p-3 rounded-xl border border-emerald-800/50 text-emerald-200">
+                  <span className="text-emerald-400 block text-[11px] mb-1">مرات الحضور والالتزام</span>
+                  <strong className="text-emerald-300 text-base font-sans font-black">{historyPresentCount} حصة</strong>
+                </div>
+                <div className="bg-red-950/60 p-3 rounded-xl border border-red-800/50 text-red-200">
+                  <span className="text-red-400 block text-[11px] mb-1">مرات الغياب بدون إذن</span>
+                  <strong className="text-red-300 text-base font-sans font-black">{historyAbsentCount} حصة</strong>
+                </div>
+                <div className="bg-amber-950/60 p-3 rounded-xl border border-amber-800/50 text-amber-200">
+                  <span className="text-amber-400 block text-[11px] mb-1">التأخير والاستئذان</span>
+                  <strong className="text-amber-300 text-base font-sans font-black">{historyLateCount} تأخير / {historyExcusedCount} استئذان</strong>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Table of Historical Attendance Records Across All Dates */}
+          <div className="bg-white rounded-2xl shadow-xs border border-slate-200 overflow-hidden">
+            <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex justify-between items-center">
+              <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                <History className="w-4 h-4 text-indigo-600" />
+                نتائج سجلاَّت الحضور والغياب المحدثة ({filteredHistoryRecords.length} سجلاً متطابقاً)
+              </h4>
+              <span className="text-[11px] text-slate-500 font-bold">يمكنك تغيير حالة أي حصة فورياً بنقرة واحدة من جدول الإجراءات</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100/70 text-slate-700 font-bold border-b border-slate-200 text-right">
+                    <th className="py-3.5 px-4">التاريخ واليوم</th>
+                    <th className="py-3.5 px-4">اسم المتعلم والكود</th>
+                    <th className="py-3.5 px-4">المجموعة</th>
+                    <th className="py-3.5 px-4">التوقيت (دخول/خروج)</th>
+                    <th className="py-3.5 px-4 text-center">الحالة الحالية</th>
+                    <th className="py-3.5 px-4 text-center">إجراءات التعديل والتحكم المباشرة</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredHistoryRecords.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="text-center py-12 text-slate-400 font-bold">
+                        لا توجد سجلات حضور أو غياب مطابقة لخيارات البحث المحددة.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredHistoryRecords.map(rec => {
+                      const student = students.find(s => s.id === rec.studentId);
+                      const group = groups.find(g => g.id === rec.groupId);
+                      const arabicDay = getArabicDayName(rec.date);
+
+                      return (
+                        <tr key={rec.id || `${rec.studentId}_${rec.date}`} className="hover:bg-slate-50/60 transition">
+                          <td className="py-3.5 px-4">
+                            <div className="font-mono font-bold text-slate-900">{rec.date}</div>
+                            <div className="text-[10px] text-slate-500 font-bold">{arabicDay}</div>
+                          </td>
+
+                          <td className="py-3.5 px-4">
+                            <div className="font-bold text-slate-900">{rec.studentName || student?.name || 'طالب غير معرّف'}</div>
+                            <div className="text-[10px] text-slate-400 font-mono mt-0.5">كود: {student?.code || '—'} - ({student?.grade || '—'})</div>
+                          </td>
+
+                          <td className="py-3.5 px-4 font-bold text-slate-700">
+                            {group ? group.name : 'المجموعة الأساسية'}
+                          </td>
+
+                          <td className="py-3.5 px-4">
+                            {rec.checkInTime ? (
+                              <div className="space-y-0.5">
+                                <span className="text-[11px] font-mono text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 block w-fit">
+                                  دخول: {rec.checkInTime}
+                                </span>
+                                {rec.checkOutTime && (
+                                  <span className="text-[10px] font-mono text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 block w-fit">
+                                    خروج: {rec.checkOutTime}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 italic text-[11px]">غير مسجل توقيت</span>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-center">
+                            {rec.status === 'present' ? (
+                              <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                حاضر
+                              </span>
+                            ) : rec.status === 'late' ? (
+                              <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                متأخر
+                              </span>
+                            ) : rec.status === 'absent' ? (
+                              <span className="bg-red-50 text-red-800 border border-red-200 px-2.5 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                                غائب
+                              </span>
+                            ) : (
+                              <span className="bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                                <Info className="w-3.5 h-3.5 text-slate-500" />
+                                مستأذن
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Inline Actions */}
+                          <td className="py-3.5 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                              {/* Quick status switch buttons */}
+                              <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateHistoricalStatus(rec, 'present')}
+                                  title="تغيير إلى حاضر"
+                                  className={`px-2 py-1 text-[10.5px] font-bold transition cursor-pointer ${
+                                    rec.status === 'present' ? 'bg-emerald-600 text-white' : 'bg-white text-emerald-700 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  حاضر
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateHistoricalStatus(rec, 'absent')}
+                                  title="تغيير إلى غائب"
+                                  className={`px-2 py-1 text-[10.5px] font-bold border-r border-slate-200 transition cursor-pointer ${
+                                    rec.status === 'absent' ? 'bg-red-600 text-white' : 'bg-white text-red-700 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  غائب
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateHistoricalStatus(rec, 'late')}
+                                  title="تغيير إلى متأخر"
+                                  className={`px-2 py-1 text-[10.5px] font-bold border-r border-slate-200 transition cursor-pointer ${
+                                    rec.status === 'late' ? 'bg-amber-600 text-white' : 'bg-white text-amber-700 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  متأخر
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateHistoricalStatus(rec, 'excused')}
+                                  title="تغيير إلى مستأذن"
+                                  className={`px-2 py-1 text-[10.5px] font-bold border-r border-slate-200 transition cursor-pointer ${
+                                    rec.status === 'excused' ? 'bg-slate-700 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  مستأذن
+                                </button>
+                              </div>
+
+                              {/* Edit Full Details Button */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (student) {
+                                    setEditingAttendance({
+                                      isOpen: true,
+                                      student,
+                                      record: rec
+                                    });
+                                  }
+                                }}
+                                className="p-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[10.5px] font-bold transition flex items-center gap-1 cursor-pointer"
+                                title="تعديل تفاصيل الوقت والمجموعة"
+                              >
+                                <Edit className="w-3.5 h-3.5 text-blue-600" />
+                                تعديل
+                              </button>
+
+                              {/* WhatsApp Notification */}
+                              {student && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenNotificationModal(student)}
+                                  className="p-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-[10.5px] font-bold transition flex items-center gap-1 cursor-pointer"
+                                  title="إرسال إشعار ولي الأمر"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                                  تنبيه
+                                </button>
+                              )}
+
+                              {/* Delete Record */}
+                              {confirmDeleteId === rec.id ? (
+                                <div className="inline-flex items-center gap-1 bg-red-50 border border-red-200 p-1 rounded-lg">
+                                  <span className="text-[9px] text-red-700 font-bold">تأكيد؟</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      dbEngine.deleteAttendance(rec.id || `${rec.studentId}_${rec.date}`, rec.studentId, rec.date);
+                                      setConfirmDeleteId(null);
+                                      onRefresh();
+                                    }}
+                                    className="px-1.5 py-0.5 bg-red-600 text-white rounded font-bold text-[9px] hover:bg-red-700 cursor-pointer"
+                                  >
+                                    نعم
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(null)}
+                                    className="px-1.5 py-0.5 bg-slate-200 text-slate-800 rounded font-bold text-[9px] hover:bg-slate-300 cursor-pointer"
+                                  >
+                                    لا
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(rec.id)}
+                                  className="p-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-[10.5px] font-bold transition flex items-center gap-1 cursor-pointer"
+                                  title="حذف هذا السجل"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                                  حذف
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SCAN CONFIRMATION FLOATING TOAST */}
       {scanResult && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-full max-w-sm px-4">
-          <div className="bg-white rounded-2xl p-4 shadow-2xl border-2 border-slate-200 text-right space-y-3 relative animate-in fade-in slide-in-from-top-4 duration-200">
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-full max-w-md px-4">
+          <div className={`bg-white rounded-2xl p-4.5 shadow-2xl border-2 text-right space-y-3 relative animate-in fade-in slide-in-from-top-4 duration-200 max-h-[85vh] overflow-y-auto ${
+            scanResult.scheduleMismatch?.hasMismatch ? 'border-amber-400 ring-2 ring-amber-100' : 'border-slate-200'
+          }`}>
             <button 
               onClick={() => setScanResult(null)}
               className="absolute left-3 top-3 p-1 bg-slate-50 hover:bg-slate-100 border border-slate-150 text-slate-500 rounded-lg cursor-pointer transition-all"
@@ -925,7 +1777,11 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
             </button>
 
             <div className="flex items-center gap-3 justify-start">
-              {scanResult.status === 'success' ? (
+              {scanResult.scheduleMismatch?.hasMismatch ? (
+                <div className="w-10 h-10 rounded-full bg-amber-50 text-amber-800 border border-amber-200 flex items-center justify-center flex-shrink-0 animate-bounce">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                </div>
+              ) : scanResult.status === 'success' ? (
                 <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-100 flex items-center justify-center flex-shrink-0">
                   <CheckCircle2 className="w-5 h-5" />
                 </div>
@@ -937,7 +1793,11 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
               
               <div className="flex-1 min-w-0">
                 <span className="text-[10px] font-bold text-slate-400 font-mono tracking-wider">{scanResult.student.code}</span>
-                <h4 className="text-xs font-bold text-slate-500 -mt-0.5 font-sans">تم تسجيل الحضور بنجاح</h4>
+                <h4 className={`text-xs font-bold -mt-0.5 font-sans ${
+                  scanResult.scheduleMismatch?.hasMismatch ? 'text-amber-700' : 'text-slate-500'
+                }`}>
+                  {scanResult.scheduleMismatch?.hasMismatch ? 'تنبيه: مسح في غير موعد أو توقيت الحضور!' : 'تم تسجيل الحضور بنجاح'}
+                </h4>
                 <p className="text-sm font-black text-slate-900 truncate mt-0.5">{scanResult.student.name}</p>
               </div>
             </div>
@@ -945,12 +1805,92 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
             <div className="flex items-center justify-between text-[11px] bg-slate-50 p-2 rounded-lg border border-slate-150 font-bold text-slate-700">
               <div className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>توقيت الدخول: <span className="font-mono text-slate-900">{scanResult.checkInTime}</span></span>
+                <span>توقيت المسح: <span className="font-mono text-slate-900">{scanResult.checkInTime}</span></span>
               </div>
               <div>
                 الصف: <span className="text-slate-900">{scanResult.student.grade}</span>
               </div>
             </div>
+
+            {/* SCHEDULE AND TIMING MISMATCH ALERT BOX & ACTIONS */}
+            {scanResult.scheduleMismatch?.hasMismatch && (
+              <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl space-y-2.5 text-[11px] text-amber-950 font-bold text-right shadow-xs">
+                <div className="flex items-center gap-1.5 text-amber-900 font-extrabold text-xs border-b border-amber-200/80 pb-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 animate-bounce" />
+                  <span>تفاصيل اختلاف الموعد أو التوقيت الممسوح:</span>
+                </div>
+                
+                <div className="space-y-1 text-amber-900 bg-amber-100/60 p-2.5 rounded-lg border border-amber-200/60 text-[10.5px]">
+                  {scanResult.scheduleMismatch.reasons.map((reason, idx) => (
+                    <p key={idx} className="flex items-start gap-1">
+                      <span className="text-amber-600 font-black flex-shrink-0">•</span>
+                      <span>{reason}</span>
+                    </p>
+                  ))}
+                </div>
+
+                <div className="text-[10.5px] text-slate-700 bg-white p-2 rounded-lg border border-amber-200 space-y-1">
+                  <div>المجموعة الرسمية: <strong className="text-slate-900">{scanResult.scheduleMismatch.officialGroupName}</strong> ({scanResult.scheduleMismatch.officialGroupTime})</div>
+                  <div>الأيام المعتمدة: <strong className="text-slate-900">{scanResult.scheduleMismatch.officialGroupDays.join('، ') || 'غير محددة'}</strong></div>
+                </div>
+
+                {/* ACTION BUTTONS FOR MISMATCH */}
+                <div className="pt-2 border-t border-amber-200 space-y-2">
+                  <span className="block text-[10.5px] font-black text-slate-800">إجراءات المعالجة المناسبة:</span>
+                  
+                  <div className="grid grid-cols-1 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleConfirmFlexAttendance}
+                      className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-white animate-pulse" />
+                      اعتماد كـ (حضور مرن / طالب زائر) 🟢
+                    </button>
+
+                    {scanResult.scheduleMismatch.isWrongGroup && selectedGroupId && selectedGroupId !== 'الكل' && (
+                      <button
+                        type="button"
+                        onClick={handleTransferStudentGroup}
+                        className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-white" />
+                        نقل الطالب رسمياً لـ "{scanResult.scheduleMismatch.activeGroupName}" 🔄
+                      </button>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleMarkLateException}
+                        className="py-1.5 px-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[10.5px] flex items-center justify-center gap-1 transition cursor-pointer"
+                      >
+                        <Clock className="w-3.5 h-3.5" />
+                        تسجيل كمتأخر ⏰
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSendMismatchWhatsApp}
+                        className="py-1.5 px-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold text-[10.5px] flex items-center justify-center gap-1 transition cursor-pointer"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        تنبيه ولي الأمر 💬
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleCancelScanAttendance}
+                      className="w-full py-1.5 px-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg font-bold text-[10.5px] flex items-center justify-center gap-1 transition cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      إلغاء والتراجع عن تسجيل الحضور ❌
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {scanResult.paymentStatus === 'not_paid' ? (
               <div className="p-2.5 bg-red-50 text-red-800 border border-red-100 rounded-lg text-[10.5px] font-bold flex items-center gap-1">
@@ -1388,6 +2328,164 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                 type="button"
                 onClick={() => setIsFlexModalOpen(false)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RETROACTIVE ATTENDANCE ADDITION MODAL */}
+      {isAddHistoryModalOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 text-right space-y-4 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 border border-slate-200">
+            <button 
+              onClick={() => setIsAddHistoryModalOpen(false)}
+              className="absolute left-4 top-4 p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 rounded-lg cursor-pointer transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <Plus className="w-5 h-5 text-indigo-600" />
+                إضافة أو رصد حضور/غياب بتاريخ سابق
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                رصد وتوثيق حالة حضور أو غياب أي طالب في أي تاريخ سابق بغير التقيد بتاريخ اليوم.
+              </p>
+            </div>
+
+            <div className="space-y-3.5 pt-2">
+              {/* Select Student */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">اختر الطالب المستهدف</label>
+                <select
+                  value={addHistoryForm.studentId}
+                  onChange={(e) => {
+                    const studentId = e.target.value;
+                    const student = students.find(s => s.id === studentId);
+                    setAddHistoryForm(prev => ({
+                      ...prev,
+                      studentId,
+                      groupId: student ? student.groupId : prev.groupId
+                    }));
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-bold outline-none cursor-pointer"
+                >
+                  <option value="">-- اختر طالباً --</option>
+                  {students.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.code}) - {s.grade}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Select Date & Group */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">التاريخ المستهدف</label>
+                  <input
+                    type="date"
+                    value={addHistoryForm.date}
+                    onChange={(e) => setAddHistoryForm(prev => ({ ...prev, date: e.target.value }))}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-mono font-bold outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">المجموعة</label>
+                  <select
+                    value={addHistoryForm.groupId}
+                    onChange={(e) => setAddHistoryForm(prev => ({ ...prev, groupId: e.target.value }))}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-bold outline-none cursor-pointer"
+                  >
+                    <option value="">-- اختر مجموعة --</option>
+                    {groups.map(g => (
+                      <option key={g.id} value={g.id}>{g.name} ({g.grade})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Select Status */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">حالة الحضور</label>
+                <select
+                  value={addHistoryForm.status}
+                  onChange={(e) => setAddHistoryForm(prev => ({ ...prev, status: e.target.value as any }))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-bold outline-none cursor-pointer"
+                >
+                  <option value="present">🟢 حاضر (Present)</option>
+                  <option value="late">⏰ متأخر (Late)</option>
+                  <option value="absent">🔴 غائب (Absent)</option>
+                  <option value="excused">⚪ مستأذن (Excused)</option>
+                </select>
+              </div>
+
+              {/* Times */}
+              {(addHistoryForm.status === 'present' || addHistoryForm.status === 'late') && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">توقيت الدخول</label>
+                    <input
+                      type="text"
+                      placeholder="04:00 م"
+                      value={addHistoryForm.checkInTime}
+                      onChange={(e) => setAddHistoryForm(prev => ({ ...prev, checkInTime: e.target.value }))}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-mono font-bold outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">توقيت الخروج (اختياري)</label>
+                    <input
+                      type="text"
+                      placeholder="06:00 م"
+                      value={addHistoryForm.checkOutTime}
+                      onChange={(e) => setAddHistoryForm(prev => ({ ...prev, checkOutTime: e.target.value }))}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white rounded-xl text-xs font-mono font-bold outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={!addHistoryForm.studentId || !addHistoryForm.date}
+                onClick={() => {
+                  const student = students.find(s => s.id === addHistoryForm.studentId);
+                  if (!student) return;
+
+                  dbEngine.addAttendance({
+                    id: `${student.id}_${addHistoryForm.date}`,
+                    studentId: student.id,
+                    studentName: student.name,
+                    groupId: addHistoryForm.groupId || student.groupId,
+                    date: addHistoryForm.date,
+                    status: addHistoryForm.status,
+                    checkInTime: (addHistoryForm.status === 'present' || addHistoryForm.status === 'late') ? addHistoryForm.checkInTime : undefined,
+                    checkOutTime: addHistoryForm.checkOutTime || undefined
+                  });
+
+                  setIsAddHistoryModalOpen(false);
+                  onRefresh();
+                }}
+                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  addHistoryForm.studentId && addHistoryForm.date
+                    ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs'
+                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                }`}
+              >
+                حفظ وإضافة السجل
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAddHistoryModalOpen(false)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
               >
                 إلغاء
               </button>
