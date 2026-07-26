@@ -10,7 +10,7 @@ import {
   DollarSign, Landmark, Filter, Search, Plus, Trash2, Printer, X, Download, 
   Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle,
   Cloud, CloudOff, RefreshCw, Wifi, WifiOff, Server, Database,
-  QrCode, Camera, HelpCircle, CheckCircle2
+  QrCode, Camera, HelpCircle, CheckCircle2, Volume2
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import * as XLSX from 'xlsx';
@@ -160,9 +160,58 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const financeLastScannedRef = useRef<{ id: string; time: number } | null>(null);
   const financeScanTimeoutRef = useRef<any>(null);
 
+  const playFinanceQrSound = (success: boolean = true) => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      if (ctx.state === 'suspended') ctx.resume();
+      const now = ctx.currentTime;
+      if (success) {
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(1200, now);
+        gain1.gain.setValueAtTime(0.5, now);
+        gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.12);
+        setTimeout(() => {
+          try {
+            const t2 = ctx.currentTime;
+            const osc2 = ctx.createOscillator();
+            const gain2 = ctx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(1760, t2);
+            gain2.gain.setValueAtTime(0.65, t2);
+            gain2.gain.exponentialRampToValueAtTime(0.01, t2 + 0.22);
+            osc2.connect(gain2);
+            gain2.connect(ctx.destination);
+            osc2.start(t2);
+            osc2.stop(t2 + 0.22);
+          } catch (e) {}
+        }, 75);
+      } else {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(320, now);
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      }
+    } catch (e) {}
+  };
+
   const processFinanceStudentQrScan = (studentId: string) => {
     const student = students.find(s => s.id === studentId || s.code === studentId);
     if (!student) {
+      playFinanceQrSound(false);
       setFinanceScanErrorMessage('عذراً، كود الطالب الممسوح غير مطابق لأي سجل أو قد يكون تالفاً!');
       if (financeScanTimeoutRef.current) clearTimeout(financeScanTimeoutRef.current);
       financeScanTimeoutRef.current = setTimeout(() => {
@@ -170,6 +219,8 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
       }, 2500);
       return;
     }
+
+    playFinanceQrSound(true);
 
     const due = dbEngine.calculateStudentDue(student, paymentForm.month);
     

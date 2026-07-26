@@ -9,7 +9,7 @@ import { Student, Group, Attendance } from '../types';
 import { 
   Calendar, Users, QrCode, Camera, CheckCircle2, AlertTriangle, 
   Clock, X, Search, Check, AlertCircle, HelpCircle, LogIn, LogOut,
-  MessageSquare, Sparkles, Send, Info, Trash2, Edit, CheckSquare
+  MessageSquare, Sparkles, Send, Info, Trash2, Edit, CheckSquare, Volume2
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
@@ -228,10 +228,97 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     onRefresh();
   };
 
+  // Synthesize loud high-pitched QR scanner sound alert
+  const playQrScanAlertSound = (isWarning: boolean = false) => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      const now = ctx.currentTime;
+
+      if (!isWarning) {
+        // High-pitch dual chime tone (1200Hz -> 1760Hz) loud beep
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(1200, now);
+        gain1.gain.setValueAtTime(0.5, now);
+        gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.12);
+
+        setTimeout(() => {
+          try {
+            const t2 = ctx.currentTime;
+            const osc2 = ctx.createOscillator();
+            const gain2 = ctx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(1760, t2);
+            gain2.gain.setValueAtTime(0.65, t2);
+            gain2.gain.exponentialRampToValueAtTime(0.01, t2 + 0.22);
+            osc2.connect(gain2);
+            gain2.connect(ctx.destination);
+            osc2.start(t2);
+            osc2.stop(t2 + 0.22);
+          } catch (e) {}
+        }, 75);
+      } else {
+        // Warning sound for unpaid student attendance
+        [1100, 1400, 1700].forEach((freq, idx) => {
+          setTimeout(() => {
+            try {
+              const t = ctx.currentTime;
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.type = 'square';
+              osc.frequency.setValueAtTime(freq, t);
+              gain.gain.setValueAtTime(0.4, t);
+              gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+              osc.start(t);
+              osc.stop(t + 0.1);
+            } catch (e) {}
+          }, idx * 85);
+        });
+      }
+    } catch (err) {
+      console.warn("QR Scan audio alert error", err);
+    }
+  };
+
+  const playQrScanErrorAlert = () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(320, now);
+      gain.gain.setValueAtTime(0.5, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.3);
+    } catch (e) {}
+  };
+
   // Process a scanned / mock barcode student ID
   const processStudentQrScan = (studentId: string) => {
     const student = students.find(s => s.id === studentId);
     if (!student) {
+      playQrScanErrorAlert();
       setScanErrorMessage('عذراً، كود الطالب الممسوح غير مطابق لأي سجل أو قد يكون تالفاً!');
       if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
       scanTimeoutRef.current = setTimeout(() => {
@@ -282,6 +369,9 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
         status = 'warning'; // highlight missing payment!
       }
     }
+
+    // Play high-volume audio alert on successful scan
+    playQrScanAlertSound(status === 'warning');
 
     setScanResult({
       student,
@@ -508,6 +598,20 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
               <h4 className="font-bold text-slate-900 text-sm">مسح الباركود بالكاميرا الحية</h4>
               <button onClick={stopCameraScanner} className="p-1 hover:bg-slate-105 rounded-lg text-slate-505 cursor-pointer">
                 <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg px-3 py-2 text-xs">
+              <span className="flex items-center gap-1.5 font-bold">
+                <Volume2 className="w-4 h-4 text-emerald-600 animate-pulse" />
+                التنبيه الصوتي المرتفع مفعل عند المسح 🔊
+              </span>
+              <button
+                type="button"
+                onClick={() => playQrScanAlertSound(false)}
+                className="bg-emerald-600 text-white hover:bg-emerald-700 px-2.5 py-1 rounded-md font-bold text-[11px] transition"
+              >
+                تجربة الصوت
               </button>
             </div>
 
