@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { dbEngine } from '../db';
-import { Student, Group, Attendance } from '../types';
+import { Student, Group, Attendance, ALL_GRADES } from '../types';
 import { 
   Calendar, Users, QrCode, Camera, CheckCircle2, AlertTriangle, 
   Clock, X, Search, Check, AlertCircle, HelpCircle, LogIn, LogOut,
@@ -268,7 +268,8 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
 
     // Determine current month payment status
     const currentMonth = new Date().toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' });
-    const studentPayments = dbEngine.getPayments().filter(p => p.studentId === student.id && p.month.includes(currentMonth.split(' ')[0]));
+    const monthKey = String(currentMonth || '').split(' ')[0];
+    const studentPayments = dbEngine.getPayments().filter(p => p.studentId === student.id && (p.month || '').includes(monthKey));
     
     let paymentStatus: 'paid' | 'not_paid' | 'exempt' = 'not_paid';
     if (student.exemptionType === 'full') {
@@ -356,7 +357,7 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
 
   // Extract all unique grades from teacher profile settings, groups and approved students
   const availableGrades = Array.from(new Set([
-    ...dbEngine.getGrades(),
+    ...(typeof dbEngine.getGrades === 'function' ? dbEngine.getGrades() : ALL_GRADES),
     ...groups.map(g => g.grade),
     ...students.filter(s => s.status === 'approved').map(s => s.grade)
   ])).filter(Boolean);
@@ -651,7 +652,8 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                     
                     // Month payment check
                     const currentMonth = new Date().toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' });
-                    const hasPaid = dbEngine.getPayments().some(p => p.studentId === s.id && p.month.includes(currentMonth.split(' ')[0]) && p.amountPaid >= p.amountDue);
+                    const monthKey = String(currentMonth || '').split(' ')[0];
+                    const hasPaid = dbEngine.getPayments().some(p => p.studentId === s.id && (p.month || '').includes(monthKey) && p.amountPaid >= p.amountDue);
 
                     return (
                       <tr key={s.id} className="hover:bg-slate-50/40 transition-colors">

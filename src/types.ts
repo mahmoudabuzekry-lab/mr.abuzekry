@@ -11,6 +11,15 @@ export type GradeType =
   | 'الصف الثاني الإعدادي'
   | 'الصف الثالث الإعدادي';
 
+export const ALL_GRADES: GradeType[] = [
+  'الصف الرابع الابتدائي',
+  'الصف الخامس الابتدائي',
+  'الصف السادس الابتدائي',
+  'الصف الأول الإعدادي',
+  'الصف الثاني الإعدادي',
+  'الصف الثالث الإعدادي'
+];
+
 export type UserRole = 'teacher' | 'parent' | 'student';
 
 export type StudentStatus = 'pending' | 'approved' | 'rejected';

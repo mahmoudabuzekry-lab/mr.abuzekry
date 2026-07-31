@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Student, Group, GradeType } from '../types';
+import { Student, Group, GradeType, ALL_GRADES } from '../types';
 import { dbEngine } from '../db';
 import { 
   Calendar, Search, Check, Sparkles, Info, HelpCircle, 
@@ -43,12 +43,19 @@ const getStudentDefaultDays = (student: Student, groups: Group[]): string[] => {
 
 export default function WeeklyAttendancePlanner({ students, groups, onRefresh }: WeeklyAttendancePlannerProps) {
   const grades = useMemo(() => {
-    return dbEngine.getGrades() as GradeType[];
+    if (typeof dbEngine.getGrades === 'function') {
+      const dbGrades = dbEngine.getGrades();
+      if (Array.isArray(dbGrades) && dbGrades.length > 0) return dbGrades;
+    }
+    return ALL_GRADES;
   }, [students, groups]);
 
   const [selectedGrade, setSelectedGrade] = useState<GradeType>(() => {
-    const activeGrades = dbEngine.getGrades();
-    return (activeGrades[0] || 'الصف الثالث الإعدادي') as GradeType;
+    if (typeof dbEngine.getGrades === 'function') {
+      const activeGrades = dbEngine.getGrades();
+      if (Array.isArray(activeGrades) && activeGrades.length > 0) return activeGrades[0];
+    }
+    return ALL_GRADES[0] || 'الصف الثالث الإعدادي';
   });
 
   const [selectedGroupId, setSelectedGroupId] = useState<string>('all');

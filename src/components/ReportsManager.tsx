@@ -117,7 +117,7 @@ const ensureDateString = (d: any): string => {
 const isDateInSelectedMonth = (dateVal: any, monthStr: string): boolean => {
   if (!dateVal || !monthStr || monthStr === 'all') return true;
   const dateStr = ensureDateString(dateVal);
-  if (!dateStr || typeof dateStr !== 'string' || !dateStr.includes('-')) return true;
+  if (!dateStr || typeof dateStr !== 'string' || typeof dateStr.split !== 'function' || !dateStr.includes('-')) return true;
   const parts = dateStr.split('-');
   if (parts.length < 2) return true;
   const monthNum = parseInt(parts[1], 10);
@@ -136,7 +136,7 @@ const isDateInSelectedMonth = (dateVal: any, monthStr: string): boolean => {
 const isDateInSelectedWeek = (dateVal: any, weekStr: string): boolean => {
   if (!dateVal || !weekStr || weekStr === 'all') return true;
   const dateStr = ensureDateString(dateVal);
-  if (!dateStr || typeof dateStr !== 'string' || !dateStr.includes('-')) return true;
+  if (!dateStr || typeof dateStr !== 'string' || typeof dateStr.split !== 'function' || !dateStr.includes('-')) return true;
   const parts = dateStr.split('-');
   if (parts.length < 3) return true;
   const dayNum = parseInt(parts[2], 10);

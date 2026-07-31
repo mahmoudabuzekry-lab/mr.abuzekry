@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings } from './types';
+import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings, ALL_GRADES } from './types';
 import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase, getPendingQueue } from './firebase';
 
 // Price mapping for each grade
@@ -362,6 +362,10 @@ class LocalDatabase {
 
   public getExamScores(): ExamScore[] {
     return this.get(STORAGE_KEYS.EXAM_SCORES, []);
+  }
+
+  public getGrades(): GradeType[] {
+    return ALL_GRADES;
   }
 
   public getTemplates(): WhatsAppTemplate[] {
