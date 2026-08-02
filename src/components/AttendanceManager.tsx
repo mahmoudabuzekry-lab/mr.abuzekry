@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { dbEngine } from '../db';
 import { Student, Group, Attendance, ALL_GRADES } from '../types';
+import { isStudentInGroupOnDay } from './WeeklyAttendancePlanner';
 import { 
   Calendar, Users, QrCode, Camera, CheckCircle2, AlertTriangle, 
   Clock, X, Search, Check, AlertCircle, HelpCircle, LogIn, LogOut,
@@ -22,10 +23,11 @@ const parseGroupDays = (dayStr: string): string[] => {
 
 const getArabicDayName = (dateStr: string): string => {
   if (!dateStr) return '';
-  const date = new Date(dateStr);
-  const dayIndex = date.getDay(); // 0 is Sunday, 1 is Monday, etc.
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return '';
+  const date = new Date(parts[0], parts[1] - 1, parts[2]);
   const dayNames = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
-  return dayNames[dayIndex];
+  return dayNames[date.getDay()];
 };
 
 interface AttendanceManagerProps {
@@ -376,36 +378,41 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     const altGroups = (s.alternativeGroupIds || []).map(id => groups.find(g => g.id === id)).filter(Boolean) as Group[];
     const allAssignedGroups = [primaryGroup, ...altGroups].filter(Boolean) as Group[];
 
-    const defaultDays = Array.from(new Set(allAssignedGroups.flatMap(g => parseGroupDays(g.day))));
-    const studentDays = (s.attendanceDays && s.attendanceDays.length > 0) ? s.attendanceDays : defaultDays;
+    const defaultDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+    // If attendanceDays is custom saved (even if empty array), use it; otherwise use default group days
+    const studentDays = (s.attendanceDays !== undefined) ? s.attendanceDays : defaultDays;
     
     const isCompatibleDay = studentDays.includes(currentDayOfWeek);
     const hasAttendanceTodayInThisGroup = attendance.some(a => a.studentId === s.id && a.date === selectedDate && a.groupId === selectedGroupId);
     const hasAnyAttendanceToday = attendance.some(a => a.studentId === s.id && a.date === selectedDate);
+
+    // Must be scheduled to attend today according to weekly planner OR already have an attendance record today
+    const isScheduledToday = isCompatibleDay || hasAttendanceTodayInThisGroup || hasAnyAttendanceToday;
+    if (!isScheduledToday) {
+      return false;
+    }
     
     // Group filter
     if (selectedGroupId !== 'الكل') {
-      const isPrimaryGroup = s.groupId === selectedGroupId;
-      const isAlternativeGroup = !!(s.alternativeGroupIds && s.alternativeGroupIds.includes(selectedGroupId));
+      const isInThisGroupToday = isStudentInGroupOnDay(s, selectedGroupId, currentDayOfWeek, groups);
       
-      // Explicit assignment or existing record in this group today
-      if (isPrimaryGroup || isAlternativeGroup || hasAttendanceTodayInThisGroup) {
+      // Student belongs to this group today (primary or alternative) or has attendance recorded in it today
+      if (isInThisGroupToday || hasAttendanceTodayInThisGroup) {
         return true;
       }
 
-      // If student has explicit primary/alternative assigned groups, but selectedGroupId is not one of them:
+      // If student has explicit primary or alternative assigned groups, but not this selectedGroupId today, return false
       if (allAssignedGroups.length > 0) {
         return false;
       }
 
-      // If student has no group assigned at all, but has flexible attendance days matching today and active group:
-      if (!isCompatibleDay) return false;
+      // If student has no group assigned at all, but their grade matches activeGroup and activeGroup meets today
       const activeGroupDays = activeGroup ? parseGroupDays(activeGroup.day) : [];
-      const isScheduledForGroupDays = activeGroup && s.grade === activeGroup.grade && activeGroupDays.some(d => studentDays.includes(d));
-      return isScheduledForGroupDays;
+      const isGroupMeetingToday = activeGroupDays.includes(currentDayOfWeek);
+      return isGroupMeetingToday && s.grade === activeGroup?.grade;
     }
     
-    return isCompatibleDay || hasAnyAttendanceToday;
+    return true;
   });
   
   const filteredGroupStudents = groupStudents.filter(s => 
@@ -1191,10 +1198,10 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                       if (s.status !== 'approved') return false;
                       if (s.grade !== activeGroup.grade) return false;
                       
-                      // Cannot be primary or already configured as alternative (since those already show in main table)
-                      const isPrimary = s.groupId === selectedGroupId;
-                      const isAlternative = s.alternativeGroupIds && s.alternativeGroupIds.includes(selectedGroupId);
-                      if (isPrimary || isAlternative) return false;
+                      // Cannot be primary or already configured for this group today
+                      const currentDay = getArabicDayName(selectedDate);
+                      const isInGroupToday = isStudentInGroupOnDay(s, selectedGroupId, currentDay, groups);
+                      if (isInGroupToday) return false;
 
                       // Match query
                       if (flexSearchQuery) {

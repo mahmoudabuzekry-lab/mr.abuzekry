@@ -7,17 +7,17 @@ service cloud.firestore {
     }
 
     // Match abuzekry_data collection
-    match /abuzekry_data/{docId} {
+    match /abuzekry_data/{docId=**} {
       allow read, write: if true;
     }
 
     // Match abuzekry_realtime collection
-    match /abuzekry_realtime/{docId} {
+    match /abuzekry_realtime/{docId=**} {
       allow read, write: if true;
     }
 
     // Match abuzekry_public_registrations collection
-    match /abuzekry_public_registrations/{docId} {
+    match /abuzekry_public_registrations/{docId=**} {
       allow read, write: if true;
     }
   }

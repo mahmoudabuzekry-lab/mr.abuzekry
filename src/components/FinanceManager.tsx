@@ -81,7 +81,10 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     try {
       const online = await testConnection();
       if (!online) {
-        setSyncError("الجهاز غير متصل بالإنترنت حالياً. سيتم حفظ العمليات محلياً وإرسالها عند توفر الشبكة.");
+        const isUserOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+        setSyncError(isUserOffline 
+          ? "الجهاز غير متصل بالإنترنت حالياً. تم حفظ العمليات محلياً بأمان."
+          : "الخادم السحابي مؤجل الاستجابة حالياً. تم حفظ كافة العمليات محلياً 100% بأمان.");
         setIsSyncing(false);
         return;
       }

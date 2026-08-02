@@ -21,24 +21,59 @@ interface WeeklyAttendancePlannerProps {
 
 const WEEK_DAYS = ['الجمعة', 'السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'];
 
-const parseGroupDays = (dayStr: string): string[] => {
+export const parseGroupDays = (dayStr: string): string[] => {
   if (!dayStr) return [];
   return WEEK_DAYS.filter(d => dayStr.includes(d));
 };
 
+export const isStudentInGroupOnDay = (
+  student: Student,
+  groupId: string,
+  dayName: string,
+  groups: Group[]
+): boolean => {
+  const group = groups.find(g => g.id === groupId);
+  if (!group) return false;
+
+  const groupMeetingDays = parseGroupDays(group.day);
+  if (!groupMeetingDays.includes(dayName)) return false;
+
+  const isPrimary = student.groupId === groupId;
+  const isAlt = !!(student.alternativeGroupIds && student.alternativeGroupIds.includes(groupId));
+
+  if (!isPrimary && !isAlt) return false;
+
+  const primaryGroup = groups.find(g => g.id === student.groupId);
+  const primaryDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+  const defaultDays = primaryDays;
+  const checkedDays = student.attendanceDays !== undefined ? student.attendanceDays : defaultDays;
+
+  // Must be scheduled to attend on dayName
+  if (!checkedDays.includes(dayName)) return false;
+
+  if (isPrimary) {
+    return true;
+  }
+
+  if (isAlt) {
+    if (student.alternativeGroupDays && student.alternativeGroupDays[groupId]) {
+      return student.alternativeGroupDays[groupId].includes(dayName);
+    }
+    // Fallback for legacy data without alternativeGroupDays map:
+    // If student's primary group meets on this day, student is attending primary group on this day unless specified
+    if (primaryGroup && parseGroupDays(primaryGroup.day).includes(dayName)) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+};
+
 const getStudentDefaultDays = (student: Student, groups: Group[]): string[] => {
   const primaryGroup = groups.find(g => g.id === student.groupId);
-  const altGroups = (student.alternativeGroupIds || [])
-    .map(id => groups.find(g => g.id === id))
-    .filter(Boolean) as Group[];
-
-  const allGroups = [primaryGroup, ...altGroups].filter(Boolean) as Group[];
-  const daysSet = new Set<string>();
-  allGroups.forEach(g => {
-    parseGroupDays(g.day).forEach(d => daysSet.add(d));
-  });
-
-  return Array.from(daysSet);
+  if (!primaryGroup) return [];
+  return parseGroupDays(primaryGroup.day);
 };
 
 export default function WeeklyAttendancePlanner({ students, groups, onRefresh }: WeeklyAttendancePlannerProps) {
@@ -129,22 +164,26 @@ export default function WeeklyAttendancePlanner({ students, groups, onRefresh }:
 
     const targetStudents = students.filter(s => s.status === 'approved' && s.grade === selectedGrade);
     targetStudents.forEach(student => {
-      const defaultDays = getStudentDefaultDays(student, groups);
-      const checkedDays = student.attendanceDays || defaultDays;
+      WEEK_DAYS.forEach(day => {
+        if (!stats[day]) return;
+        const dayGroups = dayGroupsMap[day] || [];
+        let isAttendingOnDay = false;
 
-      checkedDays.forEach(day => {
-        if (stats[day]) {
+        dayGroups.forEach(g => {
+          if (isStudentInGroupOnDay(student, g.id, day, groups)) {
+            stats[day].groupCounts[g.id] = (stats[day].groupCounts[g.id] || 0) + 1;
+            isAttendingOnDay = true;
+          }
+        });
+
+        const defaultDays = getStudentDefaultDays(student, groups);
+        const checkedDays = student.attendanceDays || defaultDays;
+        if (checkedDays.includes(day)) {
+          isAttendingOnDay = true;
+        }
+
+        if (isAttendingOnDay) {
           stats[day].total++;
-
-          // Breakdown per group meeting on this day
-          const dayGroups = dayGroupsMap[day] || [];
-          dayGroups.forEach(g => {
-            const isPrimary = student.groupId === g.id;
-            const isAlt = student.alternativeGroupIds?.includes(g.id);
-            if (isPrimary || isAlt) {
-              stats[day].groupCounts[g.id] = (stats[day].groupCounts[g.id] || 0) + 1;
-            }
-          });
         }
       });
     });
@@ -194,31 +233,77 @@ export default function WeeklyAttendancePlanner({ students, groups, onRefresh }:
     onRefresh();
   };
 
-  // Toggle alternative group assignment from multi-group modal
+  // Toggle alternative group assignment from multi-group modal for a specific day
   const handleToggleAltGroup = (student: Student, groupId: string) => {
-    const currentAlts = student.alternativeGroupIds || [];
-    let newAlts: string[];
-    if (currentAlts.includes(groupId)) {
-      newAlts = currentAlts.filter(id => id !== groupId);
+    if (!groupModalData) return;
+    const selectedDay = groupModalData.day;
+
+    const currentAltDaysMap: Record<string, string[]> = student.alternativeGroupDays
+      ? { ...student.alternativeGroupDays }
+      : {};
+
+    // Initialize map for existing alt groups if legacy record
+    if (!student.alternativeGroupDays && student.alternativeGroupIds) {
+      student.alternativeGroupIds.forEach(id => {
+        const groupObj = groups.find(g => g.id === id);
+        if (groupObj) {
+          currentAltDaysMap[id] = parseGroupDays(groupObj.day);
+        }
+      });
+    }
+
+    const currentGroupDays = currentAltDaysMap[groupId] ? [...currentAltDaysMap[groupId]] : [];
+    const isAddingForThisDay = !currentGroupDays.includes(selectedDay);
+
+    let updatedGroupDays: string[];
+    if (isAddingForThisDay) {
+      updatedGroupDays = [...currentGroupDays, selectedDay];
     } else {
-      newAlts = [...currentAlts, groupId];
+      updatedGroupDays = currentGroupDays.filter(d => d !== selectedDay);
+    }
+
+    if (updatedGroupDays.length > 0) {
+      currentAltDaysMap[groupId] = updatedGroupDays;
+    } else {
+      delete currentAltDaysMap[groupId];
+    }
+
+    const newAltGroupIds = Object.keys(currentAltDaysMap);
+
+    const primaryGroup = groups.find(g => g.id === student.groupId);
+    const primaryDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+    const currentDays = student.attendanceDays !== undefined
+      ? student.attendanceDays
+      : [...primaryDays];
+
+    let newDays = [...currentDays];
+    if (isAddingForThisDay) {
+      if (!newDays.includes(selectedDay)) {
+        newDays.push(selectedDay);
+      }
+    } else {
+      const stillHasOtherGroupOnDay = primaryDays.includes(selectedDay) ||
+        newAltGroupIds.some(altId => currentAltDaysMap[altId]?.includes(selectedDay));
+      if (!stillHasOtherGroupOnDay) {
+        newDays = newDays.filter(d => d !== selectedDay);
+      }
     }
 
     const updatedStudent: Student = {
       ...student,
-      alternativeGroupIds: newAlts
+      alternativeGroupIds: newAltGroupIds,
+      alternativeGroupDays: currentAltDaysMap,
+      attendanceDays: newDays
     };
 
     dbEngine.updateStudent(updatedStudent);
     onRefresh();
 
     // Update modal reference
-    if (groupModalData) {
-      setGroupModalData({
-        ...groupModalData,
-        student: updatedStudent
-      });
-    }
+    setGroupModalData({
+      ...groupModalData,
+      student: updatedStudent
+    });
   };
 
   // Print attendance planner table for manual work
@@ -593,7 +678,7 @@ export default function WeeklyAttendancePlanner({ students, groups, onRefresh }:
 
                       // Check if student belongs to any primary or alt group on this day
                       const primaryDayG = dayGroups.find(g => g.id === student.groupId);
-                      const altDayGs = dayGroups.filter(g => (student.alternativeGroupIds || []).includes(g.id));
+                      const altDayGs = dayGroups.filter(g => isStudentInGroupOnDay(student, g.id, day, groups) && g.id !== student.groupId);
                       
                       return (
                         <td 
@@ -734,7 +819,7 @@ export default function WeeklyAttendancePlanner({ students, groups, onRefresh }:
             <div className="space-y-2 max-h-60 overflow-y-auto pl-1">
               {groupModalData.dayGroups.map(g => {
                 const isPrimary = g.id === groupModalData.student.groupId;
-                const isSelectedAlt = (groupModalData.student.alternativeGroupIds || []).includes(g.id);
+                const isSelectedAlt = isStudentInGroupOnDay(groupModalData.student, g.id, groupModalData.day, groups);
 
                 if (isPrimary) {
                   return (

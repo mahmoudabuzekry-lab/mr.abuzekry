@@ -17,6 +17,7 @@ import ReportsManager from './components/ReportsManager';
 import WeeklyAttendancePlanner from './components/WeeklyAttendancePlanner';
 import { QRCodeSVG } from 'qrcode.react';
 import NotificationCenter from './components/NotificationCenter';
+import { getPendingQueue, processSyncQueue } from './firebase';
 
 // Icons
 import { 
@@ -97,6 +98,13 @@ export default function App() {
   // Background Auto-Sync state
   const [autoSyncState, setAutoSyncState] = useState<'idle' | 'checking' | 'syncing' | 'synced' | 'offline' | 'error'>('idle');
   const [autoSyncMessage, setAutoSyncMessage] = useState<string>('');
+  const [pendingQueueCount, setPendingQueueCount] = useState<number>(() => {
+    try {
+      return getPendingQueue().length;
+    } catch (e) {
+      return 0;
+    }
+  });
 
   // Load and refresh state from storage
   const loadDatabase = () => {
@@ -279,21 +287,33 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
+    const refreshQueueStatus = () => {
+      try {
+        const q = getPendingQueue();
+        setPendingQueueCount(q.length);
+        return q.length;
+      } catch (e) {
+        return 0;
+      }
+    };
+
     const handleSyncStarted = (e: any) => {
       if (!active) return;
+      refreshQueueStatus();
       setAutoSyncState('syncing');
       setAutoSyncMessage('جاري مزامنة التعديلات سحابياً...');
     };
 
     const handleSyncProcessing = (e: any) => {
       if (!active) return;
+      const qCount = refreshQueueStatus();
       setAutoSyncState('syncing');
-      const count = e.detail?.count || 1;
-      setAutoSyncMessage(`جاري حفظ ${count} تعديلات سحابياً...`);
+      setAutoSyncMessage(`جاري حفظ ${qCount || 1} تعديلات سحابياً...`);
     };
 
     const handleSyncCompleted = () => {
       if (!active) return;
+      setPendingQueueCount(0);
       setAutoSyncState('synced');
       setAutoSyncMessage('✨ تم حفظ ومزامنة التعديلات!');
       loadDatabase(); // refresh UI local states
@@ -304,23 +324,40 @@ export default function App() {
 
     const handleSyncFailed = (e: any) => {
       if (!active) return;
+      const qCount = refreshQueueStatus();
       setAutoSyncState('offline');
-      setAutoSyncMessage(e.detail?.message || 'تم الحفظ محلياً (أوفلاين)');
-      setTimeout(() => {
-        if (active) setAutoSyncMessage('');
-      }, 5000);
+      if (qCount > 0) {
+        setAutoSyncMessage(`يوجد ${qCount} تعديلات معلقة (أوفلاين) - اضغط للمزامنة`);
+      } else {
+        setAutoSyncMessage(e.detail?.message || 'تم الحفظ محلياً (أوفلاين)');
+        setTimeout(() => {
+          if (active) setAutoSyncMessage('');
+        }, 5000);
+      }
     };
 
     const handleSyncStatusUpdated = () => {
       if (!active) return;
+      refreshQueueStatus();
       loadDatabase(); // Keep react state fresh when queue resolves
     };
+
+    const handleSyncQuotaExceeded = (e: any) => {
+      if (!active) return;
+      const qCount = refreshQueueStatus();
+      setAutoSyncState('offline');
+      setAutoSyncMessage(`⚠️ استنفاذ الحصة السحابية (${qCount} معلق) - البيانات محفوظة محلياً`);
+    };
+
+    // Initial queue check
+    refreshQueueStatus();
 
     window.addEventListener('abuzekry_sync_started', handleSyncStarted);
     window.addEventListener('abuzekry_sync_processing', handleSyncProcessing);
     window.addEventListener('abuzekry_sync_completed', handleSyncCompleted);
     window.addEventListener('abuzekry_sync_failed', handleSyncFailed);
     window.addEventListener('abuzekry_sync_status_updated', handleSyncStatusUpdated);
+    window.addEventListener('abuzekry_sync_quota_exceeded', handleSyncQuotaExceeded);
 
     return () => {
       active = false;
@@ -329,8 +366,55 @@ export default function App() {
       window.removeEventListener('abuzekry_sync_completed', handleSyncCompleted);
       window.removeEventListener('abuzekry_sync_failed', handleSyncFailed);
       window.removeEventListener('abuzekry_sync_status_updated', handleSyncStatusUpdated);
+      window.removeEventListener('abuzekry_sync_quota_exceeded', handleSyncQuotaExceeded);
     };
   }, []);
+
+  const handleSyncBadgeClick = async () => {
+    if (pendingQueueCount > 0 || autoSyncState === 'offline') {
+      setAutoSyncState('syncing');
+      setAutoSyncMessage('جاري رفع ومزامنة التعديلات المعلقة فوراً...');
+      try {
+        await processSyncQueue(true);
+        const remaining = getPendingQueue().length;
+        setPendingQueueCount(remaining);
+
+        const isQuota = localStorage.getItem('abuzekry_firebase_quota_exceeded') === 'true';
+
+        if (remaining === 0) {
+          setAutoSyncState('synced');
+          setAutoSyncMessage('✨ تم مزامنة ورفع كافة التعديلات بنجاح!');
+          loadDatabase();
+          setTimeout(() => setAutoSyncMessage(''), 4000);
+        } else if (isQuota) {
+          setAutoSyncState('offline');
+          setAutoSyncMessage(`⚠️ تم استنفاذ الحصة السحابية (${remaining} معلق) - التعديلات محفوظة محلياً`);
+          if (userRole === 'teacher') {
+            setActiveTeacherTab('backup');
+          }
+        } else {
+          // If items still remain and no quota issue, force sync full database
+          await dbEngine.syncAllToFirebase();
+          setPendingQueueCount(0);
+          setAutoSyncState('synced');
+          setAutoSyncMessage('✨ تم رفع نسخة متكاملة ومزامنة السحابة بنجاح!');
+          loadDatabase();
+          setTimeout(() => setAutoSyncMessage(''), 4000);
+        }
+      } catch (e: any) {
+        console.error("Badge sync error:", e);
+        setAutoSyncState('offline');
+        setAutoSyncMessage('تعذر المزامنة تلقائياً - البيانات محفوظة محلياً');
+        if (userRole === 'teacher') {
+          setActiveTeacherTab('backup');
+        }
+      }
+    } else {
+      if (userRole === 'teacher') {
+        setActiveTeacherTab('backup');
+      }
+    }
+  };
 
   const handleLogoClick = () => {
     setLogoClicks(prev => {
@@ -600,27 +684,40 @@ export default function App() {
             </div>
 
             {/* Cloud Sync Status Badge */}
-            {dbEngine.isFirebaseEnabled() && autoSyncMessage && (
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all duration-300 shadow-xs ${
-                autoSyncState === 'checking' || autoSyncState === 'syncing'
-                  ? 'bg-blue-50/85 text-blue-800 border-blue-200/60 animate-pulse'
-                  : autoSyncState === 'synced'
-                  ? 'bg-emerald-50/85 text-emerald-800 border-emerald-200/60'
-                  : autoSyncState === 'offline'
-                  ? 'bg-amber-50/85 text-amber-850 border-amber-200/60'
-                  : 'bg-red-50/85 text-red-800 border-red-200/60'
-              }`}>
+            {dbEngine.isFirebaseEnabled() && (
+              <button
+                type="button"
+                onClick={handleSyncBadgeClick}
+                title="اضغط المزامنة فوراً أو للانتقال للنسخ الاحتياطي"
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all duration-300 shadow-xs cursor-pointer hover:scale-105 active:scale-95 ${
+                  autoSyncState === 'checking' || autoSyncState === 'syncing'
+                    ? 'bg-blue-50/85 text-blue-800 border-blue-200/60 animate-pulse'
+                    : autoSyncState === 'synced'
+                    ? 'bg-emerald-50/85 text-emerald-800 border-emerald-200/60'
+                    : pendingQueueCount > 0
+                    ? 'bg-amber-500 text-white border-amber-600 animate-pulse'
+                    : autoSyncState === 'offline'
+                    ? 'bg-amber-50/85 text-amber-850 border-amber-200/60'
+                    : 'bg-red-50/85 text-red-800 border-red-200/60'
+                }`}
+              >
                 {autoSyncState === 'checking' || autoSyncState === 'syncing' ? (
-                  <RefreshCw className="w-3 h-3 text-blue-600 animate-spin" />
+                  <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin" />
                 ) : autoSyncState === 'synced' ? (
-                  <Cloud className="w-3 h-3 text-emerald-600" />
+                  <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                ) : pendingQueueCount > 0 ? (
+                  <RefreshCw className="w-3.5 h-3.5 text-white animate-spin" />
                 ) : autoSyncState === 'offline' ? (
-                  <WifiOff className="w-3 h-3 text-amber-600" />
+                  <WifiOff className="w-3.5 h-3.5 text-amber-600" />
                 ) : (
-                  <CloudOff className="w-3 h-3 text-red-600" />
+                  <CloudOff className="w-3.5 h-3.5 text-red-600" />
                 )}
-                <span>{autoSyncMessage}</span>
-              </div>
+                <span>
+                  {pendingQueueCount > 0 
+                    ? `يوجد ${pendingQueueCount} تعديل معلق - اضغط للمزامنة` 
+                    : autoSyncMessage || 'السحابة متصلة'}
+                </span>
+              </button>
             )}
 
             <button

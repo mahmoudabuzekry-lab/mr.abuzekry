@@ -4,7 +4,7 @@
  */
 
 import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings, ALL_GRADES } from './types';
-import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase, getPendingQueue } from './firebase';
+import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase, getPendingQueue, getItemHashes, setItemHashes, computeEntityHash } from './firebase';
 
 // Price mapping for each grade
 export const DEFAULT_GRADE_PRICES: Record<GradeType, number> = {
@@ -531,6 +531,11 @@ class LocalDatabase {
   }
 
   public async syncAllToFirebase(): Promise<void> {
+    if (!this.isFirebaseEnabled()) return;
+    if (localStorage.getItem('abuzekry_firebase_quota_exceeded') === 'true') {
+      throw new Error('تم استنفاذ الحصة السحابية اليومية المجانية للمشروع (Quota Exceeded). جميع بياناتك محفوظة محلياً بأمان.');
+    }
+
     const data = {
       students: this.getStudents(),
       groups: this.getGroups(),
@@ -548,17 +553,19 @@ class LocalDatabase {
     localStorage.setItem('abuzekry_last_firebase_sync', new Date().toISOString());
 
     // Sync separate collections for real-time fetch on client portals
-    await Promise.all([
-      syncEntityToFirebase('students', data.students),
-      syncEntityToFirebase('groups', data.groups),
-      syncEntityToFirebase('payments', data.payments),
-      syncEntityToFirebase('attendance', data.attendance),
-      syncEntityToFirebase('exams', data.exams),
-      syncEntityToFirebase('examScores', data.examScores),
-      syncEntityToFirebase('templates', data.templates),
-      syncEntityToFirebase('prices', data.prices),
-      syncEntityToFirebase('registration_settings' as any, data.registrationSettings)
-    ]);
+    if (localStorage.getItem('abuzekry_firebase_quota_exceeded') !== 'true') {
+      await Promise.all([
+        syncEntityToFirebase('students', data.students),
+        syncEntityToFirebase('groups', data.groups),
+        syncEntityToFirebase('payments', data.payments),
+        syncEntityToFirebase('attendance', data.attendance),
+        syncEntityToFirebase('exams', data.exams),
+        syncEntityToFirebase('examScores', data.examScores),
+        syncEntityToFirebase('templates', data.templates),
+        syncEntityToFirebase('prices', data.prices),
+        syncEntityToFirebase('registration_settings' as any, data.registrationSettings)
+      ]);
+    }
   }
 
   private safeMerge(key: string, cloudItems: any[] | undefined, entityName: string): void {
@@ -575,7 +582,7 @@ class LocalDatabase {
 
     if (!cloudItems || !Array.isArray(cloudItems)) {
       // Cloud has no data, but local has data -> self-heal by uploading local to cloud
-      if (localItems.length > 0 && this.isFirebaseEnabled()) {
+      if (localItems.length > 0 && this.isFirebaseEnabled() && localStorage.getItem('abuzekry_firebase_quota_exceeded') !== 'true') {
         console.log(`Cloud is empty for ${entityName}, healing cloud database...`);
         syncEntityToFirebase(entityName as any, localItems).catch((e) => console.error("Self-healing sync failed:", e));
       }
@@ -625,7 +632,7 @@ class LocalDatabase {
     const hasLocalOnlyItems = localItems.some(localItem => 
       !cloudItems.some(cloudItem => cloudItem.id === localItem.id)
     );
-    if (hasLocalOnlyItems && this.isFirebaseEnabled()) {
+    if (hasLocalOnlyItems && this.isFirebaseEnabled() && localStorage.getItem('abuzekry_firebase_quota_exceeded') !== 'true') {
       console.log(`Local has items for ${entityName} not in cloud, healing cloud...`);
       syncEntityToFirebase(entityName as any, merged).catch((e) => console.error("Self-healing push failed:", e));
     }
@@ -663,42 +670,83 @@ class LocalDatabase {
 
       let hasData = false;
 
-      if (backup) {
+      // Entity level collections are authoritative. Monolithic backup is only used as legacy fallback when entity is null.
+      if (cStudents && cStudents.items !== undefined) {
         hasData = true;
-        if (backup.students) this.safeMerge(STORAGE_KEYS.STUDENTS, backup.students, 'students');
-        if (backup.groups) this.safeMerge(STORAGE_KEYS.GROUPS, backup.groups, 'groups');
-        if (backup.payments) this.safeMerge(STORAGE_KEYS.PAYMENTS, backup.payments, 'payments');
-        if (backup.attendance) this.safeMerge(STORAGE_KEYS.ATTENDANCE, backup.attendance, 'attendance');
-        if (backup.exams) this.safeMerge(STORAGE_KEYS.EXAMS, backup.exams, 'exams');
-        if (backup.examScores) this.safeMerge(STORAGE_KEYS.EXAM_SCORES, backup.examScores, 'examScores');
-        if (backup.templates) this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, backup.templates, 'templates');
-        if (backup.prices) {
-          const localPrices = this.getPrices();
-          const mergedPrices = { ...localPrices, ...backup.prices };
-          this.set(STORAGE_KEYS.GRADE_PRICES, mergedPrices);
-        }
-        if (backup.registrationSettings) {
-          this.set('abuzekry_registration_settings', backup.registrationSettings);
-        }
+        this.safeMerge(STORAGE_KEYS.STUDENTS, cStudents.items, 'students');
+      } else if (backup && backup.students) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.STUDENTS, backup.students, 'students');
       }
 
-      if (cStudents && cStudents.items) { hasData = true; this.safeMerge(STORAGE_KEYS.STUDENTS, cStudents.items, 'students'); }
-      if (cGroups && cGroups.items) { hasData = true; this.safeMerge(STORAGE_KEYS.GROUPS, cGroups.items, 'groups'); }
-      if (cPayments && cPayments.items) { hasData = true; this.safeMerge(STORAGE_KEYS.PAYMENTS, cPayments.items, 'payments'); }
-      if (cAttendance && cAttendance.items) { hasData = true; this.safeMerge(STORAGE_KEYS.ATTENDANCE, cAttendance.items, 'attendance'); }
-      if (cExams && cExams.items) { hasData = true; this.safeMerge(STORAGE_KEYS.EXAMS, cExams.items, 'exams'); }
-      if (cExamScores && cExamScores.items) { hasData = true; this.safeMerge(STORAGE_KEYS.EXAM_SCORES, cExamScores.items, 'examScores'); }
-      if (cTemplates && cTemplates.items) { hasData = true; this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, cTemplates.items, 'templates'); }
-      if (cPrices && cPrices.items) {
+      if (cGroups && cGroups.items !== undefined) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.GROUPS, cGroups.items, 'groups');
+      } else if (backup && backup.groups) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.GROUPS, backup.groups, 'groups');
+      }
+
+      if (cPayments && cPayments.items !== undefined) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.PAYMENTS, cPayments.items, 'payments');
+      } else if (backup && backup.payments) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.PAYMENTS, backup.payments, 'payments');
+      }
+
+      if (cAttendance && cAttendance.items !== undefined) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.ATTENDANCE, cAttendance.items, 'attendance');
+      } else if (backup && backup.attendance) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.ATTENDANCE, backup.attendance, 'attendance');
+      }
+
+      if (cExams && cExams.items !== undefined) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.EXAMS, cExams.items, 'exams');
+      } else if (backup && backup.exams) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.EXAMS, backup.exams, 'exams');
+      }
+
+      if (cExamScores && cExamScores.items !== undefined) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.EXAM_SCORES, cExamScores.items, 'examScores');
+      } else if (backup && backup.examScores) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.EXAM_SCORES, backup.examScores, 'examScores');
+      }
+
+      if (cTemplates && cTemplates.items !== undefined) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, cTemplates.items, 'templates');
+      } else if (backup && backup.templates) {
+        hasData = true;
+        this.safeMerge(STORAGE_KEYS.WHATSAPP_TEMPLATES, backup.templates, 'templates');
+      }
+
+      if (cPrices && cPrices.items !== undefined) {
         hasData = true;
         const localPrices = this.getPrices();
         const mergedPrices = { ...localPrices, ...cPrices.items };
         this.set(STORAGE_KEYS.GRADE_PRICES, mergedPrices);
+      } else if (backup && backup.prices) {
+        hasData = true;
+        const localPrices = this.getPrices();
+        const mergedPrices = { ...localPrices, ...backup.prices };
+        this.set(STORAGE_KEYS.GRADE_PRICES, mergedPrices);
       }
-      if (cRegSettings && cRegSettings.items) {
+
+      if (cRegSettings && cRegSettings.items !== undefined) {
         hasData = true;
         this.set('abuzekry_registration_settings', cRegSettings.items);
+      } else if (backup && backup.registrationSettings) {
+        hasData = true;
+        this.set('abuzekry_registration_settings', backup.registrationSettings);
       }
+
       if (cBillingStartMonth && cBillingStartMonth.items && Array.isArray(cBillingStartMonth.items) && cBillingStartMonth.items[0]) {
         hasData = true;
         this.set(STORAGE_KEYS.BILLING_START_MONTH, cBillingStartMonth.items[0]);
@@ -809,14 +857,20 @@ class LocalDatabase {
     const students = this.getStudents().filter(s => s.status === 'approved');
     const groups = this.getGroups();
     
+    let hasCountChanged = false;
     const updatedGroups = groups.map(g => {
       const count = students.filter(s => s.groupId === g.id).length;
+      if (g.currentCount !== count) {
+        hasCountChanged = true;
+      }
       return { ...g, currentCount: count };
     });
     
-    this.set(STORAGE_KEYS.GROUPS, updatedGroups);
-    if (this.isFirebaseEnabled() && this.isTeacherActive) {
-      syncEntityToFirebase('groups', updatedGroups);
+    if (hasCountChanged) {
+      this.set(STORAGE_KEYS.GROUPS, updatedGroups);
+      if (this.isFirebaseEnabled() && this.isTeacherActive) {
+        syncEntityToFirebase('groups', updatedGroups);
+      }
     }
   }
 
@@ -872,7 +926,13 @@ class LocalDatabase {
   }
 
   public deleteStudent(id: string): void {
-    const students = this.getStudents().filter(s => s.id !== id);
+    const currentStudents = this.getStudents();
+    if (!getItemHashes('students')) {
+      const record: Record<string, string> = {};
+      currentStudents.forEach(s => { record[String(s.id)] = computeEntityHash(s); });
+      setItemHashes('students', record);
+    }
+    const students = currentStudents.filter(s => s.id !== id);
     this.setStudents(students);
   }
 
@@ -900,7 +960,13 @@ class LocalDatabase {
   }
 
   public deleteGroup(id: string): void {
-    const groups = this.getGroups().filter(g => g.id !== id);
+    const currentGroups = this.getGroups();
+    if (!getItemHashes('groups')) {
+      const record: Record<string, string> = {};
+      currentGroups.forEach(g => { record[String(g.id)] = computeEntityHash(g); });
+      setItemHashes('groups', record);
+    }
+    const groups = currentGroups.filter(g => g.id !== id);
     this.setGroups(groups);
   }
 
@@ -927,7 +993,13 @@ class LocalDatabase {
   }
 
   public deletePayment(id: string): void {
-    const payments = this.getPayments().filter(p => p.id !== id);
+    const currentPayments = this.getPayments();
+    if (!getItemHashes('payments')) {
+      const record: Record<string, string> = {};
+      currentPayments.forEach(p => { record[String(p.id)] = computeEntityHash(p); });
+      setItemHashes('payments', record);
+    }
+    const payments = currentPayments.filter(p => p.id !== id);
     this.setPayments(payments);
   }
 
@@ -950,7 +1022,13 @@ class LocalDatabase {
   }
 
   public deleteAttendance(id: string, studentId?: string, date?: string): void {
-    const list = this.getAttendance().filter(a => {
+    const currentAttendance = this.getAttendance();
+    if (!getItemHashes('attendance')) {
+      const record: Record<string, string> = {};
+      currentAttendance.forEach(a => { record[String(a.id)] = computeEntityHash(a); });
+      setItemHashes('attendance', record);
+    }
+    const list = currentAttendance.filter(a => {
       if (a.id === id) return false;
       if (studentId && date && a.studentId === studentId && a.date === date) return false;
       if (a.studentId && a.date && `${a.studentId}_${a.date}` === id) return false;
@@ -977,10 +1055,22 @@ class LocalDatabase {
   }
 
   public deleteExam(id: string): void {
-    const exams = this.getExams().filter(e => e.id !== id);
+    const currentExams = this.getExams();
+    if (!getItemHashes('exams')) {
+      const record: Record<string, string> = {};
+      currentExams.forEach(e => { record[String(e.id)] = computeEntityHash(e); });
+      setItemHashes('exams', record);
+    }
+    const exams = currentExams.filter(e => e.id !== id);
     this.setExams(exams);
-    // clean scores
-    const scores = this.getExamScores().filter(s => s.examId !== id);
+
+    const currentScores = this.getExamScores();
+    if (!getItemHashes('examScores')) {
+      const record: Record<string, string> = {};
+      currentScores.forEach(s => { record[String(s.id)] = computeEntityHash(s); });
+      setItemHashes('examScores', record);
+    }
+    const scores = currentScores.filter(s => s.examId !== id);
     this.setExamScores(scores);
   }
 

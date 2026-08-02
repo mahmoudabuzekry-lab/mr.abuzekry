@@ -20,13 +20,24 @@ import {
   Info,
   Wifi,
   WifiOff,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Eye,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  X,
+  ListFilter,
+  Layers,
+  FileText
 } from 'lucide-react';
 import { 
   isCustomConfigUsed, 
   testConnection, 
   getPendingQueue, 
   processSyncQueue, 
+  clearPendingQueue,
+  removeFromPendingQueue,
+  QueueItem,
   fetchEntityFromFirebase,
   syncEntityToFirebase
 } from '../firebase';
@@ -44,6 +55,22 @@ interface CloudMetrics {
   updatedAt: string | null;
 }
 
+const ENTITY_NAMES_AR: Record<string, { title: string; icon: string }> = {
+  students: { title: 'بيانات الطلاب والمسجلين', icon: '👨‍🎓' },
+  groups: { title: 'المجموعات والشُعب', icon: '👥' },
+  payments: { title: 'سجلات الحسابات والاشتراكات', icon: '💳' },
+  attendance: { title: 'سجلات الحضور والغياب', icon: '📝' },
+  exams: { title: 'الامتحانات والاختبارات', icon: '📝' },
+  examScores: { title: 'درجات ونتائج الطلاب', icon: '📊' },
+  templates: { title: 'قوالب الشهادات والكروت', icon: '📄' },
+  prices: { title: 'أسعار المراحل والخصومات', icon: '🏷️' },
+  registration_settings: { title: 'إعدادات التسجيل الإلكتروني', icon: '⚙️' },
+  admin_settings: { title: 'كلمة المرور وإعدادات الإدارة', icon: '🔑' },
+  billingStartMonth: { title: 'بداية شهر الحسابات', icon: '📅' },
+  billingEndMonth: { title: 'نهاية شهر الحسابات', icon: '📅' },
+  gradeMonthDiscounts: { title: 'خصومات الشهور', icon: '🎁' }
+};
+
 export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
   const [status, setStatus] = useState<{ success?: string; error?: string } | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -57,6 +84,7 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
   const [syncLoading, setSyncLoading] = useState<'push' | 'pull' | 'stats' | null>(null);
   const [lastSync, setLastSync] = useState(localStorage.getItem('abuzekry_last_firebase_sync') || 'لم يتم المزامنة مسبقاً');
   const [isFirebaseOnline, setIsFirebaseOnline] = useState<boolean | null>(null);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState(localStorage.getItem('abuzekry_firebase_quota_exceeded') === 'true');
 
   // Custom Firebase Config states
   const [showCustomConfigForm, setShowCustomConfigForm] = useState(false);
@@ -70,8 +98,11 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
   const [customAppId, setCustomAppId] = useState('');
   const [pasteJsonText, setPasteJsonText] = useState('');
 
-  // Offline Sync queue size tracking
+  // Offline Sync queue size tracking & details modal
   const [pendingQueueLength, setPendingQueueLength] = useState(getPendingQueue().length);
+  const [showQueueModal, setShowQueueModal] = useState(false);
+  const [queueItemsList, setQueueItemsList] = useState<QueueItem[]>(getPendingQueue());
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
   // Local vs Cloud Comparison metrics
   const [cloudMetrics, setCloudMetrics] = useState<CloudMetrics | null>(null);
@@ -92,13 +123,56 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
 
     // Listen to queue updates or online status changes
     const handleQueueUpdate = () => {
-      setPendingQueueLength(getPendingQueue().length);
+      const q = getPendingQueue();
+      setPendingQueueLength(q.length);
+      setQueueItemsList(q);
     };
+    const handleQuotaExceeded = () => {
+      setIsQuotaExceeded(true);
+    };
+
     window.addEventListener('abuzekry_sync_status_updated', handleQueueUpdate);
+    window.addEventListener('abuzekry_sync_quota_exceeded', handleQuotaExceeded);
     return () => {
       window.removeEventListener('abuzekry_sync_status_updated', handleQueueUpdate);
+      window.removeEventListener('abuzekry_sync_quota_exceeded', handleQuotaExceeded);
     };
   }, []);
+
+  const refreshQueueList = () => {
+    const q = getPendingQueue();
+    setQueueItemsList(q);
+    setPendingQueueLength(q.length);
+  };
+
+  const handleOpenQueueModal = () => {
+    refreshQueueList();
+    setShowQueueModal(true);
+  };
+
+  const handleRemoveSingleQueueItem = (itemId: string, entityTitle: string) => {
+    removeFromPendingQueue(itemId);
+    refreshQueueList();
+    setStatus({ success: `تم إزالة التعديل الخاص بـ (${entityTitle}) من قائمة المزامنة المعلقة بنجاح.` });
+    setTimeout(() => setStatus(null), 4000);
+  };
+
+  const handleClearAllQueueModal = () => {
+    if (window.confirm("هل أنت تأكد من مسح وتفريغ كافة التعديلات المعلقة في قائمة الانتظار؟ (لن يؤثر ذلك على بياناتك المحفوظة محلياً)")) {
+      clearPendingQueue();
+      refreshQueueList();
+      setStatus({ success: 'تم إعادة ضبط وتفريغ قائمة الانتظار المعلقة بنجاح.' });
+      setTimeout(() => setStatus(null), 4000);
+    }
+  };
+
+  const handleResetQuotaCheck = async () => {
+    localStorage.removeItem('abuzekry_firebase_quota_exceeded');
+    setIsQuotaExceeded(false);
+    setStatus({ success: 'تم إعادة اختيار الاتصال بالسحابة. يمكنك تجربة المزامنة الآن.' });
+    await checkFirebaseConnectivity();
+    await loadCloudMetrics();
+  };
 
   const checkFirebaseConnectivity = async () => {
     const isOnline = await testConnection();
@@ -251,10 +325,15 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
       loadCloudMetrics();
     } catch (err: any) {
       console.error(err);
-      setStatus({ error: `عذراً، فشل رفع البيانات للرابط السحابي: ${err.message || err}` });
+      const isTimeout = err.message?.includes('تأخر') || err.message?.includes('مهلة');
+      if (isTimeout) {
+        setStatus({ error: `⚠️ تأخر استجابة الخادم السحابي: بياناتك محفوظة محلياً 100% بأمان، وتتم المزامنة تلقائياً.` });
+      } else {
+        setStatus({ error: `عذراً، فشل رفع البيانات للرابط السحابي: ${err.message || err}` });
+      }
     } finally {
       setSyncLoading(null);
-      setTimeout(() => setStatus(null), 6000);
+      setTimeout(() => setStatus(null), 8000);
     }
   };
 
@@ -284,15 +363,53 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
     setSyncLoading('push');
     setStatus(null);
     try {
-      await processSyncQueue();
-      setPendingQueueLength(getPendingQueue().length);
-      setStatus({ success: 'تم مزامنة ومعالجة التعديلات المعلقة بنجاح على قاعدة البيانات السحابية!' });
+      // Force queue processing
+      await processSyncQueue(true);
+      let remaining = getPendingQueue().length;
+      
+      let isQuota = localStorage.getItem('abuzekry_firebase_quota_exceeded') === 'true';
+
+      if (remaining > 0 && !isQuota) {
+        // If items remain and quota is NOT exceeded, attempt backup upload
+        try {
+          await dbEngine.syncAllToFirebase();
+          clearPendingQueue();
+          remaining = 0;
+        } catch (backupErr: any) {
+          console.warn("Backup sync attempt during flush:", backupErr);
+          isQuota = localStorage.getItem('abuzekry_firebase_quota_exceeded') === 'true';
+        }
+      }
+      
+      setPendingQueueLength(remaining);
+      if (remaining === 0) {
+        setLastSync(new Date().toISOString());
+        setStatus({ success: 'تم بنجاح رفع كافة التعديلات المعلقة ومزامنة قاعدة البيانات بالكامل مع السحابة!' });
+      } else if (isQuota) {
+        setStatus({ error: `⚠️ استنفاذ الحصة السحابية اليومية (Quota Exceeded): متبقي ${remaining} تعديل معلق، محفوظة محلياً بأمان وسوف تتزامن عند تجدد الحصة.` });
+      } else {
+        setStatus({ error: `متبقي ${remaining} تعديل معلق بانتظار الخادم السحابي (البيانات محفوظة محلياً بأمان).` });
+      }
       loadCloudMetrics();
     } catch (err: any) {
-      setStatus({ error: `تعذر ترحيل قائمة التعديلات المعلقة: ${err.message || err}` });
+      console.error("Flush queue error:", err);
+      const isTimeout = err.message?.includes('تأخر') || err.message?.includes('مهلة');
+      if (isTimeout) {
+        setStatus({ error: `⚠️ تأخر استجابة الخادم السحابي: كافة بياناتك وتعديلاتك محفوظة محلياً بأمان 100%، وسيتم المزامنة تلقائياً.` });
+      } else {
+        setStatus({ error: `تعذر ترحيل قائمة التعديلات المعلقة: ${err.message || err}` });
+      }
     } finally {
       setSyncLoading(null);
+      setTimeout(() => setStatus(null), 8000);
     }
+  };
+
+  const handleClearQueue = () => {
+    clearPendingQueue();
+    setPendingQueueLength(0);
+    setStatus({ success: 'تم إعادة ضبط وتفريغ قائمة الانتظار المعلقة بنجاح.' });
+    setTimeout(() => setStatus(null), 4000);
   };
 
   const handleToggleFirebase = (val: boolean) => {
@@ -462,28 +579,97 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
           ))}
         </div>
 
-        {/* Offline queue indicator alert if items exist */}
-        {pendingQueueLength > 0 && (
-          <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 animate-pulse">
-            <div className="flex items-center gap-2.5 text-right">
-              <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
-                <Cloud className="w-4.5 h-4.5" />
+        {/* Quota Exceeded Banner */}
+        {isQuotaExceeded && (
+          <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+            <div className="flex items-center gap-3 text-right">
+              <div className="p-2 bg-amber-500 text-slate-950 rounded-xl font-bold">
+                <AlertOctagon className="w-5 h-5" />
               </div>
               <div className="space-y-0.5">
-                <h5 className="text-xs font-black text-indigo-900">يوجد {pendingQueueLength} تعديلات معلقة في قائمة الانتظار (أوفلاين)</h5>
-                <p className="text-[10px] text-indigo-700">قام النظام بحفظ تعديلاتك محلياً في المتصفح وسيتم ترحيلها تلقائياً عند الاتصال بالشبكة.</p>
+                <h5 className="text-xs font-black text-amber-900">⚠️ تم استنفاذ الحصة السحابية اليومية المجانية لـ Firebase (Quota Exceeded)</h5>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  بيانات طلابك وحضورهم ومحاسباتهم <strong>محفوظة محلياً 100% في المتصفح بأمان</strong>. لا داعي للقلق، يمكنك الربط ببرشروع فايربيز خاص بك مجاناً أو إعادة اختبار الاتصال.
+                </p>
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleFlushQueue}
-              disabled={syncLoading !== null}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-lg transition active:scale-95 flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>مزامنة التعديلات المعلقة الآن</span>
-            </button>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <button
+                type="button"
+                onClick={handleResetQuotaCheck}
+                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>إعادة اختبار الاتصال</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCustomConfigForm(true)}
+                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg transition active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
+              >
+                <Settings className="w-3.5 h-3.5 text-indigo-400" />
+                <span>ربط فاير بيز خاص</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Delta Sync Feature Banner */}
+        <div className="p-3 bg-emerald-50/80 border border-emerald-200/80 rounded-xl flex items-center justify-between gap-3 text-emerald-950 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <span className="font-bold">المزامنة التفاضلية الذكية (Delta Sync) مفعلة:</span>
+            <span className="text-emerald-800 text-[11px] hidden sm:inline">يتم فقط نقل ورفع التعديلات الحديثة والبيانات المتغيرة لمنع تكرار البيانات وتوفير استهلاك الباقة والسرعة.</span>
+          </div>
+          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold rounded-md border border-emerald-300 shrink-0">
+            Smart Delta Active
+          </span>
+        </div>
+
+        {/* Offline queue indicator alert if items exist */}
+        {pendingQueueLength > 0 && (
+          <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+            <div className="flex items-center gap-2.5 text-right">
+              <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
+                <Cloud className="w-4.5 h-4.5 animate-bounce" />
+              </div>
+              <div className="space-y-0.5">
+                <h5 className="text-xs font-black text-indigo-900">يوجد {pendingQueueLength} تعديلات معلقة في قائمة الانتظار (أوفلاين)</h5>
+                <p className="text-[10px] text-indigo-700">قام النظام بحفظ تعديلاتك محلياً في المتصفح. اضغط على "مزامنة التعديلات المعلقة الآن" لرفعهم فوراً إلى السحابة.</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+              <button
+                type="button"
+                onClick={handleOpenQueueModal}
+                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Eye className="w-3.5 h-3.5 text-indigo-400" />
+                <span>عرض وتحرير التعديلات ({pendingQueueLength})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleFlushQueue}
+                disabled={syncLoading !== null}
+                className="flex-1 md:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-black rounded-lg transition active:scale-95 flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${syncLoading === 'push' ? 'animate-spin' : ''}`} />
+                <span>{syncLoading === 'push' ? 'جاري رفع التعديلات...' : 'مزامنة التعديلات المعلقة الآن'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearQueue}
+                disabled={syncLoading !== null}
+                className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg transition active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
+                title="مسح وتفرغ القائمة"
+              >
+                <span>إعادة ضبط</span>
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -940,6 +1126,180 @@ export default function DatabaseBackup({ onRefresh }: DatabaseBackupProps) {
                 className="px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 rounded-lg font-bold transition text-xs cursor-pointer text-center"
               >
                 إلغاء الأمر
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PENDING SYNC QUEUE DETAILS MODAL */}
+      {showQueueModal && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl overflow-hidden text-right flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-4 md:p-5 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex justify-between items-center border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/30">
+                  <ListFilter className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black flex items-center gap-2">
+                    <span>جدول التعديلات المعلقة للمزامنة السحابية</span>
+                    <span className="px-2.5 py-0.5 bg-indigo-500/30 text-indigo-300 text-xs font-bold rounded-full border border-indigo-500/40">
+                      {queueItemsList.length} تعديل
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    استعراض جميع التعديلات المحفوظة محلياً والمجهزة للرفع للسحابة، مع إمكانية معاينة بيانات أي تعديل وحذفه فردياً.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQueueModal(false)}
+                className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 md:p-6 space-y-4 overflow-y-auto flex-1 bg-slate-50/50">
+              {queueItemsList.length === 0 ? (
+                <div className="p-10 text-center space-y-3 bg-white rounded-2xl border border-dashed border-slate-300">
+                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto">
+                    <CheckCircle className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-sm font-black text-slate-800">لا توجد أي تعديلات معلقة حالياً 🎉</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                    جميع بياناتك وتعديلاتك تمت مزامنتها مع السحابة بنجاح، أو محفوظة بالكامل في قاعدة البيانات المحلية.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center px-1 text-xs text-slate-500 font-bold">
+                    <span>العناصر المعلقة في قائمة الانتظار ({queueItemsList.length}):</span>
+                    <span className="text-[11px] text-slate-400">انقر على "عرض التفاصيل" لمعاينة البيانات قبل الحذف</span>
+                  </div>
+
+                  {queueItemsList.map((item, index) => {
+                    const entityInfo = ENTITY_NAMES_AR[item.entityKey] || {
+                      title: item.entityKey,
+                      icon: '📦'
+                    };
+                    const isExpanded = expandedItemId === item.id;
+                    const isArrayData = Array.isArray(item.data);
+                    const itemsCount = isArrayData ? item.data.length : (item.data ? Object.keys(item.data).length : 0);
+                    const formattedDate = item.timestamp ? new Date(item.timestamp).toLocaleString('ar-EG', {
+                      dateStyle: 'short',
+                      timeStyle: 'medium'
+                    }) : 'غير محدد';
+
+                    return (
+                      <div
+                        key={item.id || index}
+                        className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs hover:border-indigo-300 transition space-y-3"
+                      >
+                        {/* Item Main Row */}
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center text-lg font-bold shrink-0 border border-indigo-100">
+                              {entityInfo.icon}
+                            </div>
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="text-xs font-black text-slate-900">{entityInfo.title}</h4>
+                                <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-600 font-mono rounded-md border border-slate-200">
+                                  {item.entityKey}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                                <span>🕒 {formattedDate}</span>
+                                <span>•</span>
+                                <span>{isArrayData ? `${itemsCount} سجل` : `${itemsCount} حقل`}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 w-full sm:w-auto justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedItemId(isExpanded ? null : item.id)}
+                              className="px-2.5 py-1.5 text-slate-700 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
+                            >
+                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                              <span>{isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSingleQueueItem(item.id, entityInfo.title)}
+                              className="px-2.5 py-1.5 text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
+                              title="حذف هذا التعديل المعلق فقط"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>حذف</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expanded Payload Data Viewer */}
+                        {isExpanded && (
+                          <div className="pt-2 border-t border-slate-100 animate-fade-in space-y-2">
+                            <div className="flex justify-between items-center text-[11px] text-slate-500">
+                              <span className="font-bold flex items-center gap-1 text-indigo-900">
+                                <FileText className="w-3.5 h-3.5 text-indigo-500" />
+                                <span>معاينة البيانات المسجلة لهذا التعديل:</span>
+                              </span>
+                            </div>
+                            <pre className="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[11px] font-mono leading-relaxed overflow-x-auto max-h-52 scrollbar-thin dir-ltr text-left">
+                              {JSON.stringify(item.data, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-100 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-3">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                {queueItemsList.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowQueueModal(false);
+                        handleFlushQueue();
+                      }}
+                      disabled={syncLoading !== null}
+                      className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${syncLoading === 'push' ? 'animate-spin' : ''}`} />
+                      <span>مزامنة الكل الآن</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleClearAllQueueModal}
+                      className="px-3.5 py-2 bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>حذف كافة التعديلات المعلقة</span>
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowQueueModal(false)}
+                className="w-full sm:w-auto px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                إغلاق النافذة
               </button>
             </div>
           </div>

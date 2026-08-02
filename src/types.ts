@@ -37,6 +37,7 @@ export interface Student {
   address: string;
   groupId: string; // References Group.id
   alternativeGroupIds?: string[]; // Alternative groups the student is allowed to attend (flexible/substitute days)
+  alternativeGroupDays?: Record<string, string[]>; // Map of alternative group ID to specific allowed attendance days (e.g. { "grp1": ["الأحد"] })
   attendanceDays?: string[]; // Weekly attendance days (custom flexible schedule)
   notes?: string;
   status: StudentStatus;

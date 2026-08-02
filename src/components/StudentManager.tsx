@@ -1557,10 +1557,25 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                             checked={isChecked}
                             onChange={(e) => {
                               const checked = e.target.checked;
-                              const updated = checked
-                                ? [...(newStudentForm.alternativeGroupIds || []), g.id]
-                                : (newStudentForm.alternativeGroupIds || []).filter(id => id !== g.id);
-                              setNewStudentForm({ ...newStudentForm, alternativeGroupIds: updated });
+                              const currentAlts = newStudentForm.alternativeGroupIds || [];
+                              const currentMap = newStudentForm.alternativeGroupDays || {};
+
+                              const updatedAlts = checked
+                                ? [...currentAlts, g.id]
+                                : currentAlts.filter(id => id !== g.id);
+
+                              const updatedMap = { ...currentMap };
+                              if (checked) {
+                                updatedMap[g.id] = parseGroupDays(g.day);
+                              } else {
+                                delete updatedMap[g.id];
+                              }
+
+                              setNewStudentForm({
+                                ...newStudentForm,
+                                alternativeGroupIds: updatedAlts,
+                                alternativeGroupDays: updatedMap
+                              });
                             }}
                             className="w-4 h-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500 cursor-pointer"
                           />
@@ -1932,10 +1947,25 @@ export default function StudentManager({ students, groups, prices, onRefresh }: 
                             checked={!!isChecked}
                             onChange={(e) => {
                               const checked = e.target.checked;
-                              const updated = checked
-                                ? [...(editingStudent.alternativeGroupIds || []), g.id]
-                                : (editingStudent.alternativeGroupIds || []).filter(id => id !== g.id);
-                              setEditingStudent({ ...editingStudent, alternativeGroupIds: updated });
+                              const currentAlts = editingStudent.alternativeGroupIds || [];
+                              const currentMap = editingStudent.alternativeGroupDays || {};
+
+                              const updatedAlts = checked
+                                ? [...currentAlts, g.id]
+                                : currentAlts.filter(id => id !== g.id);
+
+                              const updatedMap = { ...currentMap };
+                              if (checked) {
+                                updatedMap[g.id] = parseGroupDays(g.day);
+                              } else {
+                                delete updatedMap[g.id];
+                              }
+
+                              setEditingStudent({
+                                ...editingStudent,
+                                alternativeGroupIds: updatedAlts,
+                                alternativeGroupDays: updatedMap
+                              });
                             }}
                             className="w-4 h-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500 cursor-pointer"
                           />
