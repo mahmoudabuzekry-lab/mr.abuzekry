@@ -30,6 +30,122 @@ const getArabicDayName = (dateStr: string): string => {
   return dayNames[date.getDay()];
 };
 
+const playAudioFeedback = (type: 'success' | 'off_schedule' | 'warning' | 'error') => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+
+    if (type === 'success') {
+      // Pleasant double chime: 659.25Hz (E5) -> 880Hz (A5)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(659.25, now);
+      gain1.gain.setValueAtTime(0.18, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.18);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(880, now + 0.14);
+      gain2.gain.setValueAtTime(0.22, now + 0.14);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.14);
+      osc2.stop(now + 0.35);
+    } else if (type === 'off_schedule') {
+      // Distinctive urgent multi-tone alert (high-low-high alert sequence)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'triangle';
+      osc1.frequency.setValueAtTime(523.25, now); // C5
+      gain1.gain.setValueAtTime(0.25, now);
+      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.15);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(311.13, now + 0.15); // Eb4
+      gain2.gain.setValueAtTime(0.25, now + 0.15);
+      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.32);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.15);
+      osc2.stop(now + 0.32);
+
+      const osc3 = ctx.createOscillator();
+      const gain3 = ctx.createGain();
+      osc3.type = 'sawtooth';
+      osc3.frequency.setValueAtTime(523.25, now + 0.32);
+      gain3.gain.setValueAtTime(0.28, now + 0.32);
+      gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+      osc3.connect(gain3);
+      gain3.connect(ctx.destination);
+      osc3.start(now + 0.32);
+      osc3.stop(now + 0.55);
+    } else if (type === 'warning') {
+      // Financial warning alert
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.3);
+    } else if (type === 'error') {
+      // Error buzz: low sawtooth tone
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(180, now);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.4);
+    }
+  } catch (err) {
+    console.warn('Audio feedback error:', err);
+  }
+};
+
+const getStudentScheduledDaysNames = (student: Student, groups: Group[]): string[] => {
+  const primaryGroup = groups.find(g => g.id === student.groupId);
+  const primaryDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+  const customDays = student.attendanceDays !== undefined ? student.attendanceDays : primaryDays;
+  
+  const altDaysSet = new Set<string>();
+  (student.alternativeGroupIds || []).forEach(gid => {
+    const altGrp = groups.find(g => g.id === gid);
+    if (altGrp) {
+      const gDays = parseGroupDays(altGrp.day);
+      gDays.forEach(d => {
+        if (isStudentInGroupOnDay(student, gid, d, groups)) {
+          altDaysSet.add(d);
+        }
+      });
+    }
+  });
+
+  const allDays = Array.from(new Set([...customDays, ...Array.from(altDaysSet)]));
+  return allDays;
+};
+
 interface AttendanceManagerProps {
   students: Student[];
   groups: Group[];
@@ -161,6 +277,16 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     setNotificationModal(prev => ({ ...prev, isOpen: false }));
   };
   
+  // State for Off-Schedule Attendance Action Modal
+  const [offScheduleModal, setOffScheduleModal] = useState<{
+    student: Student;
+    checkInTime: string;
+    todayDayName: string;
+    recordGroupId: string;
+    paymentStatus: 'paid' | 'not_paid' | 'exempt';
+    todayStr: string;
+  } | null>(null);
+
   // Custom QR Scan Overlay state
   const [scanResult, setScanResult] = useState<{
     student: Student;
@@ -229,10 +355,11 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     onRefresh();
   };
 
-  // Process a scanned / mock barcode student ID
-  const processStudentQrScan = (studentId: string) => {
-    const student = students.find(s => s.id === studentId);
+  // Process a scanned / mock barcode student ID or code
+  const processStudentQrScan = (studentIdOrCode: string) => {
+    const student = students.find(s => s.id === studentIdOrCode || s.code === studentIdOrCode);
     if (!student) {
+      playAudioFeedback('error');
       setScanErrorMessage('عذراً، كود الطالب الممسوح غير مطابق لأي سجل أو قد يكون تالفاً!');
       if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
       scanTimeoutRef.current = setTimeout(() => {
@@ -243,7 +370,26 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
 
     const todayStr = new Date().toISOString().split('T')[0];
     const timeNow = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const todayDayName = getArabicDayName(todayStr);
+
+    const recordGroupId = (selectedGroupId && selectedGroupId !== 'الكل') ? selectedGroupId : student.groupId;
+
+    // Check if student is scheduled to attend today according to weekly attendance planner
+    const primaryGroup = groups.find(g => g.id === student.groupId);
+    let isScheduledToday = false;
     
+    if (selectedGroupId && selectedGroupId !== 'الكل') {
+      isScheduledToday = isStudentInGroupOnDay(student, selectedGroupId, todayDayName, groups);
+    } else {
+      const isInPrimary = isStudentInGroupOnDay(student, student.groupId, todayDayName, groups);
+      const isInAlt = (student.alternativeGroupIds || []).some(gid => isStudentInGroupOnDay(student, gid, todayDayName, groups));
+      const isInCustomDays = (student.attendanceDays !== undefined)
+        ? student.attendanceDays.includes(todayDayName)
+        : (primaryGroup ? parseGroupDays(primaryGroup.day).includes(todayDayName) : false);
+
+      isScheduledToday = isInPrimary || isInAlt || isInCustomDays;
+    }
+
     // Check if attendance already exists for today
     const existingRecord = attendance.find(a => a.studentId === student.id && a.date === todayStr);
     
@@ -251,12 +397,10 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     let checkInTime = timeNow;
 
     if (existingRecord && (existingRecord.status === 'present' || existingRecord.status === 'late')) {
-      // Already registered, do nothing (no checkout/departure recording)
-      status = 'success';
+      // Already registered, preserve original check in time
       checkInTime = existingRecord.checkInTime || timeNow;
     } else {
-      // First scan, or was absent/excused = Present
-      const recordGroupId = (selectedGroupId && selectedGroupId !== 'الكل') ? selectedGroupId : student.groupId;
+      // Record attendance for today
       dbEngine.addAttendance({
         id: `${student.id}_${todayStr}`,
         studentId: student.id,
@@ -264,7 +408,8 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
         groupId: recordGroupId,
         date: todayStr,
         status: 'present',
-        checkInTime: timeNow
+        checkInTime: timeNow,
+        notes: !isScheduledToday ? 'حضور استثنائي في غير اليوم المعتمد' : undefined
       });
     }
 
@@ -281,21 +426,42 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
       paymentStatus = hasPaid ? 'paid' : 'not_paid';
       
       if (paymentStatus === 'not_paid') {
-        status = 'warning'; // highlight missing payment!
+        status = 'warning';
       }
     }
 
-    setScanResult({
-      student,
-      status,
-      paymentStatus,
-      checkInTime
-    });
+    if (!isScheduledToday) {
+      // 🔔 Play distinctive urgent warning tone for off-schedule scan
+      playAudioFeedback('off_schedule');
 
-    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
-    scanTimeoutRef.current = setTimeout(() => {
-      setScanResult(null);
-    }, 1800);
+      setOffScheduleModal({
+        student,
+        checkInTime,
+        todayDayName,
+        recordGroupId,
+        paymentStatus,
+        todayStr
+      });
+    } else {
+      // Standard scheduled scan audio feedback
+      if (paymentStatus === 'not_paid') {
+        playAudioFeedback('warning');
+      } else {
+        playAudioFeedback('success');
+      }
+
+      setScanResult({
+        student,
+        status,
+        paymentStatus,
+        checkInTime
+      });
+
+      if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = setTimeout(() => {
+        setScanResult(null);
+      }, 2000);
+    }
 
     onRefresh();
   };
@@ -497,12 +663,17 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
         {/* QR Scanner Trigger Card */}
         <div className="bg-slate-900 text-white p-5 rounded-xl border border-slate-800 space-y-4 flex flex-col justify-between">
           <div>
-            <h4 className="font-bold text-sm flex items-center gap-1.5 text-white">
-              <QrCode className="w-4 h-4 text-slate-300" />
-              القارئ الذكي لكود الحضور
-            </h4>
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-sm flex items-center gap-1.5 text-white">
+                <QrCode className="w-4 h-4 text-slate-300" />
+                القارئ الذكي لكود الحضور
+              </h4>
+              <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-950/90 border border-emerald-800/80 px-2 py-0.5 rounded flex items-center gap-1">
+                🔊 التنبيه الصوتي مفعل
+              </span>
+            </div>
             <p className="text-slate-400 text-xs mt-1.5 leading-relaxed">
-              استعمل كاميرا البث المباشر لمسح باركود الطالب لتسجيل دخوله وخروجه في ثانية بغير أي كتابة يدوية.
+              استعمل كاميرا البث المباشر لمسح باركود الطالب لتسجيل الدخول الفوري مع التنبيهات الصوتية الذكية عند الحضور في الموعد أو في غير الموعد المعتمد.
             </p>
           </div>
 
@@ -510,7 +681,7 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
             <button
               onClick={startCameraScanner}
               disabled={isCameraActive}
-              className="w-full bg-white text-slate-905 bg-slate-50 text-slate-900 border border-slate-200 hover:bg-slate-100 font-bold px-4 py-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+              className="w-full bg-slate-50 text-slate-900 border border-slate-200 hover:bg-slate-100 font-bold px-4 py-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
             >
               <Camera className="w-4 h-4 text-slate-800" />
               تشغيل الكاميرا والمسح
@@ -906,6 +1077,148 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                 <h4 className="text-xs font-black text-red-600 font-sans">فشل قراءة رمز الكارت</h4>
                 <p className="text-xs font-bold text-slate-650 leading-relaxed mt-1">{scanErrorMessage}</p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OFF-SCHEDULE ATTENDANCE ACTION MODAL */}
+      {offScheduleModal && (
+        <div className="fixed inset-0 z-[120] overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 text-right animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl relative border-2 border-amber-300">
+            <button 
+              onClick={() => setOffScheduleModal(null)}
+              className="absolute left-4 top-4 p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg cursor-pointer transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Modal Header */}
+            <div className="flex items-center gap-3 border-b border-amber-100 pb-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0 animate-bounce">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className="text-[11px] font-extrabold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 inline-block mb-1">
+                  تنبيه: حضور في غير الموعد المعتمد!
+                </span>
+                <h3 className="text-base font-extrabold text-slate-900 truncate">
+                  {offScheduleModal.student.name}
+                </h3>
+              </div>
+            </div>
+
+            {/* Warning Message Box */}
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs leading-relaxed font-bold">
+              تنبيه: اليوم <span className="underline decoration-amber-400 font-extrabold">{offScheduleModal.todayDayName} ({offScheduleModal.todayStr})</span> ليس من أيام الحضور المجدولة للطالب وفقاً لمخطط الحضور الأسبوعي.
+            </div>
+
+            {/* Student Schedule Details */}
+            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-2.5 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-500">كود الطالب:</span>
+                <span className="font-mono font-black text-slate-900">{offScheduleModal.student.code}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-500">الصف الدراسي:</span>
+                <span className="font-bold text-slate-900">{offScheduleModal.student.grade}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-500">المجموعة الأساسية:</span>
+                <span className="font-bold text-slate-900">
+                  {groups.find(g => g.id === offScheduleModal.student.groupId)?.name || 'غير محددة'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-500">أيام الحضور المعتمدة للطالب:</span>
+                <span className="font-bold text-slate-800 bg-slate-200/80 px-2 py-0.5 rounded">
+                  {getStudentScheduledDaysNames(offScheduleModal.student, groups).join(' - ') || 'لا توجد أيام مجدولة'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-500">توقيت تسجيل المسح:</span>
+                <span className="font-mono font-bold text-slate-900">{offScheduleModal.checkInTime}</span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="space-y-2.5 pt-1">
+              <p className="text-xs font-extrabold text-slate-800">اختر الإجراء المطلوب اتخاذه الآن:</p>
+              
+              {/* Action 1: Keep Exceptional Attendance */}
+              <button
+                type="button"
+                onClick={() => {
+                  playAudioFeedback('success');
+                  setOffScheduleModal(null);
+                  setScanResult({
+                    student: offScheduleModal.student,
+                    status: 'warning',
+                    paymentStatus: offScheduleModal.paymentStatus,
+                    checkInTime: offScheduleModal.checkInTime
+                  });
+                  if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+                  scanTimeoutRef.current = setTimeout(() => setScanResult(null), 2500);
+                }}
+                className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                اعتماد وتسجيل الحضور كـ "حضور استثنائي" اليوم
+              </button>
+
+              {/* Action 2: Add Today to Student's Schedule */}
+              <button
+                type="button"
+                onClick={() => {
+                  const primaryGroup = groups.find(g => g.id === offScheduleModal.student.groupId);
+                  const primaryDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+                  const currentDays = offScheduleModal.student.attendanceDays !== undefined 
+                    ? offScheduleModal.student.attendanceDays 
+                    : primaryDays;
+
+                  if (!currentDays.includes(offScheduleModal.todayDayName)) {
+                    const updatedDays = [...currentDays, offScheduleModal.todayDayName];
+                    dbEngine.updateStudent({
+                      ...offScheduleModal.student,
+                      attendanceDays: updatedDays
+                    });
+                  }
+                  playAudioFeedback('success');
+                  onRefresh();
+                  setOffScheduleModal(null);
+                  setScanResult({
+                    student: offScheduleModal.student,
+                    status: 'success',
+                    paymentStatus: offScheduleModal.paymentStatus,
+                    checkInTime: offScheduleModal.checkInTime
+                  });
+                  if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+                  scanTimeoutRef.current = setTimeout(() => setScanResult(null), 2500);
+                }}
+                className="w-full py-2.5 px-4 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+              >
+                <Calendar className="w-4 h-4" />
+                تعديل المخطط وإضافة يوم ({offScheduleModal.todayDayName}) دائماً لجدول الطالب
+              </button>
+
+              {/* Action 3: Cancel Attendance */}
+              <button
+                type="button"
+                onClick={() => {
+                  dbEngine.deleteAttendance(
+                    `${offScheduleModal.student.id}_${offScheduleModal.todayStr}`,
+                    offScheduleModal.student.id,
+                    offScheduleModal.todayStr
+                  );
+                  playAudioFeedback('error');
+                  onRefresh();
+                  setOffScheduleModal(null);
+                }}
+                className="w-full py-2.5 px-4 bg-slate-100 hover:bg-red-50 hover:text-red-700 hover:border-red-200 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition cursor-pointer"
+              >
+                <X className="w-4 h-4 text-red-500" />
+                إلغاء وتسجيل غياب / عدم احتساب الحضور اليوم
+              </button>
             </div>
           </div>
         </div>

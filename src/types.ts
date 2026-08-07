@@ -85,6 +85,7 @@ export interface Attendance {
   status: 'present' | 'absent' | 'late' | 'excused';
   checkInTime?: string;
   checkOutTime?: string;
+  notes?: string;
 }
 
 export interface Exam {
