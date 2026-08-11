@@ -5,16 +5,17 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dbEngine } from '../db';
-import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName } from '../types';
+import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName, normalizePhoneNumber } from '../types';
 import { 
   DollarSign, Landmark, Filter, Search, Plus, Trash2, Printer, X, Download, 
   Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle,
   Cloud, CloudOff, RefreshCw, Wifi, WifiOff, Server, Database,
-  QrCode, Camera, HelpCircle, CheckCircle2, Volume2
+  QrCode, Camera, HelpCircle, CheckCircle2, Volume2, Users, Tag, Gift, Sparkles
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import * as XLSX from 'xlsx';
 import { testConnection, getPendingQueue, fetchEntityFromFirebase } from '../firebase';
+import SiblingDiscountsManager from './SiblingDiscountsManager';
 
 interface FinanceManagerProps {
   students: Student[];
@@ -24,7 +25,7 @@ interface FinanceManagerProps {
 }
 
 export default function FinanceManager({ students, payments, prices, onRefresh }: FinanceManagerProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'prices' | 'blankSheet'>('debtors');
+  const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'siblings' | 'prices' | 'blankSheet'>('debtors');
   
   // Cloud Sync tracking states
   const [isOnline, setIsOnline] = useState<boolean | null>(null);
@@ -116,6 +117,19 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const [filterGrade, setFilterGrade] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPaymentStatus, setFilterPaymentStatus] = useState<'all' | 'paid' | 'unpaid'>('unpaid');
+
+  // Count of sibling families
+  const siblingFamiliesCount = useMemo(() => {
+    const approvedStudents = students.filter(s => s.status === 'approved');
+    const phoneGroups: Record<string, number> = {};
+    approvedStudents.forEach(st => {
+      const cleanPhone = normalizePhoneNumber(st.parentPhone || st.phone);
+      if (cleanPhone && cleanPhone.length >= 8) {
+        phoneGroups[cleanPhone] = (phoneGroups[cleanPhone] || 0) + 1;
+      }
+    });
+    return Object.values(phoneGroups).filter(count => count > 1).length;
+  }, [students]);
 
   // Record Payment search and filter states
   const [addSearchQuery, setAddSearchQuery] = useState('');
@@ -854,6 +868,24 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               حالة سداد الطلاب 📊
             </button>
             <button
+              onClick={() => setActiveSubTab('siblings')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === 'siblings' 
+                  ? 'bg-indigo-900 text-white shadow-xs' 
+                  : 'bg-indigo-50 text-indigo-900 border border-indigo-200 hover:bg-indigo-100'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5 text-indigo-600" />
+              <span>تنظيم خصومات الأخوات 👨‍👩‍👧‍👦</span>
+              {siblingFamiliesCount > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black font-mono ${
+                  activeSubTab === 'siblings' ? 'bg-indigo-700 text-white' : 'bg-indigo-200 text-indigo-900'
+                }`}>
+                  {siblingFamiliesCount}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => setActiveSubTab('history')}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeSubTab === 'history' 
@@ -1085,52 +1117,190 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                       .filter(p => p.studentId === student.id && p.month === paymentForm.month)
                       .reduce((sum, p) => sum + p.amountPaid, 0);
 
+                    // Find siblings of this student
+                    const cleanPhone = normalizePhoneNumber(student.parentPhone || student.phone);
+                    const siblings = cleanPhone && cleanPhone.length >= 8
+                      ? students.filter(s => s.id !== student.id && s.status === 'approved' && normalizePhoneNumber(s.parentPhone || s.phone) === cleanPhone)
+                      : [];
+
                     return (
-                      <div className="bg-white border-2 border-emerald-500 rounded-xl p-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 animate-in zoom-in-95 duration-150">
-                        <div className="flex items-center gap-3">
-                          <div className="bg-emerald-50 text-emerald-700 p-2.5 rounded-full border border-emerald-150">
-                            <User className="w-5 h-5" />
-                          </div>
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-extrabold text-slate-900 text-sm">{student.name}</span>
-                              <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-black">كود: {student.code}</span>
+                      <div className="space-y-3">
+                        <div className="bg-white border-2 border-emerald-500 rounded-xl p-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 animate-in zoom-in-95 duration-150">
+                          <div className="flex items-center gap-3">
+                            <div className="bg-emerald-50 text-emerald-700 p-2.5 rounded-full border border-emerald-150">
+                              <User className="w-5 h-5" />
                             </div>
-                            <div className="text-xs text-slate-500 font-semibold">
-                              <span>{student.grade}</span>
-                              <span className="mx-1.5">•</span>
-                              <span className="text-slate-700 font-bold">المجموعة: {group ? group.name : 'غير محددة'}</span>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-slate-900 text-sm">{student.name}</span>
+                                <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-black">كود: {student.code}</span>
+                              </div>
+                              <div className="text-xs text-slate-500 font-semibold">
+                                <span>{student.grade}</span>
+                                <span className="mx-1.5">•</span>
+                                <span className="text-slate-700 font-bold">المجموعة: {group ? group.name : 'غير محددة'}</span>
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
-                          {prevPaid > 0 && (
-                            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 text-right space-y-0.5 shrink-0">
-                              <span className="text-[10px] text-amber-800 font-extrabold flex items-center gap-1">
-                                <AlertTriangle className="w-3 h-3 text-amber-600" />
-                                تنبيه: مسدد مسبقًا لهذا الشهر
+                          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+                            {prevPaid > 0 && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 text-right space-y-0.5 shrink-0">
+                                <span className="text-[10px] text-amber-800 font-extrabold flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                  تنبيه: مسدد مسبقًا لهذا الشهر
+                                </span>
+                                <span className="text-[11px] text-slate-600 font-bold block">قام بدفع: <strong className="font-mono text-amber-900">{prevPaid} ج.م</strong></span>
+                              </div>
+                            )}
+
+                            <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-1.5 text-right shrink-0">
+                              <span className="text-[10px] text-slate-400 font-bold block">حالة الإعفاء/الخصم</span>
+                              <span className="text-xs font-black text-slate-700">
+                                {student.exemptionType === 'full' && '🎁 معفى كلياً (0 ج.م)'}
+                                {student.exemptionType === 'partial' && `📉 خصم جزئي (${student.discountAmount} ج.م)`}
+                                {student.exemptionType === 'none' && '💵 لا يوجد خصم (كامل)'}
                               </span>
-                              <span className="text-[11px] text-slate-600 font-bold block">قام بدفع: <strong className="font-mono text-amber-900">{prevPaid} ج.م</strong></span>
                             </div>
-                          )}
 
-                          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-1.5 text-right shrink-0">
-                            <span className="text-[10px] text-slate-400 font-bold block">حالة الإعفاء/الخصم</span>
-                            <span className="text-xs font-black text-slate-700">
-                              {student.exemptionType === 'full' && '🎁 معفى كلياً (0 ج.م)'}
-                              {student.exemptionType === 'partial' && `📉 خصم جزئي (${student.discountAmount} ج.م)`}
-                              {student.exemptionType === 'none' && '💵 لا يوجد خصم (كامل)'}
-                            </span>
-                          </div>
-
-                          <div className="bg-emerald-50/50 border border-emerald-200 rounded-lg px-3.5 py-1.5 text-right shrink-0">
-                            <span className="text-[10px] text-emerald-800 font-bold block">القيمة الموصى بها</span>
-                            <strong className="text-sm font-black text-emerald-900 font-mono">
-                              {dbEngine.calculateStudentDue(student, paymentForm.month)} ج.م
-                            </strong>
+                            <div className="bg-emerald-50/50 border border-emerald-200 rounded-lg px-3.5 py-1.5 text-right shrink-0">
+                              <span className="text-[10px] text-emerald-800 font-bold block">القيمة الموصى بها</span>
+                              <strong className="text-sm font-black text-emerald-900 font-mono">
+                                {dbEngine.calculateStudentDue(student, paymentForm.month)} ج.م
+                              </strong>
+                            </div>
                           </div>
                         </div>
+
+                        {/* Sibling awareness banner */}
+                        {siblings.length > 0 && (
+                          <div className="bg-linear-to-r from-indigo-50/90 via-slate-50 to-indigo-50/90 border border-indigo-200 rounded-xl p-4 space-y-3 animate-in fade-in duration-200">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-indigo-100 pb-2.5">
+                              <div className="flex items-center gap-2">
+                                <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
+                                  <Users className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <h5 className="text-xs font-black text-indigo-950 flex items-center gap-1.5">
+                                    <span>تنبيه عائلي: هذا الطالب لديه ({siblings.length}) إخوة مسجلين بالسنتر 👨‍👩‍👧‍👦</span>
+                                    <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-bold">
+                                      هاتف الوالد: {student.parentPhone}
+                                    </span>
+                                  </h5>
+                                  <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                                    يمكنك تطبيق خصم الأخوات فوراً على هذا الطالب أو التبديل لسداد اشتراك الإخوة.
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Quick 1-click Discount Actions for Current Student */}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] text-indigo-900 font-bold">خصم سريع:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated: Student = { ...student, exemptionType: 'partial', discountAmount: 50 };
+                                    dbEngine.updateStudent(updated);
+                                    onRefresh();
+                                    const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
+                                    setPaymentForm(prev => ({ ...prev, amountPaid: newDue }));
+                                  }}
+                                  className="px-2.5 py-1 bg-white hover:bg-indigo-600 hover:text-white text-indigo-900 border border-indigo-200 rounded-lg text-xs font-bold transition cursor-pointer shadow-2xs"
+                                  title="تطبيق خصم 50 ج.م على الطالب الحالي"
+                                >
+                                  -50 ج.م
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated: Student = { ...student, exemptionType: 'partial', discountAmount: 25 };
+                                    dbEngine.updateStudent(updated);
+                                    onRefresh();
+                                    const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
+                                    setPaymentForm(prev => ({ ...prev, amountPaid: newDue }));
+                                  }}
+                                  className="px-2.5 py-1 bg-white hover:bg-indigo-600 hover:text-white text-indigo-900 border border-indigo-200 rounded-lg text-xs font-bold transition cursor-pointer shadow-2xs"
+                                  title="تطبيق خصم 25 ج.م على الطالب الحالي"
+                                >
+                                  -25 ج.م
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated: Student = { ...student, exemptionType: 'none', discountAmount: 0 };
+                                    dbEngine.updateStudent(updated);
+                                    onRefresh();
+                                    const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
+                                    setPaymentForm(prev => ({ ...prev, amountPaid: newDue }));
+                                  }}
+                                  className="px-2 py-1 bg-white hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-[10px] font-bold transition cursor-pointer"
+                                  title="إلغاء الخصم (سعر كامل)"
+                                >
+                                  كامل (إلغاء الخصم)
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Siblings list with their payment status */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+                              {siblings.map((sib) => {
+                                const sibDue = dbEngine.calculateStudentDue(sib, paymentForm.month);
+                                const sibPaid = payments
+                                  .filter(p => p.studentId === sib.id && p.month === paymentForm.month)
+                                  .reduce((sum, p) => sum + p.amountPaid, 0);
+                                const sibIsPaid = (sibPaid >= sibDue && sibDue > 0) || (sibDue === 0 && sib.exemptionType === 'full');
+
+                                return (
+                                  <div 
+                                    key={sib.id}
+                                    className="bg-white border border-indigo-150 rounded-xl p-3 flex items-center justify-between gap-2 text-right shadow-2xs"
+                                  >
+                                    <div className="space-y-0.5">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-extrabold text-slate-900 text-xs">{sib.name}</span>
+                                        <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 rounded">
+                                          {sib.code}
+                                        </span>
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 font-semibold flex items-center gap-1.5">
+                                        <span>{sib.grade}</span>
+                                        <span>•</span>
+                                        <span className="text-indigo-700 font-bold">
+                                          {sib.exemptionType === 'partial' ? `خصم ${sib.discountAmount} ج.م (المطلوب: ${sibDue} ج.م)` : sib.exemptionType === 'full' ? 'معفى كلياً' : `المطلوب: ${sibDue} ج.م`}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {sibIsPaid ? (
+                                        <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg font-extrabold flex items-center gap-1">
+                                          <Check className="w-3 h-3 text-emerald-600" />
+                                          <span>مسدد</span>
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setPaymentForm(prev => ({
+                                              ...prev,
+                                              studentId: sib.id,
+                                              amountPaid: sibDue > 0 ? sibDue : prices[sib.grade] || 100,
+                                              notes: `سداد اشتراك الأخ (${sib.name}) لشهر ${paymentForm.month}`
+                                            }));
+                                          }}
+                                          className="px-2.5 py-1 bg-indigo-900 hover:bg-indigo-800 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                                          title={`التبديل لسداد اشتراك ${sib.name}`}
+                                        >
+                                          <span>سداد {sibDue} ج.م</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })()
@@ -1514,6 +1684,29 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* SUBTAB: SIBLINGS & SIBLING DISCOUNTS MANAGER */}
+        {activeSubTab === 'siblings' && (
+          <div className="p-4 md:p-6 text-right">
+            <SiblingDiscountsManager
+              students={students}
+              payments={payments}
+              prices={prices}
+              currentMonth={filterMonth}
+              onRefresh={onRefresh}
+              onSelectStudentForPayment={(studentId, month, dueAmount) => {
+                setPaymentForm({
+                  studentId,
+                  month,
+                  amountPaid: dueAmount,
+                  paymentMethod: 'نقدي',
+                  notes: `سداد اشتراك الأخوة لشهر ${month}`
+                });
+                setActiveSubTab('add');
+              }}
+            />
           </div>
         )}
 

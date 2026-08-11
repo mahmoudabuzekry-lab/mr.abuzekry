@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings, ALL_GRADES } from './types';
+import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings, SiblingDiscountPolicy, normalizePhoneNumber, ALL_GRADES } from './types';
 import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase, getPendingQueue, getItemHashes, setItemHashes, computeEntityHash } from './firebase';
 
 // Price mapping for each grade
@@ -421,6 +421,104 @@ class LocalDatabase {
     if (this.isFirebaseEnabled() && this.isTeacherActive) {
       syncEntityToFirebase('registration_settings' as any, settings);
     }
+  }
+
+  public getSiblingDiscountPolicy(): SiblingDiscountPolicy {
+    return this.get('abuzekry_sibling_discount_policy', {
+      enabled: true,
+      type: 'fixed',
+      amount: 50,
+      applyTo: 'second_plus'
+    });
+  }
+
+  public setSiblingDiscountPolicy(policy: SiblingDiscountPolicy): void {
+    this.set('abuzekry_sibling_discount_policy', policy);
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
+      syncEntityToFirebase('sibling_discount_policy' as any, policy as any);
+    }
+  }
+
+  public applySiblingDiscountPolicy(): { updatedCount: number; familiesCount: number } {
+    const policy = this.getSiblingDiscountPolicy();
+    const students = this.getStudents();
+    const prices = this.getPrices();
+    
+    // Group approved students by normalized parent phone
+    const approved = students.filter(s => s.status === 'approved');
+    const phoneGroups: Record<string, Student[]> = {};
+
+    approved.forEach(st => {
+      const cleanPhone = normalizePhoneNumber(st.parentPhone || st.phone);
+      if (cleanPhone && cleanPhone.length >= 8) {
+        if (!phoneGroups[cleanPhone]) phoneGroups[cleanPhone] = [];
+        phoneGroups[cleanPhone].push(st);
+      }
+    });
+
+    const siblingFamilies = Object.values(phoneGroups).filter(g => g.length > 1);
+    let updatedCount = 0;
+
+    const updatedStudents = students.map(st => {
+      // Find if this student is in a sibling family
+      const cleanPhone = normalizePhoneNumber(st.parentPhone || st.phone);
+      const family = phoneGroups[cleanPhone];
+      if (!family || family.length <= 1 || st.status !== 'approved') {
+        return st;
+      }
+
+      // Sort siblings in family by createdAt or code to determine order (oldest/first registered first)
+      const sortedFamily = [...family].sort((a, b) => {
+        const timeA = new Date(a.createdAt || 0).getTime();
+        const timeB = new Date(b.createdAt || 0).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return a.code.localeCompare(b.code);
+      });
+
+      const indexInFamily = sortedFamily.findIndex(s => s.id === st.id);
+      const baseGradePrice = prices[st.grade] || 100;
+
+      if (policy.applyTo === 'second_plus') {
+        if (indexInFamily === 0) {
+          // First sibling keeps full price unless customPrice or exemption was already full
+          if (st.exemptionType === 'partial') {
+            updatedCount++;
+            return { ...st, exemptionType: 'none' as const, discountAmount: 0 };
+          }
+          return st;
+        } else {
+          // Second and subsequent siblings get the discount
+          let discountVal = policy.type === 'fixed' 
+            ? policy.amount 
+            : Math.round(baseGradePrice * (policy.amount / 100));
+          discountVal = Math.min(discountVal, baseGradePrice);
+
+          if (st.discountAmount !== discountVal || st.exemptionType !== 'partial') {
+            updatedCount++;
+            return { ...st, exemptionType: 'partial' as const, discountAmount: discountVal };
+          }
+          return st;
+        }
+      } else {
+        // Apply to all siblings in the family
+        let discountVal = policy.type === 'fixed' 
+          ? policy.amount 
+          : Math.round(baseGradePrice * (policy.amount / 100));
+        discountVal = Math.min(discountVal, baseGradePrice);
+
+        if (st.discountAmount !== discountVal || st.exemptionType !== 'partial') {
+          updatedCount++;
+          return { ...st, exemptionType: 'partial' as const, discountAmount: discountVal };
+        }
+        return st;
+      }
+    });
+
+    if (updatedCount > 0) {
+      this.setStudents(updatedStudents);
+    }
+
+    return { updatedCount, familiesCount: siblingFamilies.length };
   }
 
   public isMonthOutsideBillingRange(month: string, startMonth?: string, endMonth?: string): boolean {

@@ -123,6 +123,13 @@ export interface RegistrationSettings {
   disabledGrades: GradeType[];
 }
 
+export interface SiblingDiscountPolicy {
+  enabled: boolean;
+  type: 'fixed' | 'percentage'; // مبلغ ثابت أو نسبة مئوية
+  amount: number; // قيمة الخصم (مثلاً 50 ج.م أو 20%)
+  applyTo: 'second_plus' | 'all'; // تطبيق على الأخ الثاني فما بعد أو جميع الإخوة
+}
+
 export const ARABIC_MONTHS_MAP: { [key: string]: number } = {
   'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4,
   'مايو': 5, 'يونيو': 6, 'يوليو': 7, 'أغسطس': 8,
@@ -199,5 +206,20 @@ export function getCurrentArabicMonthName(): string {
   const currentMonthIndex = new Date().getMonth();
   return ALL_ARABIC_MONTHS[currentMonthIndex];
 }
+
+export function normalizePhoneNumber(phone: string): string {
+  if (!phone) return '';
+  const map: { [key: string]: string } = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
+  };
+  let clean = phone.replace(/[٠-٩]/g, (d) => map[d] || d);
+  clean = clean.replace(/[^\d+]/g, '');
+  if (clean.startsWith('+20')) clean = '0' + clean.slice(3);
+  else if (clean.startsWith('0020')) clean = '0' + clean.slice(4);
+  else if (clean.startsWith('20') && clean.length === 12) clean = '0' + clean.slice(2);
+  return clean.trim();
+}
+
 
 
