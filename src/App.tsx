@@ -908,7 +908,7 @@ export default function App() {
                 {guestTab === 'register' && (
                   <div className="space-y-6 animate-in fade-in duration-200">
                     <div className="space-y-2 text-right pb-3 border-b border-slate-100">
-                      <h3 className="text-xl md:text-2xl font-black text-slate-900">استمارة الحجز والتقديم الإلكتروني</h3>
+                      <h3 className="text-xl md:text-2xl font-black text-amber-500" style={{ color: '#d97706' }}>استمارة الحجز والتقديم الإلكتروني</h3>
                       <p className="text-xs md:text-sm text-slate-600 leading-relaxed font-medium">
                         سجل بياناتك الشخصية والدراسية بدقة وموثوقية لتأمين حجز مقعدك في مجموعات العلوم للأستاذ محمود أبوذكري. سيقوم النظام بحفظ الطلب فوراً لاعتماده وتوزيع المجموعة.
                       </p>
@@ -1112,12 +1112,12 @@ export default function App() {
               <div className={`border-b border-slate-800 pb-3 flex items-center justify-between font-sans ${isSidebarCollapsed ? 'lg:flex-col lg:gap-2' : ''}`}>
                 <div className="text-right flex items-center gap-2">
                   <div className="bg-blue-600/25 p-1.5 rounded-lg text-blue-400">
-                    <GraduationCap className="w-5 h-5" />
+                    <GraduationCap className="w-5 h-5 text-blue-400" />
                   </div>
                   {!isSidebarCollapsed && (
                     <div>
-                      <h3 className="font-bold text-white text-xs leading-none">لوحة إدارة الأستاذ محمود</h3>
-                      <p className="text-[10px] text-slate-400 mt-1 leading-none">دفاتر ومستويات السنتر</p>
+                      <h3 className="font-extrabold text-white text-xs leading-none">لوحة إدارة الأستاذ محمود</h3>
+                      <p className="text-[11px] text-slate-300 font-semibold mt-1 leading-none">دفاتر ومستويات السنتر</p>
                     </div>
                   )}
                 </div>
@@ -1126,27 +1126,27 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                  className="hidden lg:flex p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white cursor-pointer transition-all items-center justify-center self-center"
+                  className="hidden lg:flex p-1.5 bg-slate-800/80 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white cursor-pointer transition-all items-center justify-center self-center border border-slate-700/60"
                   title={isSidebarCollapsed ? "توسيع القائمة" : "طي القائمة"}
                 >
-                  <ListOrdered className="w-4 h-4 transform rotate-180 text-slate-400" />
+                  <ListOrdered className="w-4 h-4 transform rotate-180 text-slate-300" />
                 </button>
               </div>
 
               {/* Navigation Items: displayed in 2 horizontal rows on mobile, vertical column on desktop */}
-              <nav className="grid grid-rows-2 grid-flow-col lg:flex lg:flex-col gap-2 lg:gap-1 overflow-x-auto lg:overflow-x-visible pb-2 lg:pb-0 scrollbar-none whitespace-nowrap lg:whitespace-normal">
+              <nav className="grid grid-rows-2 grid-flow-col lg:flex lg:flex-col gap-2 lg:gap-1.5 overflow-x-auto lg:overflow-x-visible pb-2 lg:pb-0 scrollbar-none whitespace-nowrap lg:whitespace-normal">
                 <button
                   onClick={() => setActiveTeacherTab('dashboard')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'dashboard' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="اللوحة الإرشادية الكلية"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Compass className="w-4 h-4 shrink-0 text-blue-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>اللوحة الإرشادية الكلية</span>
                   </span>
@@ -1154,38 +1154,38 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTeacherTab('students')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'students' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="المتعلمين والطلبات الجديدة"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Users className="w-4 h-4 shrink-0 text-emerald-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>المتعلمين والطلبات الجديدة</span>
                   </span>
                   {pendingRequestsCount > 0 && (
-                    <span className={`text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full font-sans font-extrabold shrink-0 ${
-                      isSidebarCollapsed ? 'lg:absolute lg:top-1.5 lg:left-1.5 lg:translate-x-1/2 lg:-translate-y-1/2 lg:w-4.5 lg:h-4.5 lg:p-0 lg:flex lg:items-center lg:justify-center lg:text-[9px]' : 'mr-2'
+                    <span className={`text-[11px] bg-red-500 text-white px-2 py-0.5 rounded-full font-sans font-black shrink-0 shadow-sm ${
+                      isSidebarCollapsed ? 'lg:absolute lg:top-1.5 lg:left-1.5 lg:translate-x-1/2 lg:-translate-y-1/2 lg:w-5 lg:h-5 lg:p-0 lg:flex lg:items-center lg:justify-center lg:text-[10px]' : 'mr-2'
                     }`}>{pendingRequestsCount}</span>
                   )}
                 </button>
 
                 <button
                   onClick={() => setActiveTeacherTab('groups')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'groups' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="جدول وحجوزات المجموعات"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Calendar className="w-4 h-4 shrink-0 text-amber-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>جدول وحجوزات المجموعات</span>
                   </span>
@@ -1193,16 +1193,16 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTeacherTab('attendance')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'attendance' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="رصد التحضير والغياب الذكي"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Clock className="w-4 h-4 shrink-0 text-indigo-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>رصد التحضير والغياب الذكي</span>
                   </span>
@@ -1210,16 +1210,16 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTeacherTab('weekly-planner')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'weekly-planner' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="تنظيم أيام الحضور الأسبوعية"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Calendar className="w-4 h-4 shrink-0 text-violet-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>تنظيم أيام الحضور الأسبوعية 🔄</span>
                   </span>
@@ -1227,16 +1227,16 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTeacherTab('finances')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'finances' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="المصروفات ودفتر الحسابات"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <CreditCard className="w-4 h-4 shrink-0 text-cyan-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>المصروفات ودفتر الحسابات</span>
                   </span>
@@ -1244,16 +1244,16 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTeacherTab('exams')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'exams' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="الاختبارات ورصد الدرجات"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Award className="w-4 h-4 shrink-0 text-rose-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>الاختبارات ورصد الدرجات</span>
                   </span>
@@ -1261,16 +1261,16 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTeacherTab('whatsapp')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'whatsapp' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="تهيئات قوالب WhatsApp"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <MessageSquare className="w-4 h-4 shrink-0 text-teal-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>تهيئات قوالب WhatsApp</span>
                   </span>
@@ -1278,16 +1278,16 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTeacherTab('reports')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'reports' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="قسم التقارير والتحليلات"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <TrendingUp className="w-4 h-4 shrink-0 text-purple-400" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>قسم التقارير والتحليلات</span>
                   </span>
@@ -1295,17 +1295,17 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTeacherTab('backup')}
-                  className={`relative py-2 px-3 text-xs font-semibold rounded-xl text-right flex items-center transition-all cursor-pointer ${
+                  className={`relative py-2.5 px-3.5 text-xs font-bold rounded-xl text-right flex items-center transition-all cursor-pointer ${
                     isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'
                   } ${
                     activeTeacherTab === 'backup' 
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-1 ring-blue-400/40' 
+                      : 'text-slate-200 hover:text-white hover:bg-slate-800/90'
                   }`}
                   title="النسخ الاحتياطي والصيانة"
                 >
-                  <span className="flex items-center gap-2">
-                    <Database className="w-4 h-4 shrink-0 text-slate-400" />
+                  <span className="flex items-center gap-2.5">
+                    <Database className="w-4 h-4 shrink-0 text-slate-300" />
                     <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>النسخ الاحتياطي والصيانة</span>
                   </span>
                 </button>
@@ -1313,7 +1313,7 @@ export default function App() {
 
               {!isSidebarCollapsed && (
                 <div className="pt-4 border-t border-slate-800 text-center hidden lg:block">
-                  <span className="bg-slate-800 text-slate-300 px-2.5 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider block">
+                  <span className="bg-slate-800/90 text-slate-200 px-3 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-wider block border border-slate-700/60">
                     نظام الأستاذ محمود أبوذكري v1.0.0
                   </span>
                 </div>
@@ -1327,12 +1327,12 @@ export default function App() {
               {activeTeacherTab === 'dashboard' && (
                 <div className="space-y-6">
                   {/* Main greetings Statement */}
-                  <div className="bg-slate-900 border border-slate-800 text-white rounded-2xl p-6 md:p-8 space-y-3 relative overflow-hidden shadow-sm">
-                    <div className="relative z-10 max-w-2xl space-y-2">
-                      <span className="text-xs bg-white/10 text-slate-200 px-2.5 py-1 rounded-full font-bold">لوحة القيادة والمتابعة</span>
-                      <h3 className="text-2xl font-bold font-sans leading-tight">مرحباً بك يا أستاذ محمود أبوذكري! 👨‍🏫</h3>
-                      <p className="text-slate-300 text-xs font-medium leading-relaxed">
-                        هذه اللوحة الموحدة تمنحك إحصائيات متكاملة فلكية وفورية لجميع مجموعات العلوم لصفوف الابتدائي والإعدادي المعتمدة بالسجلات.
+                  <div className="bg-slate-900 border border-slate-800 text-white rounded-2xl p-6 md:p-8 space-y-3 relative overflow-hidden shadow-md">
+                    <div className="relative z-10 max-w-2xl space-y-2.5">
+                      <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-400/30 px-3 py-1 rounded-full font-extrabold">لوحة القيادة والمتابعة</span>
+                      <h3 className="text-2xl md:text-3xl font-black font-sans leading-tight">مرحباً بك يا أستاذ محمود أبوذكري! 👨‍🏫</h3>
+                      <p className="text-slate-200 text-xs md:text-sm font-semibold leading-relaxed">
+                        هذه اللوحة الموحدة تمنحك إحصائيات متكاملة ودقيقة وفورية لجميع مجموعات العلوم لصفوف الابتدائي والإعدادي المعتمدة بالسجلات.
                       </p>
                     </div>
                   </div>
@@ -1346,54 +1346,54 @@ export default function App() {
                   />
 
                   {/* Grid metrics */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md transition-shadow flex items-center justify-between">
                       <div>
-                        <p className="text-xs font-bold text-slate-400">الطلاب المسجلين</p>
-                        <h4 className="text-2xl font-black text-slate-800 mt-1">{approvedStudentsCount} طالب</h4>
+                        <p className="text-xs font-black text-slate-500">الطلاب المسجلين</p>
+                        <h4 className="text-2xl font-black text-slate-900 mt-1">{approvedStudentsCount} <span className="text-xs font-bold text-slate-500">طالب</span></h4>
                       </div>
-                      <div className="bg-blue-50 text-blue-600 p-2.5 rounded-xl"><Users className="w-5 h-5" /></div>
+                      <div className="bg-blue-50 text-blue-700 p-3 rounded-xl border border-blue-100"><Users className="w-5 h-5" /></div>
                     </div>
 
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md transition-shadow flex items-center justify-between">
                       <div>
-                        <p className="text-xs font-bold text-slate-400">مجموع المجموعات</p>
-                        <h4 className="text-2xl font-black text-slate-800 mt-1">{totalGroupsCount} مجموعة</h4>
+                        <p className="text-xs font-black text-slate-500">مجموع المجموعات</p>
+                        <h4 className="text-2xl font-black text-slate-900 mt-1">{totalGroupsCount} <span className="text-xs font-bold text-slate-500">مجموعة</span></h4>
                       </div>
-                      <div className="bg-blue-50 text-blue-600 p-2.5 rounded-xl"><Calendar className="w-5 h-5" /></div>
+                      <div className="bg-blue-50 text-blue-700 p-3 rounded-xl border border-blue-100"><Calendar className="w-5 h-5" /></div>
                     </div>
 
                     <button
                       onClick={() => setActiveTeacherTab('students')}
-                      className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-blue-500 hover:shadow-md text-right transition cursor-pointer"
+                      className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-amber-400 text-right transition-all cursor-pointer flex items-center justify-between"
                     >
                       <div>
-                        <p className="text-xs font-bold text-slate-400">طلبات انتظار الاعتماد</p>
-                        <h4 className="text-2xl font-black text-amber-655 text-amber-600 mt-1">{pendingRequestsCount} طالب</h4>
+                        <p className="text-xs font-black text-slate-500">طلبات انتظار الاعتماد</p>
+                        <h4 className="text-2xl font-black text-amber-600 mt-1">{pendingRequestsCount} <span className="text-xs font-bold text-slate-500">طالب</span></h4>
                       </div>
-                      <div className="bg-amber-50 text-amber-600 p-2.5 rounded-xl"><HelpCircle className="w-5 h-5" /></div>
+                      <div className="bg-amber-50 text-amber-700 p-3 rounded-xl border border-amber-100"><HelpCircle className="w-5 h-5" /></div>
                     </button>
 
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md transition-shadow flex items-center justify-between">
                       <div>
-                        <p className="text-xs font-bold text-slate-400">مقبوضات الشهر ({currentMonthName.split(' ')[0]})</p>
-                        <h4 className="text-2xl font-black text-emerald-600 mt-1">{totalRevenueForMonth} ج.م</h4>
+                        <p className="text-xs font-black text-slate-500">مقبوضات الشهر ({currentMonthName.split(' ')[0]})</p>
+                        <h4 className="text-2xl font-black text-emerald-700 mt-1">{totalRevenueForMonth} <span className="text-xs font-bold text-slate-500">ج.م</span></h4>
                       </div>
-                      <div className="bg-emerald-50 text-emerald-700 p-2.5 rounded-xl"><DollarSign className="w-5 h-5" /></div>
+                      <div className="bg-emerald-50 text-emerald-800 p-3 rounded-xl border border-emerald-100"><DollarSign className="w-5 h-5" /></div>
                     </div>
                   </div>
 
                   {/* BRAND NEW SECTION 1: STUDENT COUNTS PER GRADE (أعداد طلاب كل صف على حدة) */}
-                  <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm text-right">
-                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border-b border-slate-100 pb-3">
+                  <div className="bg-white border border-slate-200/90 rounded-2xl p-6 space-y-4 shadow-sm text-right">
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border-b border-slate-150 pb-3">
                       <div>
-                        <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5 justify-end">
+                        <h4 className="font-extrabold text-slate-900 text-base flex items-center gap-2 justify-end">
                           <GraduationCap className="w-5 h-5 text-indigo-600" />
                           توزيع الطلاب المعتمدين حسب الصفوف الدراسية
                         </h4>
-                        <p className="text-slate-400 text-[11px] mt-0.5">انقر على أي صف لمراجعة كاشف ومعالج الحسابات المكررة له مباشرة بالأسفل</p>
+                        <p className="text-slate-500 text-xs font-medium mt-0.5">انقر على أي صف لمراجعة كاشف ومعالج الحسابات المكررة له مباشرة بالأسفل</p>
                       </div>
-                      <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full font-bold self-start">إحصاء كلي دقيق</span>
+                      <span className="text-xs bg-indigo-50 text-indigo-800 px-3 py-1 rounded-full font-extrabold border border-indigo-100 self-start">إحصاء كلي دقيق</span>
                     </div>
 
                     <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -1404,12 +1404,12 @@ export default function App() {
                         
                         // Configuration for grade color and background
                         const gradeCardConfigs: Record<GradeType, { bg: string; border: string; badgeBg: string; textBadge: string; textColor: string }> = {
-                          'الصف الرابع الابتدائي': { bg: 'bg-indigo-50/30', border: 'border-indigo-150', badgeBg: 'bg-indigo-100/60', textBadge: 'text-indigo-700', textColor: 'text-indigo-900' },
-                          'الصف الخامس الابتدائي': { bg: 'bg-emerald-50/30', border: 'border-emerald-150', badgeBg: 'bg-emerald-100/60', textBadge: 'text-emerald-700', textColor: 'text-emerald-900' },
-                          'الصف السادس الابتدائي': { bg: 'bg-sky-50/30', border: 'border-sky-150', badgeBg: 'bg-sky-100/60', textBadge: 'text-sky-700', textColor: 'text-sky-900' },
-                          'الصف الأول الإعدادي': { bg: 'bg-violet-50/30', border: 'border-violet-150', badgeBg: 'bg-violet-100/60', textBadge: 'text-violet-700', textColor: 'text-violet-900' },
-                          'الصف الثاني الإعدادي': { bg: 'bg-amber-50/30', border: 'border-amber-150', badgeBg: 'bg-amber-100/60', textBadge: 'text-amber-700', textColor: 'text-amber-900' },
-                          'الصف الثالث الإعدادي': { bg: 'bg-rose-50/30', border: 'border-rose-150', badgeBg: 'bg-rose-100/60', textBadge: 'text-rose-700', textColor: 'text-rose-900' }
+                          'الصف الرابع الابتدائي': { bg: 'bg-indigo-50/40', border: 'border-indigo-200', badgeBg: 'bg-indigo-100', textBadge: 'text-indigo-800', textColor: 'text-indigo-950' },
+                          'الصف الخامس الابتدائي': { bg: 'bg-emerald-50/40', border: 'border-emerald-200', badgeBg: 'bg-emerald-100', textBadge: 'text-emerald-800', textColor: 'text-emerald-950' },
+                          'الصف السادس الابتدائي': { bg: 'bg-sky-50/40', border: 'border-sky-200', badgeBg: 'bg-sky-100', textBadge: 'text-sky-800', textColor: 'text-sky-950' },
+                          'الصف الأول الإعدادي': { bg: 'bg-violet-50/40', border: 'border-violet-200', badgeBg: 'bg-violet-100', textBadge: 'text-violet-800', textColor: 'text-violet-950' },
+                          'الصف الثاني الإعدادي': { bg: 'bg-amber-50/40', border: 'border-amber-200', badgeBg: 'bg-amber-100', textBadge: 'text-amber-800', textColor: 'text-amber-950' },
+                          'الصف الثالث الإعدادي': { bg: 'bg-rose-50/40', border: 'border-rose-200', badgeBg: 'bg-rose-100', textBadge: 'text-rose-800', textColor: 'text-rose-950' }
                         };
                         const cfg = gradeCardConfigs[grade] || gradeCardConfigs['الصف الرابع الابتدائي'];
 
@@ -1420,19 +1420,19 @@ export default function App() {
                               setSelectedDuplicateGrade(grade);
                               document.getElementById('duplicate-finder-section')?.scrollIntoView({ behavior: 'smooth' });
                             }}
-                            className={`p-4 rounded-xl text-right border transition-all cursor-pointer ${cfg.bg} ${isSelected ? 'border-indigo-600 ring-2 ring-indigo-500/20 shadow-md' : `${cfg.border} hover:shadow-xs hover:border-slate-300`}`}
+                            className={`p-4 rounded-xl text-right border transition-all cursor-pointer ${cfg.bg} ${isSelected ? 'border-indigo-600 ring-2 ring-indigo-500/30 shadow-md scale-[1.02]' : `${cfg.border} hover:shadow-xs hover:border-slate-400`}`}
                           >
-                            <h5 className="font-bold text-xs text-slate-700 leading-tight truncate">{grade.replace('الصف ', '')}</h5>
+                            <h5 className="font-extrabold text-xs text-slate-800 leading-tight truncate">{grade.replace('الصف ', '')}</h5>
                             <div className="mt-3 flex items-baseline gap-1 justify-end">
-                              <span className="text-xl font-black text-slate-800">{count}</span>
-                              <span className="text-[10px] text-slate-400 font-bold">طالب</span>
+                              <span className="text-2xl font-black text-slate-900">{count}</span>
+                              <span className="text-xs text-slate-500 font-bold">طالب</span>
                             </div>
                             <div className="mt-2 flex items-center justify-between">
-                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${cfg.badgeBg} ${cfg.textBadge}`}>
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${cfg.badgeBg} ${cfg.textBadge}`}>
                                 {grpCount} مجموعات
                               </span>
                               {isSelected && (
-                                <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-ping" />
+                                <span className="w-2 h-2 bg-indigo-600 rounded-full animate-ping" />
                               )}
                             </div>
                           </button>

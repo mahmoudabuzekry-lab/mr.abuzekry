@@ -5,17 +5,19 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dbEngine } from '../db';
-import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName, normalizePhoneNumber } from '../types';
+import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName, normalizePhoneNumber, ReceiptSettings, DEFAULT_RECEIPT_SETTINGS, ALL_GRADES } from '../types';
 import { 
   DollarSign, Landmark, Filter, Search, Plus, Trash2, Printer, X, Download, 
   Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle,
   Cloud, CloudOff, RefreshCw, Wifi, WifiOff, Server, Database,
-  QrCode, Camera, HelpCircle, CheckCircle2, Volume2, Users, Tag, Gift, Sparkles
+  QrCode, Camera, HelpCircle, CheckCircle2, Volume2, Users, Tag, Gift, Sparkles, Edit3, Save, RotateCcw, Building2, Phone, MapPin, MessageSquare, Layers
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
+import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
 import { testConnection, getPendingQueue, fetchEntityFromFirebase } from '../firebase';
 import SiblingDiscountsManager from './SiblingDiscountsManager';
+import ReceiptCustomizer from './ReceiptCustomizer';
 
 interface FinanceManagerProps {
   students: Student[];
@@ -25,7 +27,7 @@ interface FinanceManagerProps {
 }
 
 export default function FinanceManager({ students, payments, prices, onRefresh }: FinanceManagerProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'siblings' | 'prices' | 'blankSheet'>('debtors');
+  const [activeSubTab, setActiveSubTab] = useState<'history' | 'add' | 'debtors' | 'siblings' | 'prices' | 'blankSheet' | 'receiptSettings'>('debtors');
   
   // Cloud Sync tracking states
   const [isOnline, setIsOnline] = useState<boolean | null>(null);
@@ -146,9 +148,116 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     }
   }, [payments]);
 
-  // Editing state for Receipt view
+  // Receipt modal & editing states
   const [selectedReceiptPayment, setSelectedReceiptPayment] = useState<Payment | null>(null);
+  const [editingReceiptPayment, setEditingReceiptPayment] = useState<Payment | null>(null);
+  const [receiptModalTab, setReceiptModalTab] = useState<'preview' | 'edit' | 'customize'>('preview');
+  const [editReceiptSuccess, setEditReceiptSuccess] = useState<boolean>(false);
+  const [modalReceiptSettings, setModalReceiptSettings] = useState<ReceiptSettings>(() => dbEngine.getReceiptSettings());
+  const [modalSettingsSaved, setModalSettingsSaved] = useState<boolean>(false);
   const [deletingPayment, setDeletingPayment] = useState<Payment | null>(null);
+
+  const openReceiptModal = (payment: Payment, initialTab: 'preview' | 'edit' | 'customize' = 'preview') => {
+    setSelectedReceiptPayment(payment);
+    setEditingReceiptPayment({ ...payment });
+    setReceiptModalTab(initialTab);
+    setEditReceiptSuccess(false);
+    setModalSettingsSaved(false);
+    setModalReceiptSettings(dbEngine.getReceiptSettings());
+  };
+
+  const handleSaveEditedReceipt = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingReceiptPayment) return;
+    dbEngine.updatePayment(editingReceiptPayment);
+    setSelectedReceiptPayment({ ...editingReceiptPayment });
+    setEditReceiptSuccess(true);
+    onRefresh();
+    setTimeout(() => {
+      setEditReceiptSuccess(false);
+      setReceiptModalTab('preview');
+    }, 1200);
+  };
+
+  const handleSaveModalReceiptSettings = () => {
+    dbEngine.setReceiptSettings(modalReceiptSettings);
+    setModalSettingsSaved(true);
+    onRefresh();
+    setTimeout(() => {
+      setModalSettingsSaved(false);
+    }, 1800);
+  };
+
+  const handlePrintCurrentReceipt = () => {
+    const printElement = document.getElementById('payment-receipt-print-area');
+    if (!printElement || !selectedReceiptPayment) return;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentWindow?.document;
+    if (!iframeDoc) return;
+
+    const isThermal = modalReceiptSettings.receiptSize === 'thermal';
+
+    iframeDoc.open();
+    iframeDoc.write(`
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+        <head>
+          <meta charset="utf-8">
+          <title>${modalReceiptSettings.receiptTitle || 'إيصال استلام مالي'} - ${selectedReceiptPayment.studentName}</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+            * {
+              font-family: 'Cairo', sans-serif !important;
+              box-sizing: border-box;
+            }
+            @media print {
+              body {
+                background: white !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              @page {
+                size: ${isThermal ? '80mm auto' : 'auto'};
+                margin: ${isThermal ? '2mm' : '8mm'};
+              }
+              .no-print {
+                display: none !important;
+              }
+            }
+          </style>
+        </head>
+        <body class="bg-white p-2 flex items-center justify-center min-h-screen">
+          <div style="width: ${isThermal ? '78mm' : '360px'}; margin: 0 auto; direction: rtl;">
+            ${printElement.innerHTML}
+          </div>
+          <script>
+            window.addEventListener('load', () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.parent.document.body.removeChild(window.frameElement);
+                }, 100);
+              }, 250);
+            });
+          </script>
+        </body>
+      </html>
+    `);
+    iframeDoc.close();
+  };
 
   // Prices State for settings
   const [tempPrices, setTempPrices] = useState<Record<GradeType, number>>({ ...prices });
@@ -540,7 +649,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     });
 
     onRefresh();
-    setSelectedReceiptPayment(recorded); // Show receipt after immediate success!
+    openReceiptModal(recorded, 'preview'); // Show receipt after immediate success!
     setPaymentForm({
       studentId: '',
       month: paymentForm.month,
@@ -928,6 +1037,17 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               <Settings className="w-3.5 h-3.5" />
               الإعدادات والأسعار والخصومات
             </button>
+            <button
+              onClick={() => setActiveSubTab('receiptSettings')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === 'receiptSettings' 
+                  ? 'bg-amber-600 text-white shadow-xs' 
+                  : 'bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100'
+              }`}
+            >
+              <Receipt className="w-3.5 h-3.5 text-amber-600" />
+              <span>تخصيص وتصميم الإيصال 🧾</span>
+            </button>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1051,11 +1171,12 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                       </td>
                       <td className="py-3.5 px-6 text-left space-x-1.5 space-x-reverse">
                         <button
-                          onClick={() => setSelectedReceiptPayment(p)}
-                          className="p-1.5 bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 rounded-lg inline-flex items-center transition cursor-pointer"
-                          title="طباعة إيصال السند المالي"
+                          onClick={() => openReceiptModal(p, 'preview')}
+                          className="px-2.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold"
+                          title="معاينة وطباعة وتعديل إيصال الاستلام"
                         >
                           <Receipt className="w-3.5 h-3.5" />
+                          <span>الإيصال المالي</span>
                         </button>
                         <button
                           onClick={() => setDeletingPayment(p)}
@@ -2048,113 +2169,615 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
             </div>
           </div>
         )}
+        {/* SUBTAB 6: RECEIPT CUSTOMIZATION & BRANDING */}
+        {activeSubTab === 'receiptSettings' && (
+          <div className="p-4 md:p-6 text-right">
+            <ReceiptCustomizer onRefresh={onRefresh} />
+          </div>
+        )}
       </div>
 
-      {/* PRINT RECEIPT DISPLAY MODAL */}
+      {/* COMPREHENSIVE RECEIPT MODAL (PREVIEW, EDIT DATA & CUSTOMIZE) */}
       {selectedReceiptPayment && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl max-w-sm w-full p-6 text-center space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-100 no-print border border-slate-200">
-            <button
-              onClick={() => setSelectedReceiptPayment(null)}
-              className="absolute left-4 top-4 p-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 rounded-lg cursor-pointer transition"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="pt-2 text-center">
-              <span className="text-[9px] bg-slate-100 text-slate-700 border border-slate-200 px-3 py-1 rounded-sm font-bold">سند تحصيل مغلق ومؤكد</span>
-              <h3 className="text-base font-bold text-slate-900 mt-2 font-sans">إيصال الاستلام المالي</h3>
-            </div>
-
-            {/* printable receipt frame */}
-            <div 
-              id="payment-receipt"
-              className="bg-slate-50 print-card p-6 rounded-xl border border-slate-200 text-right space-y-4 max-w-[325px] mx-auto text-xs font-sans"
-            >
-              <div className="text-center border-b border-slate-200 pb-2.5">
-                <h4 className="font-bold text-slate-900 text-sm">مجموعات العلوم - الأستاذ محمود أبوذكري</h4>
-                <p className="text-[9px] text-slate-400 font-bold mt-1">سجل المتابعة والتفوق الأكاديمي الرقمي</p>
-              </div>
-
-              <div className="space-y-2 text-slate-700">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">رقم السند المالي:</span>
-                  <span className="font-mono font-bold text-slate-900">{selectedReceiptPayment.id}</span>
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 text-right space-y-4 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 no-print border border-slate-200 max-h-[92vh] flex flex-col">
+            
+            {/* Modal Header & Navigation Tabs */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl">
+                  <Receipt className="w-5 h-5 text-amber-600" />
                 </div>
-
-                <div className="flex justify-between">
-                  <span className="text-slate-500">تاريخ المعاملة:</span>
-                  <span className="font-mono text-slate-800 font-bold">{selectedReceiptPayment.date}</span>
-                </div>
-
-                <div className="border-t border-dashed border-slate-300 my-2"></div>
-
                 <div>
-                  <span className="text-slate-500">اسم الطالب:</span>
-                  <p className="font-bold text-slate-950 text-xs mt-0.5">{selectedReceiptPayment.studentName}</p>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-slate-500">العام / الصف الدراسي:</span>
-                  <span className="font-bold text-slate-900">{selectedReceiptPayment.grade}</span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-slate-500">عن رسوم شهر:</span>
-                  <span className="font-bold text-slate-900">{selectedReceiptPayment.month}</span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-slate-500">طريقة السداد:</span>
-                  <span className="font-bold text-slate-900">{selectedReceiptPayment.paymentMethod}</span>
-                </div>
-
-                {selectedReceiptPayment.notes && (
-                  <div className="bg-white p-2 border border-slate-200 rounded text-[10px] text-slate-500 italic">
-                    ملاحظات: {selectedReceiptPayment.notes}
-                  </div>
-                )}
-
-                <div className="border-t border-dashed border-slate-300 my-2"></div>
-
-                <div className="flex justify-between items-center bg-white p-2.5 border border-slate-200 rounded-lg shadow-xs">
-                  <span className="font-bold text-slate-650">المبلغ المقبوض:</span>
-                  <span className="text-sm font-bold text-emerald-800 font-sans">{selectedReceiptPayment.amountPaid} ج.م</span>
+                  <h3 className="text-base font-bold text-slate-900">
+                    إيصال الاستلام المالي — {selectedReceiptPayment.studentName}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-semibold">
+                    سند رقم: <span className="font-mono font-bold text-slate-800">{selectedReceiptPayment.id}</span> • لشهر: <span className="font-bold text-slate-800">{selectedReceiptPayment.month}</span>
+                  </p>
                 </div>
               </div>
 
-              <div className="text-center pt-2 border-t border-slate-200 text-[10px] text-slate-400 font-semibold italic">
-                * نشكركم على ثقتكم الغالية، تمنياتنا دائماً بدوام المجد والتفوق *
+              <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                <div className="bg-slate-100 p-1 rounded-xl flex gap-1 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setReceiptModalTab('preview')}
+                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1 ${
+                      receiptModalTab === 'preview'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>المعاينة والطباعة</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setReceiptModalTab('edit')}
+                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1 ${
+                      receiptModalTab === 'edit'
+                        ? 'bg-white text-indigo-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>تعديل البيانات</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setReceiptModalTab('customize')}
+                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1 ${
+                      receiptModalTab === 'customize'
+                        ? 'bg-white text-amber-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Settings className="w-3.5 h-3.5 text-amber-600" />
+                    <span>تخصيص المظهر</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedReceiptPayment(null)}
+                  className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                  title="إغلاق النافذة"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
             </div>
 
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => {
-                  setTimeout(() => {
-                    const printContents = document.getElementById('payment-receipt')?.outerHTML;
-                    if (printContents) {
-                      document.body.innerHTML = `
-                        <div class="print-only flex items-center justify-center min-h-screen bg-white" style="direction: rtl !important;">
-                          ${printContents}
+            {/* Modal Body Container with Scroll */}
+            <div className="flex-1 overflow-y-auto pr-1 pl-1 space-y-4">
+              
+              {/* TAB 1: PREVIEW & PRINT */}
+              {receiptModalTab === 'preview' && (
+                <div className="space-y-4">
+                  {/* Notice / Action Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                    <div className="flex items-center gap-2 text-slate-700 font-bold">
+                      <Sparkles className="w-4 h-4 text-amber-500" />
+                      <span>المعاينة الحية للإيصال جاهزة ومطابقة للقالب المخصص:</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setReceiptModalTab('edit')}
+                        className="px-3 py-1 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-indigo-700 font-bold rounded-lg transition text-xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>تعديل بيانات السند</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReceiptModalTab('customize')}
+                        className="px-3 py-1 bg-white hover:bg-amber-50 border border-slate-200 hover:border-amber-200 text-amber-800 font-bold rounded-lg transition text-xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <Settings className="w-3 h-3" />
+                        <span>تغيير الثيم والنصوص</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Rendered Live Receipt (standard / thermal) */}
+                  <div className="flex justify-center bg-slate-100/70 p-4 rounded-xl border border-slate-200 overflow-x-auto">
+                    <div
+                      id="payment-receipt-print-area"
+                      className={`bg-white rounded-xl border border-slate-300 shadow-sm p-6 text-right space-y-4 text-slate-900 transition-all font-sans relative ${
+                        modalReceiptSettings.receiptSize === 'thermal' ? 'w-[320px]' : 'w-[400px]'
+                      }`}
+                      style={{ direction: 'rtl' }}
+                    >
+                      {/* Stamp / Watermark if enabled */}
+                      {modalReceiptSettings.showStamp && (
+                        <div className="absolute top-24 left-6 border-2 border-emerald-600/40 text-emerald-800/50 font-black text-xs px-3 py-1 rounded rotate-[-14deg] pointer-events-none select-none uppercase tracking-widest text-center">
+                          مقبوض ومؤكد<br />PAID & VERIFIED
                         </div>
-                      `;
-                      window.print();
-                      window.location.reload();
-                    }
-                  }, 100);
-                }}
-                className="flex-1 py-2 bg-slate-900 hover:bg-slate-850 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                طباعة الوصل الفوري
-              </button>
-              <button
-                onClick={() => setSelectedReceiptPayment(null)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-200 cursor-pointer transition"
-              >
-                إغلاق
-              </button>
+                      )}
+
+                      {/* Header */}
+                      <div className="text-center border-b-2 border-slate-900 pb-3 space-y-1">
+                        <div className="font-extrabold text-slate-900 text-base leading-tight">
+                          {modalReceiptSettings.centerName || 'مجموعات العلوم المتطورة'}
+                        </div>
+                        <div className="font-bold text-slate-700 text-xs">
+                          {modalReceiptSettings.teacherName || 'الأستاذ محمود أبوذكري'}
+                        </div>
+                        {modalReceiptSettings.subTitle && (
+                          <div className="text-[10px] text-slate-500 font-semibold">
+                            {modalReceiptSettings.subTitle}
+                          </div>
+                        )}
+                        {modalReceiptSettings.showPhone && modalReceiptSettings.phone && (
+                          <div className="text-[10px] text-slate-500 font-mono font-bold pt-0.5">
+                            هاتف / واتساب: {modalReceiptSettings.phone}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Receipt Title Badge & Numbers */}
+                      <div className="flex items-center justify-between border-b border-slate-200 pb-2 text-xs">
+                        <span className="bg-slate-900 text-white text-[10px] font-black px-2.5 py-1 rounded">
+                          {modalReceiptSettings.receiptTitle || 'إيصال استلام مالي'}
+                        </span>
+                        <div className="text-left font-mono text-[11px] font-bold text-slate-600">
+                          <div>سند: <span className="text-slate-900">{selectedReceiptPayment.id}</span></div>
+                          <div className="text-[10px] text-slate-500">{selectedReceiptPayment.date}</div>
+                        </div>
+                      </div>
+
+                      {/* Details Grid */}
+                      <div className="space-y-2.5 text-xs">
+                        <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-200">
+                          <span className="text-slate-600 font-bold">اسم الطالب:</span>
+                          <span className="font-black text-slate-950 text-sm font-sans">{selectedReceiptPayment.studentName}</span>
+                        </div>
+
+                        <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-200">
+                          <span className="text-slate-600 font-bold">الصف الدراسي:</span>
+                          <span className="font-bold text-slate-800">{selectedReceiptPayment.grade}</span>
+                        </div>
+
+                        <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-200">
+                          <span className="text-slate-600 font-bold">عن رسوم اشتراك شهر:</span>
+                          <span className="font-black text-indigo-950 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                            {selectedReceiptPayment.month}
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-200">
+                          <span className="text-slate-600 font-bold">طريقة التحصيل:</span>
+                          <span className="font-bold text-slate-800">{selectedReceiptPayment.paymentMethod || 'نقدي'}</span>
+                        </div>
+
+                        {selectedReceiptPayment.receivedBy && (
+                          <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-200">
+                            <span className="text-slate-600 font-bold">المستلم / المحصل:</span>
+                            <span className="font-bold text-slate-800">{selectedReceiptPayment.receivedBy}</span>
+                          </div>
+                        )}
+
+                        {modalReceiptSettings.showAmountDue && (
+                          <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-200 text-slate-600 font-bold">
+                            <span>القيمة المطلوبة أساساً:</span>
+                            <span className="font-mono text-slate-800">{selectedReceiptPayment.amountDue} ج.م</span>
+                          </div>
+                        )}
+
+                        {modalReceiptSettings.showNotes && selectedReceiptPayment.notes && (
+                          <div className="p-2 bg-slate-50 border border-slate-200 rounded text-[10px] text-slate-700">
+                            <span className="font-bold text-slate-900 block mb-0.5">ملاحظات التحصيل:</span>
+                            {selectedReceiptPayment.notes}
+                          </div>
+                        )}
+
+                        {/* Amount Box */}
+                        <div className="bg-slate-900 text-white p-3 rounded-xl flex justify-between items-center mt-2 shadow-xs">
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-300 block">المبلغ المقبوض الفعلي</span>
+                            <span className="text-xs text-emerald-400 font-bold">سند خالص ومسدد</span>
+                          </div>
+                          <div className="text-xl font-black font-sans text-emerald-300">
+                            {selectedReceiptPayment.amountPaid} <span className="text-xs font-normal text-white">ج.م</span>
+                          </div>
+                        </div>
+
+                        {/* QR Code and Signature Section */}
+                        {(modalReceiptSettings.showQrCode || modalReceiptSettings.showSignature) && (
+                          <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-200">
+                            {modalReceiptSettings.showQrCode && (
+                              <div className="flex items-center gap-2">
+                                <div className="bg-white p-1.5 border border-slate-300 rounded-lg shadow-2xs">
+                                  <QRCodeSVG
+                                    value={`RECEIPT|${selectedReceiptPayment.id}|${selectedReceiptPayment.studentName}|${selectedReceiptPayment.amountPaid}|${selectedReceiptPayment.month}|${selectedReceiptPayment.date}`}
+                                    size={56}
+                                    level="M"
+                                  />
+                                </div>
+                                <div className="text-[9px] text-slate-500 font-bold leading-tight">
+                                  رمز التحقق الرقمي<br />
+                                  <span className="font-mono text-slate-700">{selectedReceiptPayment.id}</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {modalReceiptSettings.showSignature && (
+                              <div className="text-center space-y-1">
+                                <div className="text-[10px] font-bold text-slate-700">توقيع المستلم</div>
+                                <div className="w-24 h-7 border-b border-dashed border-slate-400 flex items-end justify-center text-[10px] text-slate-400">
+                                  {modalReceiptSettings.receiverName || selectedReceiptPayment.receivedBy || '................'}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Footer Message */}
+                        {modalReceiptSettings.footerMessage && (
+                          <div className="text-center pt-2 border-t border-dashed border-slate-200 text-[10px] text-slate-500 font-bold leading-relaxed">
+                            {modalReceiptSettings.footerMessage}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Print / Actions Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={handlePrintCurrentReceipt}
+                      className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black flex items-center gap-2 transition cursor-pointer shadow-sm"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>طباعة الإيصال الفوري 🖨️</span>
+                    </button>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setReceiptModalTab('edit')}
+                        className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-indigo-700" />
+                        <span>تعديل السند</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedReceiptPayment(null)}
+                        className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 transition cursor-pointer"
+                      >
+                        إغلاق
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: EDIT PAYMENT DATA FORM */}
+              {receiptModalTab === 'edit' && editingReceiptPayment && (
+                <form onSubmit={handleSaveEditedReceipt} className="space-y-4">
+                  {editReceiptSuccess && (
+                    <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2 animate-in fade-in">
+                      <CheckCircle className="w-4 h-4 text-emerald-600" />
+                      <span>تم حفظ وتحديث بيانات سند الاستلام بنجاح وجارٍ العرض في المعاينة...</span>
+                    </div>
+                  )}
+
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 font-bold flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>يمكنك تعديل أي بيانات تخص هذا السند المالي (المبلغ، الشهر، تاريخ السداد، المستلم، أو الملاحظات) وسيتم حفظها فوراً في سجلات النظام.</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Student Name */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">اسم الطالب *</label>
+                      <input
+                        type="text"
+                        required
+                        value={editingReceiptPayment.studentName}
+                        onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, studentName: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs font-bold text-right outline-none"
+                      />
+                    </div>
+
+                    {/* Grade */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">الصف الدراسي *</label>
+                      <select
+                        value={editingReceiptPayment.grade}
+                        onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, grade: e.target.value as GradeType })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs font-bold text-right outline-none"
+                      >
+                        {ALL_GRADES.map(g => (
+                          <option key={g} value={g}>{g}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Month */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">عن شهر *</label>
+                      <select
+                        value={editingReceiptPayment.month}
+                        onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, month: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs font-bold text-right outline-none"
+                      >
+                        {MONTHS.map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Amount Paid */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">المبلغ المقبوض الفعلي (ج.م) *</label>
+                      <input
+                        type="number"
+                        min={0}
+                        required
+                        value={editingReceiptPayment.amountPaid}
+                        onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, amountPaid: Number(e.target.value) })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:bg-white focus:ring-1 focus:ring-emerald-500 rounded-lg text-xs font-mono font-bold text-emerald-800 text-right outline-none"
+                      />
+                    </div>
+
+                    {/* Amount Due */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">المبلغ المطلوب أساساً (ج.م)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={editingReceiptPayment.amountDue || 0}
+                        onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, amountDue: Number(e.target.value) })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs font-mono font-bold text-slate-700 text-right outline-none"
+                      />
+                    </div>
+
+                    {/* Payment Date */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">تاريخ التحصيل *</label>
+                      <input
+                        type="date"
+                        required
+                        value={editingReceiptPayment.date}
+                        onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, date: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs font-mono font-bold text-right outline-none"
+                      />
+                    </div>
+
+                    {/* Payment Method */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">طريقة التحصيل *</label>
+                      <select
+                        value={editingReceiptPayment.paymentMethod || 'نقدي'}
+                        onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, paymentMethod: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs font-bold text-right outline-none"
+                      >
+                        <option value="نقدي">نقدي (في السنتر)</option>
+                        <option value="فودافون كاش">فودافون كاش (Vodafone Cash)</option>
+                        <option value="فيزا">بطاقة فيزا / ماستر كارد</option>
+                        <option value="أخرى">أخرى</option>
+                      </select>
+                    </div>
+
+                    {/* Received By */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">اسم المستلم / المحصل</label>
+                      <input
+                        type="text"
+                        placeholder="مثال: أ/ محمود أو سكرتارية السنتر"
+                        value={editingReceiptPayment.receivedBy || ''}
+                        onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, receivedBy: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs font-bold text-right outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">ملاحظات السداد وتفاصيل التحصيل</label>
+                    <input
+                      type="text"
+                      placeholder="مثال: تم السداد نقداً مع خصم الأخوات أو عبر المحفظة الإلكترونية..."
+                      value={editingReceiptPayment.notes || ''}
+                      onChange={(e) => setEditingReceiptPayment({ ...editingReceiptPayment, notes: e.target.value })}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs text-right outline-none font-medium"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+                    <button
+                      type="submit"
+                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>حفظ التعديلات في السجل المالي</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setReceiptModalTab('preview')}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                    >
+                      العودة للمعاينة
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* TAB 3: CUSTOMIZE LAYOUT & BRANDING FORM */}
+              {receiptModalTab === 'customize' && (
+                <div className="space-y-4">
+                  {modalSettingsSaved && (
+                    <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2 animate-in fade-in">
+                      <CheckCircle className="w-4 h-4 text-emerald-600" />
+                      <span>تم حفظ وتثبيت إعدادات الإيصال كقالب افتراضي لجميع العمليات بنجاح!</span>
+                    </div>
+                  )}
+
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 font-bold flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>تخصيص نصوص وترويسة ومقاس الإيصال وخيارات إظهار QR Code والتوقيع والختم.</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">اسم المؤسسة / السنتر</label>
+                      <input
+                        type="text"
+                        value={modalReceiptSettings.centerName}
+                        onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, centerName: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-amber-500 rounded-lg text-xs font-bold text-right outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">اسم المعلم / المحاضر</label>
+                      <input
+                        type="text"
+                        value={modalReceiptSettings.teacherName}
+                        onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, teacherName: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-amber-500 rounded-lg text-xs font-bold text-right outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">الوصف الفرعي</label>
+                      <input
+                        type="text"
+                        value={modalReceiptSettings.subTitle}
+                        onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, subTitle: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-amber-500 rounded-lg text-xs text-right outline-none font-medium"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">عنوان شارة الإيصال</label>
+                      <input
+                        type="text"
+                        value={modalReceiptSettings.receiptTitle}
+                        onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, receiptTitle: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-amber-500 rounded-lg text-xs font-bold text-right outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">رقم الهاتف / الواتساب</label>
+                      <input
+                        type="text"
+                        value={modalReceiptSettings.phone}
+                        onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, phone: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-amber-500 rounded-lg text-xs font-mono font-bold text-right outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">مقاس وطراز الطباعة</label>
+                      <select
+                        value={modalReceiptSettings.receiptSize}
+                        onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, receiptSize: e.target.value as 'standard' | 'thermal' })}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-amber-500 rounded-lg text-xs font-bold text-right outline-none"
+                      >
+                        <option value="standard">بطاقة مقاس قياسي (Standard Card - 400px)</option>
+                        <option value="thermal">طابعة فواتير حرارية (Thermal POS 80mm)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Toggles */}
+                  <div className="border-t border-slate-100 pt-3">
+                    <label className="block text-xs font-bold text-slate-700 mb-2">عناصر العرض والتحكم في الإيصال:</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <label className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100 text-xs font-bold text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={modalReceiptSettings.showQrCode}
+                          onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, showQrCode: e.target.checked })}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                        />
+                        <span>رمز QR Code</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100 text-xs font-bold text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={modalReceiptSettings.showSignature}
+                          onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, showSignature: e.target.checked })}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                        />
+                        <span>خانة توقيع المستلم</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100 text-xs font-bold text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={modalReceiptSettings.showStamp}
+                          onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, showStamp: e.target.checked })}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                        />
+                        <span>ختم الاعتماد</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100 text-xs font-bold text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={modalReceiptSettings.showAmountDue}
+                          onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, showAmountDue: e.target.checked })}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                        />
+                        <span>عرض القيمة المطلوبة</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100 text-xs font-bold text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={modalReceiptSettings.showNotes}
+                          onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, showNotes: e.target.checked })}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                        />
+                        <span>عرض الملاحظات</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100 text-xs font-bold text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={modalReceiptSettings.showPhone}
+                          onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, showPhone: e.target.checked })}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                        />
+                        <span>عرض رقم الهاتف</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={handleSaveModalReceiptSettings}
+                      className="px-6 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>حفظ كإعدادات افتراضية لجميع الإيصالات</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setReceiptModalTab('preview')}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                    >
+                      معاينة النتيجة
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

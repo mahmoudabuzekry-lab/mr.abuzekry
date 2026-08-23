@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings, SiblingDiscountPolicy, normalizePhoneNumber, ALL_GRADES } from './types';
+import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings, SiblingDiscountPolicy, normalizePhoneNumber, ALL_GRADES, ReceiptSettings, DEFAULT_RECEIPT_SETTINGS } from './types';
 import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase, getPendingQueue, getItemHashes, setItemHashes, computeEntityHash } from './firebase';
 
 // Price mapping for each grade
@@ -28,6 +28,7 @@ const STORAGE_KEYS = {
   BILLING_START_MONTH: 'abuzekry_billing_start_month',
   BILLING_END_MONTH: 'abuzekry_billing_end_month',
   GRADE_MONTH_DISCOUNTS: 'abuzekry_grade_month_discounts',
+  RECEIPT_SETTINGS: 'abuzekry_receipt_settings',
 };
 
 // Seed Data
@@ -439,6 +440,21 @@ class LocalDatabase {
     }
   }
 
+  public getReceiptSettings(): ReceiptSettings {
+    const saved = this.get<Partial<ReceiptSettings>>(STORAGE_KEYS.RECEIPT_SETTINGS, {});
+    return {
+      ...DEFAULT_RECEIPT_SETTINGS,
+      ...saved
+    };
+  }
+
+  public setReceiptSettings(settings: ReceiptSettings): void {
+    this.set(STORAGE_KEYS.RECEIPT_SETTINGS, settings);
+    if (this.isFirebaseEnabled() && this.isTeacherActive) {
+      syncEntityToFirebase('receipt_settings' as any, settings as any);
+    }
+  }
+
   public applySiblingDiscountPolicy(): { updatedCount: number; familiesCount: number } {
     const policy = this.getSiblingDiscountPolicy();
     const students = this.getStudents();
@@ -644,6 +660,7 @@ class LocalDatabase {
       templates: this.getTemplates(),
       prices: this.getPrices(),
       registrationSettings: this.getRegistrationSettings(),
+      receiptSettings: this.getReceiptSettings(),
       version: '1.0.0',
       exportedAt: new Date().toISOString()
     };
@@ -661,7 +678,8 @@ class LocalDatabase {
         syncEntityToFirebase('examScores', data.examScores),
         syncEntityToFirebase('templates', data.templates),
         syncEntityToFirebase('prices', data.prices),
-        syncEntityToFirebase('registration_settings' as any, data.registrationSettings)
+        syncEntityToFirebase('registration_settings' as any, data.registrationSettings),
+        syncEntityToFirebase('receipt_settings' as any, data.receiptSettings)
       ]);
     }
   }
@@ -852,6 +870,15 @@ class LocalDatabase {
       if (cGradeMonthDiscounts && cGradeMonthDiscounts.items) {
         hasData = true;
         this.safeMerge(STORAGE_KEYS.GRADE_MONTH_DISCOUNTS, cGradeMonthDiscounts.items, 'gradeMonthDiscounts');
+      }
+
+      const cReceiptSettings = await fetchEntityFromFirebase('receipt_settings' as any);
+      if (cReceiptSettings && cReceiptSettings.items !== undefined) {
+        hasData = true;
+        this.set(STORAGE_KEYS.RECEIPT_SETTINGS, cReceiptSettings.items);
+      } else if (backup && backup.receiptSettings) {
+        hasData = true;
+        this.set(STORAGE_KEYS.RECEIPT_SETTINGS, backup.receiptSettings);
       }
 
       if (hasData) {
@@ -1090,6 +1117,11 @@ class LocalDatabase {
     return newPayment;
   }
 
+  public updatePayment(payment: Payment): void {
+    const payments = this.getPayments().map(p => p.id === payment.id ? payment : p);
+    this.setPayments(payments);
+  }
+
   public deletePayment(id: string): void {
     const currentPayments = this.getPayments();
     if (!getItemHashes('payments')) {
@@ -1224,6 +1256,7 @@ class LocalDatabase {
       billingEndMonth: this.getBillingEndMonth(),
       gradeMonthDiscounts: this.getGradeMonthDiscounts(),
       registrationSettings: this.getRegistrationSettings(),
+      receiptSettings: this.getReceiptSettings(),
       version: '1.0.0',
       exportedAt: new Date().toISOString()
     };
@@ -1245,6 +1278,7 @@ class LocalDatabase {
       if (parsed.billingEndMonth) this.setBillingEndMonth(parsed.billingEndMonth);
       if (parsed.gradeMonthDiscounts) this.setGradeMonthDiscounts(parsed.gradeMonthDiscounts);
       if (parsed.registrationSettings) this.setRegistrationSettings(parsed.registrationSettings);
+      if (parsed.receiptSettings) this.setReceiptSettings(parsed.receiptSettings);
       return true;
     } catch (e) {
       console.error('Import failure', e);

@@ -74,6 +74,7 @@ export interface Payment {
   date: string;
   paymentMethod: string; // 'نقدي' | 'فودافون كاش' | 'فيزا' | 'أخرى'
   notes?: string;
+  receivedBy?: string; // اسم المستلم / المحصل (اختياري)
 }
 
 export interface Attendance {
@@ -129,6 +130,42 @@ export interface SiblingDiscountPolicy {
   amount: number; // قيمة الخصم (مثلاً 50 ج.م أو 20%)
   applyTo: 'second_plus' | 'all'; // تطبيق على الأخ الثاني فما بعد أو جميع الإخوة
 }
+
+export interface ReceiptSettings {
+  centerName: string; // e.g. "مجموعات العلوم المتطورة"
+  teacherName: string; // e.g. "الأستاذ محمود أبوذكري"
+  subTitle: string; // e.g. "سجل المتابعة والتفوق الأكاديمي الرقمي"
+  receiptTitle: string; // e.g. "إيصال استلام مالي"
+  phone: string; // رقم هاتف للتواصل
+  address: string; // العنوان أو مقر الدرس
+  footerMessage: string; // عبارة الشكر والختام
+  receiverName: string; // اسم المستلم الافتراضي
+  showQrCode: boolean;
+  showSignature: boolean;
+  showAmountDue: boolean;
+  showNotes: boolean;
+  showPhone: boolean;
+  showWatermark: boolean;
+  receiptSize: 'thermal' | 'standard'; // 'thermal' (كاشير/حراري 80mm) | 'standard' (بطاقة مقاس قياسي)
+}
+
+export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
+  centerName: 'مجموعات العلوم المتطورة',
+  teacherName: 'الأستاذ محمود أبوذكري',
+  subTitle: 'سجل المتابعة والتفوق الأكاديمي الرقمي',
+  receiptTitle: 'إيصال استلام مالي',
+  phone: '',
+  address: '',
+  footerMessage: '* نشكركم على ثقتكم الغالية، تمنياتنا دائماً بدوام المجد والتفوق *',
+  receiverName: 'إدارة السنتر / أ. محمود أبوذكري',
+  showQrCode: true,
+  showSignature: true,
+  showAmountDue: true,
+  showNotes: true,
+  showPhone: true,
+  showWatermark: true,
+  receiptSize: 'standard'
+};
 
 export const ARABIC_MONTHS_MAP: { [key: string]: number } = {
   'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4,

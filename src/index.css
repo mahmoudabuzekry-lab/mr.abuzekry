@@ -1,8 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Readex+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Cairo", "Readex Pro", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
@@ -11,10 +11,102 @@
     direction: rtl;
     text-align: right;
     font-family: var(--font-sans);
-    background-color: #f8fafc;
-    color: #0f172a;
+    background-color: #f1f5f9;
+    color: #090d16;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+
+  /* Default headings and strong text to crisp dark high-contrast */
+  h1, h2, h3, h4, h5, h6 {
+    color: #090d16;
+    font-weight: 800;
+    letter-spacing: -0.015em;
+  }
+
+  strong, b {
+    color: #090d16;
+    font-weight: 800;
+  }
+
+  input, select, textarea, button {
+    font-family: var(--font-sans);
+  }
+
+  /* Boost contrast for standard text elements */
+  p, span, label, td, th {
+    letter-spacing: -0.01em;
+  }
+}
+
+/* Enhanced font clarity for inputs & selects */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+input[type="time"],
+input[type="tel"],
+select,
+textarea {
+  color: #090d16 !important;
+  font-weight: 600;
+  border-color: #cbd5e1;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #64748b !important;
+  font-weight: 500;
+}
+
+/* Ensure table readability & high contrast */
+table th {
+  color: #0f172a !important;
+  font-weight: 800 !important;
+  background-color: #f8fafc;
+}
+
+table td {
+  color: #1e293b;
+}
+
+/* Micro-badge readability enhancements */
+.badge-contrast {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Crisp custom scrollbar for all browsers */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Modern Card & Surface Utilities */
+.surface-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+}
+
+.surface-card-hover {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.surface-card-hover:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.07), 0 8px 10px -6px rgb(0 0 0 / 0.04);
 }
 
 /* Print Styling for QR Cards and Receipts */
