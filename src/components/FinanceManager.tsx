@@ -5,19 +5,22 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dbEngine } from '../db';
-import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName, normalizePhoneNumber, ReceiptSettings, DEFAULT_RECEIPT_SETTINGS, ALL_GRADES } from '../types';
+import { Student, Payment, GradeType, ExemptionType, doesMonthPrecedeDate, getCurrentArabicMonthName, normalizePhoneNumber, ReceiptSettings, DEFAULT_RECEIPT_SETTINGS, ALL_GRADES, formatReceiptWhatsAppMessage, DEFAULT_WHATSAPP_RECEIPT_TEMPLATE } from '../types';
 import { 
   DollarSign, Landmark, Filter, Search, Plus, Trash2, Printer, X, Download, 
   Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle,
   Cloud, CloudOff, RefreshCw, Wifi, WifiOff, Server, Database,
-  QrCode, Camera, HelpCircle, CheckCircle2, Volume2, Users, Tag, Gift, Sparkles, Edit3, Save, RotateCcw, Building2, Phone, MapPin, MessageSquare, Layers
+  QrCode, Camera, HelpCircle, CheckCircle2, Volume2, Users, Tag, Gift, Sparkles, Edit3, Save, RotateCcw, Building2, Phone, MapPin, MessageSquare, Layers,
+  Share2, Send, Copy, Image as ImageIcon, MessageCircle, ExternalLink, Loader2
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { QRCodeSVG } from 'qrcode.react';
+import { toPng, toBlob } from 'html-to-image';
 import * as XLSX from 'xlsx';
 import { testConnection, getPendingQueue, fetchEntityFromFirebase } from '../firebase';
 import SiblingDiscountsManager from './SiblingDiscountsManager';
 import ReceiptCustomizer from './ReceiptCustomizer';
+import { PrivacyCard, PrivacyAmount } from './PrivacyAmount';
 
 interface FinanceManagerProps {
   students: Student[];
@@ -157,13 +160,222 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const [modalSettingsSaved, setModalSettingsSaved] = useState<boolean>(false);
   const [deletingPayment, setDeletingPayment] = useState<Payment | null>(null);
 
+  // WhatsApp & Image sharing states
+  const [targetParentPhone, setTargetParentPhone] = useState<string>('');
+  const [isEditingPhone, setIsEditingPhone] = useState<boolean>(false);
+  const [isGeneratingImage, setIsGeneratingImage] = useState<boolean>(false);
+  const [customReceiptMessageDraft, setCustomReceiptMessageDraft] = useState<string>('');
+  const [isEditingMessageDraft, setIsEditingMessageDraft] = useState<boolean>(false);
+  const [whatsAppToast, setWhatsAppToast] = useState<{ msg: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  const triggerWhatsAppToast = (msg: string, type: 'success' | 'info' | 'error' = 'success') => {
+    setWhatsAppToast({ msg, type });
+    setTimeout(() => setWhatsAppToast(null), 4500);
+  };
+
+  const getParentPhoneForPayment = (payment: Payment): string => {
+    const st = students.find(s => s.id === payment.studentId || s.name.trim() === payment.studentName.trim());
+    return st?.parentPhone || st?.phone || '';
+  };
+
+  const formatPhoneForWhatsApp = (rawPhone: string): string => {
+    let clean = normalizePhoneNumber(rawPhone);
+    if (!clean) return '';
+    clean = clean.replace(/\D/g, '');
+    if (clean.startsWith('01')) {
+      clean = `20${clean.slice(1)}`; // 201xxxxxxxxx
+    } else if (clean.startsWith('1') && clean.length === 10) {
+      clean = `20${clean}`;
+    }
+    return clean;
+  };
+
+  const generateReceiptWhatsAppText = (payment: Payment, settings: ReceiptSettings, templateOverride?: string): string => {
+    const student = students.find(s => s.id === payment.studentId || s.name === payment.studentName);
+    const studentCode = student?.code || '';
+    const studentDue = student ? dbEngine.calculateStudentDue(student, payment.month) : payment.amountPaid;
+    const paymentWithExtra = {
+      ...payment,
+      studentCode,
+      amountDue: studentDue
+    };
+    return formatReceiptWhatsAppMessage(paymentWithExtra, settings, templateOverride);
+  };
+
   const openReceiptModal = (payment: Payment, initialTab: 'preview' | 'edit' | 'customize' = 'preview') => {
     setSelectedReceiptPayment(payment);
     setEditingReceiptPayment({ ...payment });
     setReceiptModalTab(initialTab);
     setEditReceiptSuccess(false);
     setModalSettingsSaved(false);
-    setModalReceiptSettings(dbEngine.getReceiptSettings());
+    const settings = dbEngine.getReceiptSettings();
+    setModalReceiptSettings(settings);
+    const phone = getParentPhoneForPayment(payment);
+    setTargetParentPhone(phone);
+    setIsEditingPhone(false);
+    setIsEditingMessageDraft(false);
+
+    const student = students.find(s => s.id === payment.studentId || s.name === payment.studentName);
+    const studentCode = student?.code || '';
+    const studentDue = student ? dbEngine.calculateStudentDue(student, payment.month) : payment.amountPaid;
+    const paymentWithExtra = {
+      ...payment,
+      studentCode,
+      amountDue: studentDue
+    };
+    setCustomReceiptMessageDraft(formatReceiptWhatsAppMessage(paymentWithExtra, settings));
+  };
+
+  const handleSendWhatsAppText = (payment: Payment) => {
+    const phoneToUse = targetParentPhone || getParentPhoneForPayment(payment);
+    const cleanPhone = formatPhoneForWhatsApp(phoneToUse);
+    const text = customReceiptMessageDraft || generateReceiptWhatsAppText(payment, modalReceiptSettings);
+    const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+    triggerWhatsAppToast(cleanPhone ? `تم فتح واتساب لإرسال رسالة السداد للرقم (${phoneToUse})!` : 'تم فتح واتساب لإرسال تفاصيل السداد!');
+  };
+
+  const handleCopyWhatsAppText = async (payment: Payment) => {
+    const text = customReceiptMessageDraft || generateReceiptWhatsAppText(payment, modalReceiptSettings);
+    try {
+      await navigator.clipboard.writeText(text);
+      triggerWhatsAppToast('تم نسخ نص رسالة الإيصال بالكامل إلى الحافظة بنجاح!');
+    } catch (e) {
+      console.error(e);
+      triggerWhatsAppToast('تعذر النسخ التلقائي للحافظة', 'error');
+    }
+  };
+
+  const handleSendDebtorWhatsAppReminder = (student: Student, month: string, balance: number, amountDue: number) => {
+    const phone = student.parentPhone || student.phone;
+    const cleanPhone = formatPhoneForWhatsApp(phone);
+    const settings = dbEngine.getReceiptSettings();
+    const teacher = settings.teacherName || 'الأستاذ محمود أبوذكري';
+    const center = settings.centerName || 'مجموعات العلوم المتطورة';
+    const contactPhone = settings.phone ? `\n📞 *للتواصل والاستفسار:* ${settings.phone}` : '';
+
+    const text = `السلام عليكم ورحمة الله وبركاته 🌸
+تحية طيبة لولي أمر الطالب/ـة: *${student.name}* المحترم/ـة،
+
+نود تذكير سيادتكم بمصروفات الاشتراك الشهري لمجموعات العلوم (*${student.grade}*):
+🔹 *عن شهر:* ${month}
+🔹 *المبلغ المطلوب سداده:* ${balance} ج.م (إجمالي الرسوم: ${amountDue} ج.م)
+
+شاكرين ومقدرين دائماً حسن تعاونكم وثقتكم الغالية، متمنين لأبنائنا دوام التفوق 🌟
+👨‍🏫 *${teacher}* - *${center}*${contactPhone}`;
+
+    const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+    triggerWhatsAppToast(cleanPhone ? `تم فتح واتساب لإرسال تذكير المصروفات لولي أمر (${student.name})!` : 'تم فتح واتساب لإرسال تذكير المصروفات!');
+  };
+
+  const captureReceiptBlob = async (): Promise<Blob | null> => {
+    const element = document.getElementById('payment-receipt-print-area');
+    if (!element) return null;
+    return await toBlob(element, {
+      quality: 0.98,
+      pixelRatio: 2.5,
+      backgroundColor: '#ffffff',
+      cacheBust: true,
+    });
+  };
+
+  const handleDownloadReceiptImage = async (payment: Payment) => {
+    try {
+      setIsGeneratingImage(true);
+      const element = document.getElementById('payment-receipt-print-area');
+      if (!element) throw new Error('Receipt DOM element not found');
+      const dataUrl = await toPng(element, {
+        quality: 0.98,
+        pixelRatio: 2.5,
+        backgroundColor: '#ffffff',
+        cacheBust: true,
+      });
+      const link = document.createElement('a');
+      link.download = `إيصال_سداد_${payment.studentName}_${payment.month}_${payment.id}.png`;
+      link.href = dataUrl;
+      link.click();
+      triggerWhatsAppToast('تم حفظ وتحميل صورة الإيصال بدقة عالية (PNG) بنجاح!');
+    } catch (err) {
+      console.error('Failed to export image', err);
+      triggerWhatsAppToast('تعذر توليد صورة الإيصال، يرجى المحاولة ثانية', 'error');
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  const handleCopyReceiptImage = async (payment: Payment) => {
+    try {
+      setIsGeneratingImage(true);
+      const blob = await captureReceiptBlob();
+      if (!blob) throw new Error('Could not render image blob');
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]);
+      triggerWhatsAppToast('تم نسخ صورة الإيصال إلى الحافظة! يمكنك لصقها (Ctrl+V) مباشرة في محادثة واتساب.');
+    } catch (err) {
+      console.error('Failed to copy image to clipboard', err);
+      triggerWhatsAppToast('تعذر النسخ المباشر للحافظة، يمكنك استخدام زر تحميل الصورة.', 'info');
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  const handleShareOrSendWhatsAppImage = async (payment: Payment) => {
+    try {
+      setIsGeneratingImage(true);
+      const phoneToUse = targetParentPhone || getParentPhoneForPayment(payment);
+      const cleanPhone = formatPhoneForWhatsApp(phoneToUse);
+      const text = customReceiptMessageDraft || generateReceiptWhatsAppText(payment, modalReceiptSettings);
+
+      const blob = await captureReceiptBlob();
+      if (!blob) throw new Error('Could not render image');
+
+      const file = new File([blob], `إيصال_سداد_${payment.studentName}_${payment.month}.png`, { type: 'image/png' });
+
+      // Check if Web Share API with files is supported (Mobile browsers / Android / iOS / Tablets)
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: `إيصال سداد مالي - ${payment.studentName}`,
+          text: text,
+          files: [file],
+        });
+        triggerWhatsAppToast('تمت مشاركة صورة الإيصال مع رسالة التفاصيل بنجاح!');
+        return;
+      }
+
+      // If Web Share with files is not supported (Desktop Chrome/Firefox/Edge):
+      // 1. Try copy image to clipboard
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ]);
+      } catch {
+        // ignore clipboard error
+      }
+
+      // 2. Download the PNG image file
+      const dataUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = `إيصال_سداد_${payment.studentName}_${payment.month}.png`;
+      link.href = dataUrl;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(dataUrl), 5000);
+
+      // 3. Open WhatsApp chat with text message
+      const waUrl = cleanPhone 
+        ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}` 
+        : `https://wa.me/?text=${encodeURIComponent(text)}`;
+      window.open(waUrl, '_blank');
+
+      triggerWhatsAppToast('تم نسخ وتحميل صورة الإيصال وفتح محادثة واتساب — الصق الصورة (Ctrl+V) أو أرفق الملف المحفوظ في الشات!');
+    } catch (err) {
+      console.error('Error sharing receipt image:', err);
+      // Fallback: send text only
+      handleSendWhatsAppText(payment);
+    } finally {
+      setIsGeneratingImage(false);
+    }
   };
 
   const handleSaveEditedReceipt = (e: React.FormEvent) => {
@@ -181,6 +393,9 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
 
   const handleSaveModalReceiptSettings = () => {
     dbEngine.setReceiptSettings(modalReceiptSettings);
+    if (selectedReceiptPayment) {
+      setCustomReceiptMessageDraft(generateReceiptWhatsAppText(selectedReceiptPayment, modalReceiptSettings));
+    }
     setModalSettingsSaved(true);
     onRefresh();
     setTimeout(() => {
@@ -908,7 +1123,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
       {/* Financial Upper overview metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 no-print text-right">
         {/* Metric 1 */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+        <PrivacyCard className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <p className="text-slate-500 text-xs">إيرادات المحصلة لـ ({filterMonth})</p>
             <h4 className="text-xl font-bold font-sans text-slate-900">{totalReceivedForMonth} ج.م</h4>
@@ -917,7 +1132,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
           <div className="bg-slate-50 text-slate-700 p-3 rounded-lg border border-slate-200">
             <TrendingUp className="w-5 h-5" />
           </div>
-        </div>
+        </PrivacyCard>
 
         {/* Metric 2 */}
         <button
@@ -942,7 +1157,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
         </button>
 
         {/* Metric 3 */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+        <PrivacyCard className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div className="space-y-1 w-full text-right">
             <div className="flex justify-between text-xs text-slate-500 mb-1">
               <span>نسبة تحصيل الدفعة للمركز</span>
@@ -959,7 +1174,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
             </div>
             <p className="text-[10px] text-slate-400 mt-1">المستهدف الشهري الإجمالي: {totalDuesExpectedForMonth} ج.م</p>
           </div>
-        </div>
+        </PrivacyCard>
       </div>
 
       {/* Navigation Sub-Tabs & Month Quick Selection */}
@@ -1172,11 +1387,19 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                       <td className="py-3.5 px-6 text-left space-x-1.5 space-x-reverse">
                         <button
                           onClick={() => openReceiptModal(p, 'preview')}
+                          className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold"
+                          title="إرسال صورة أو نص الإيصال عبر واتساب لولي الأمر"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>واتساب 📲</span>
+                        </button>
+                        <button
+                          onClick={() => openReceiptModal(p, 'preview')}
                           className="px-2.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold"
                           title="معاينة وطباعة وتعديل إيصال الاستلام"
                         >
                           <Receipt className="w-3.5 h-3.5" />
-                          <span>الإيصال المالي</span>
+                          <span>الإيصال</span>
                         </button>
                         <button
                           onClick={() => setDeletingPayment(p)}
@@ -1783,21 +2006,33 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                         {balance <= 0 ? (
                           <span className="text-xs text-emerald-600 font-bold pl-4">مكتمل 🟢</span>
                         ) : (
-                          <button
-                            onClick={() => {
-                              setPaymentForm({
-                                studentId: student.id,
-                                month: filterMonth,
-                                amountPaid: balance,
-                                paymentMethod: 'نقدي',
-                                notes: 'تسويه دفع متأخرات لشهر ' + filterMonth
-                              });
-                              setActiveSubTab('add');
-                            }}
-                            className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-850 transition cursor-pointer"
-                          >
-                            تحصيل السداد الفوري
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleSendDebtorWhatsAppReminder(student, filterMonth, balance, amountDue)}
+                              className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                              title="إرسال رسالة تذكير بالمصروفات لولي الأمر عبر واتساب"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>تذكير 💬</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setPaymentForm({
+                                  studentId: student.id,
+                                  month: filterMonth,
+                                  amountPaid: balance,
+                                  paymentMethod: 'نقدي',
+                                  notes: 'تسويه دفع متأخرات لشهر ' + filterMonth
+                                });
+                                setActiveSubTab('add');
+                              }}
+                              className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-850 transition cursor-pointer"
+                            >
+                              تحصيل السداد الفوري
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -2426,7 +2661,177 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                     </div>
                   </div>
 
-                  {/* Print / Actions Bar */}
+                  {/* WhatsApp Sharing Hub */}
+                  <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-100 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                          <MessageCircle className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-black text-emerald-950">إرسال ومشاركة الإيصال لولي الأمر عبر واتساب</div>
+                          <div className="text-[11px] text-emerald-700 font-medium">مشاركة صورة الإيصال كملف/صورة أو إرسال رسالة نصية بكافة تفاصيل السداد</div>
+                        </div>
+                      </div>
+
+                      {/* Target Phone display / editor */}
+                      <div className="flex items-center gap-2">
+                        {isEditingPhone ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="tel"
+                              value={targetParentPhone}
+                              onChange={(e) => setTargetParentPhone(e.target.value)}
+                              placeholder="010xxxxxxxx"
+                              className="px-2.5 py-1 bg-white border border-emerald-300 rounded-lg text-xs font-mono font-bold text-slate-800 outline-none w-32 focus:ring-1 focus:ring-emerald-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setIsEditingPhone(false)}
+                              className="p-1 bg-emerald-600 text-white rounded-md text-[10px] font-bold hover:bg-emerald-700 transition cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-emerald-200 text-xs shadow-2xs">
+                            <span className="text-[10px] text-slate-500 font-bold">هاتف ولي الأمر:</span>
+                            <span className="font-mono font-bold text-emerald-900">{targetParentPhone || 'غير مسجل (سيفتح واتساب العام)'}</span>
+                            <button
+                              type="button"
+                              onClick={() => setIsEditingPhone(true)}
+                              className="p-0.5 text-slate-400 hover:text-emerald-700 transition cursor-pointer"
+                              title="تعديل رقم الهاتف المستهدف"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Toast feedback if any */}
+                    {whatsAppToast && (
+                      <div className={`p-2.5 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in ${
+                        whatsAppToast.type === 'error' ? 'bg-red-50 text-red-800 border border-red-200' :
+                        whatsAppToast.type === 'info' ? 'bg-blue-50 text-blue-800 border border-blue-200' :
+                        'bg-emerald-100/90 text-emerald-900 border border-emerald-300'
+                      }`}>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <span>{whatsAppToast.msg}</span>
+                      </div>
+                    )}
+
+                    {/* Main Action Buttons Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-1">
+                      {/* 1. Send Image to WhatsApp */}
+                      <button
+                        type="button"
+                        disabled={isGeneratingImage}
+                        onClick={() => handleShareOrSendWhatsAppImage(selectedReceiptPayment)}
+                        className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 transition cursor-pointer shadow-sm shadow-emerald-600/20"
+                      >
+                        {isGeneratingImage ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ImageIcon className="w-4 h-4" />
+                        )}
+                        <span>إرسال صورة الإيصال (واتساب) 📲</span>
+                      </button>
+
+                      {/* 2. Send Text Details to WhatsApp */}
+                      <button
+                        type="button"
+                        onClick={() => handleSendWhatsAppText(selectedReceiptPayment)}
+                        className="py-2.5 px-3 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 transition cursor-pointer shadow-sm shadow-emerald-800/20"
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                        <span>إرسال تفاصيل السداد (نص) 💬</span>
+                      </button>
+
+                      {/* 3. Download Image */}
+                      <button
+                        type="button"
+                        disabled={isGeneratingImage}
+                        onClick={() => handleDownloadReceiptImage(selectedReceiptPayment)}
+                        className="py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer shadow-2xs"
+                      >
+                        <Download className="w-4 h-4 text-slate-600" />
+                        <span>تحميل صورة (PNG) 💾</span>
+                      </button>
+
+                      {/* 4. Copy Image / Text */}
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isGeneratingImage}
+                          onClick={() => handleCopyReceiptImage(selectedReceiptPayment)}
+                          className="flex-1 py-2.5 px-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shadow-2xs"
+                          title="نسخ صورة الإيصال إلى الحافظة للصقها مباشرة في واتساب"
+                        >
+                          <Copy className="w-3.5 h-3.5 text-slate-600" />
+                          <span>نسخ الصورة</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyWhatsAppText(selectedReceiptPayment)}
+                          className="px-3 py-2.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition cursor-pointer shadow-2xs"
+                          title="نسخ نص رسالة الإيصال بالكامل"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-slate-600" />
+                          <span>نص</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Expandable WhatsApp Message Draft Editor */}
+                    <div className="border-t border-emerald-200/80 pt-2.5">
+                      <div className="flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingMessageDraft(!isEditingMessageDraft)}
+                          className="text-xs font-bold text-emerald-850 hover:text-emerald-950 flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>{isEditingMessageDraft ? 'إخفاء محرر نص الرسالة' : 'معاينة وتخصيص نص رسالة الواتساب قبل الإرسال ✏️'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setReceiptModalTab('customize')}
+                          className="text-[11px] font-bold text-emerald-750 hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>تعديل القالب العام للمصروفات</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      {isEditingMessageDraft && (
+                        <div className="mt-3 bg-white p-3.5 rounded-xl border border-emerald-200 space-y-2.5 animate-in fade-in duration-150">
+                          <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                            <span>النص الفعلي الذي سيتم إرساله للرقم:</span>
+                            <button
+                              type="button"
+                              onClick={() => setCustomReceiptMessageDraft(generateReceiptWhatsAppText(selectedReceiptPayment, modalReceiptSettings))}
+                              className="text-[11px] text-amber-700 hover:text-amber-800 flex items-center gap-1 cursor-pointer font-bold"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>استعادة النص الأصلي</span>
+                            </button>
+                          </div>
+                          <textarea
+                            rows={6}
+                            value={customReceiptMessageDraft}
+                            onChange={(e) => setCustomReceiptMessageDraft(e.target.value)}
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs leading-relaxed text-slate-850 text-right outline-none focus:bg-white focus:border-emerald-500 font-sans resize-y"
+                            placeholder="اكتب نص الرسالة هنا..."
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Print / Additional Actions Bar */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                     <button
                       type="button"
@@ -2755,6 +3160,75 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                         <span>عرض رقم الهاتف</span>
                       </label>
                     </div>
+                  </div>
+
+                  {/* WhatsApp Message Template Section */}
+                  <div className="border-t border-slate-100 pt-4 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-emerald-600" />
+                        <label className="text-xs font-bold text-slate-800">قالب وتخصيص رسالة الواتساب للإيصال والمصروفات</label>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setModalReceiptSettings({
+                          ...modalReceiptSettings,
+                          whatsappMessageTemplate: DEFAULT_WHATSAPP_RECEIPT_TEMPLATE
+                        })}
+                        className="text-[11px] text-amber-700 hover:text-amber-800 flex items-center gap-1 cursor-pointer font-bold"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>استعادة القالب الافتراضي</span>
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      يمكنك استخدام المتغيرات التلقائية بالنقر عليها لإدراجها في نص القالب:
+                    </p>
+
+                    {/* Variable insertion buttons */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { label: 'اسم الطالب', tag: '[اسم_الطالب]' },
+                        { label: 'رقم السند', tag: '[رقم_السند]' },
+                        { label: 'الصف', tag: '[الصف_الدراسي]' },
+                        { label: 'الشهر', tag: '[الشهر]' },
+                        { label: 'المبلغ المدفوع', tag: '[المبلغ_المدفوع]' },
+                        { label: 'المبلغ المستحق', tag: '[المبلغ_المستحق]' },
+                        { label: 'المبلغ المتبقي', tag: '[المبلغ_المتبقي]' },
+                        { label: 'التاريخ', tag: '[التاريخ]' },
+                        { label: 'طريقة الدفع', tag: '[طريقة_الدفع]' },
+                        { label: 'المستلم', tag: '[المستلم]' },
+                        { label: 'الملاحظات', tag: '[الملاحظات]' },
+                        { label: 'اسم المعلم', tag: '[اسم_المعلم]' },
+                        { label: 'اسم السنتر', tag: '[اسم_السنتر]' },
+                        { label: 'هاتف التواصل', tag: '[هاتف_التواصل]' },
+                        { label: 'رسالة التذييل', tag: '[رسالة_التذييل]' },
+                      ].map(v => (
+                        <button
+                          key={v.tag}
+                          type="button"
+                          onClick={() => {
+                            const current = modalReceiptSettings.whatsappMessageTemplate || DEFAULT_WHATSAPP_RECEIPT_TEMPLATE;
+                            setModalReceiptSettings({
+                              ...modalReceiptSettings,
+                              whatsappMessageTemplate: `${current} ${v.tag}`
+                            });
+                          }}
+                          className="px-2 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 hover:border-emerald-300 border border-slate-200 rounded-md text-[10px] font-bold text-slate-700 transition cursor-pointer"
+                        >
+                          +{v.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <textarea
+                      rows={5}
+                      value={modalReceiptSettings.whatsappMessageTemplate || DEFAULT_WHATSAPP_RECEIPT_TEMPLATE}
+                      onChange={(e) => setModalReceiptSettings({ ...modalReceiptSettings, whatsappMessageTemplate: e.target.value })}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-lg text-xs leading-relaxed text-right outline-none font-sans"
+                      placeholder="اكتب قالب رسالة الواتساب..."
+                    />
                   </div>
 
                   {/* Actions */}

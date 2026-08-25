@@ -16,6 +16,7 @@ import {
   RefreshCw, Sliders, DollarSign, Gift, ArrowUpRight, MessageSquare
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { PrivacyCard, PrivacyAmount } from './PrivacyAmount';
 
 interface SiblingFamily {
   phoneKey: string;
@@ -540,7 +541,7 @@ export default function SiblingDiscountsManager({
         </div>
 
         {/* Metric 4: Total Monthly Sibling Savings */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+        <PrivacyCard className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-xs text-slate-500 font-bold block">وفر الخصومات الشهري</span>
             <h4 className="text-2xl font-black text-emerald-800 font-sans">{summaryMetrics.totalMonthlySavings} ج.م</h4>
@@ -549,7 +550,7 @@ export default function SiblingDiscountsManager({
           <div className="p-3 bg-teal-50 text-teal-700 rounded-xl border border-teal-100">
             <Gift className="w-6 h-6" />
           </div>
-        </div>
+        </PrivacyCard>
       </div>
 
       {/* Section: Smart Sibling Policy & One-Click Automation Panel */}

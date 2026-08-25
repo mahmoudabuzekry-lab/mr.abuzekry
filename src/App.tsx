@@ -18,6 +18,7 @@ import WeeklyAttendancePlanner from './components/WeeklyAttendancePlanner';
 import { QRCodeSVG } from 'qrcode.react';
 import NotificationCenter from './components/NotificationCenter';
 import { getPendingQueue, processSyncQueue } from './firebase';
+import { PrivacyCard, PrivacyAmount } from './components/PrivacyAmount';
 
 // Icons
 import { 
@@ -1374,13 +1375,15 @@ export default function App() {
                       <div className="bg-amber-50 text-amber-700 p-3 rounded-xl border border-amber-100"><HelpCircle className="w-5 h-5" /></div>
                     </button>
 
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md transition-shadow flex items-center justify-between">
-                      <div>
-                        <p className="text-xs font-black text-slate-500">مقبوضات الشهر ({currentMonthName.split(' ')[0]})</p>
-                        <h4 className="text-2xl font-black text-emerald-700 mt-1">{totalRevenueForMonth} <span className="text-xs font-bold text-slate-500">ج.م</span></h4>
+                    <PrivacyCard className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs font-black text-slate-500">مقبوضات الشهر ({currentMonthName.split(' ')[0]})</p>
+                          <h4 className="text-2xl font-black text-emerald-700 mt-1">{totalRevenueForMonth} <span className="text-xs font-bold text-slate-500">ج.م</span></h4>
+                        </div>
+                        <div className="bg-emerald-50 text-emerald-800 p-3 rounded-xl border border-emerald-100"><DollarSign className="w-5 h-5" /></div>
                       </div>
-                      <div className="bg-emerald-50 text-emerald-800 p-3 rounded-xl border border-emerald-100"><DollarSign className="w-5 h-5" /></div>
-                    </div>
+                    </PrivacyCard>
                   </div>
 
                   {/* BRAND NEW SECTION 1: STUDENT COUNTS PER GRADE (أعداد طلاب كل صف على حدة) */}

@@ -13,6 +13,7 @@ import {
   BookOpen, Star, Frown, Sparkles, HelpCircle, Phone, MapPin, CheckCircle2,
   Trash2, X, MessageSquare, ListTodo
 } from 'lucide-react';
+import { PrivacyCard, PrivacyAmount } from './PrivacyAmount';
 
 const ARABIC_DAYS_MAP: { [key: string]: number } = {
   'الأحد': 0,
@@ -1501,32 +1502,32 @@ export default function ReportsManager({
         <div className="space-y-6">
           {/* KPI Dashboard Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 no-print">
-            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+            <PrivacyCard className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold text-slate-400">إجمالي الإيرادات المتوقعة</p>
                 <h4 className="text-xl font-black text-slate-800 mt-1">{financialStats.totalExpected} ج.م</h4>
                 <p className="text-[10px] text-slate-400 mt-0.5">عدد المطالبين: {financialStats.list.filter(i => i.amountDue > 0).length} طالب</p>
               </div>
               <div className="bg-slate-50 text-slate-600 p-3 rounded-xl border border-slate-100"><DollarSign className="w-5 h-5 text-blue-600" /></div>
-            </div>
+            </PrivacyCard>
 
-            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+            <PrivacyCard className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold text-slate-400">المحصل الفعلي المسدد</p>
                 <h4 className="text-xl font-black text-emerald-600 mt-1">{financialStats.totalCollected} ج.م</h4>
                 <p className="text-[10px] text-emerald-600 font-bold mt-0.5">نسبة السداد: {financialStats.rate}%</p>
               </div>
               <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl border border-emerald-100"><CheckCircle className="w-5 h-5" /></div>
-            </div>
+            </PrivacyCard>
 
-            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+            <PrivacyCard className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold text-slate-400">المتبقي (مديونيات معلقة)</p>
                 <h4 className="text-xl font-black text-red-600 mt-1">{financialStats.outstanding} ج.م</h4>
                 <p className="text-[10px] text-red-500 font-bold mt-0.5">عدد الممتنعين/المتبقي: {financialStats.list.filter(i => i.remaining > 0).length} طالب</p>
               </div>
               <div className="bg-red-50/50 text-red-700 p-3 rounded-xl border border-red-100"><AlertTriangle className="w-5 h-5" /></div>
-            </div>
+            </PrivacyCard>
 
             <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs">
               <p className="text-[11px] font-bold text-slate-400 mb-2">مستوى استجابة التحصيل ماليًا</p>
@@ -1811,7 +1812,7 @@ export default function ReportsManager({
 
           {/* Revenue KPIs Dashboard */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 no-print animate-in fade-in duration-350">
-            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+            <PrivacyCard className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold text-slate-400">إجمالي المبالغ المحصلة</p>
                 <h4 className="text-xl font-black text-emerald-600 mt-1">{revenueStats.totalCollected} ج.م</h4>
@@ -1820,9 +1821,9 @@ export default function ReportsManager({
               <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl border border-emerald-100">
                 <DollarSign className="w-5 h-5 text-emerald-600" />
               </div>
-            </div>
+            </PrivacyCard>
 
-            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+            <PrivacyCard className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold text-slate-400">التحصيل النقدي (كاش)</p>
                 <h4 className="text-xl font-black text-slate-800 mt-1">{revenueStats.cashSum} ج.م</h4>
@@ -1831,9 +1832,9 @@ export default function ReportsManager({
               <div className="bg-slate-50 text-slate-600 p-3 rounded-xl border border-slate-150">
                 <CheckCircle2 className="w-5 h-5 text-blue-600" />
               </div>
-            </div>
+            </PrivacyCard>
 
-            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+            <PrivacyCard className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold text-slate-400">تحصيل فودافون كاش</p>
                 <h4 className="text-xl font-black text-indigo-600 mt-1">{revenueStats.vodafoneSum} ج.م</h4>
@@ -1842,9 +1843,9 @@ export default function ReportsManager({
               <div className="bg-indigo-50 text-indigo-700 p-3 rounded-xl border border-indigo-100">
                 <TrendingUp className="w-5 h-5 text-indigo-650" />
               </div>
-            </div>
+            </PrivacyCard>
 
-            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
+            <PrivacyCard className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold text-slate-400">متوسط قيمة المقبوض</p>
                 <h4 className="text-xl font-black text-slate-700 mt-1">{revenueStats.averagePayment} ج.م</h4>
@@ -1853,7 +1854,7 @@ export default function ReportsManager({
               <div className="bg-slate-50 text-slate-600 p-3 rounded-xl border border-slate-100">
                 <Users className="w-5 h-5 text-slate-500" />
               </div>
-            </div>
+            </PrivacyCard>
           </div>
 
           {/* Main Layout Grid */}

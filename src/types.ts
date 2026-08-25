@@ -147,7 +147,27 @@ export interface ReceiptSettings {
   showPhone: boolean;
   showWatermark: boolean;
   receiptSize: 'thermal' | 'standard'; // 'thermal' (كاشير/حراري 80mm) | 'standard' (بطاقة مقاس قياسي)
+  whatsappMessageTemplate?: string; // قالب نص رسالة المصروفات/الإيصال عبر واتساب
 }
+
+export const DEFAULT_WHATSAPP_RECEIPT_TEMPLATE = `السلام عليكم ورحمة الله وبركاته 🌸
+تحية طيبة لولي أمر الطالب/ـة: *[اسم_الطالب]* المحترم/ـة،
+
+يسر إدارة *[اسم_السنتر]* - *[اسم_المعلم]* إفادتكم بصدور وتأكيد إيصال الاستلام المالي:
+
+🧾 *بيانات إيصال السداد المالي:*
+━━━━━━━━━━━━━━━
+🔹 *رقم السند:* #[رقم_السند]
+🔹 *اسم الطالب:* [اسم_الطالب]
+🔹 *الصف الدراسي:* [الصف_الدراسي]
+🔹 *عن رسوم شهر:* [الشهر]
+🔹 *المبلغ المقبوض:* [المبلغ] ج.م (خالص ومسدد ✅)
+🔹 *تاريخ التحصيل:* [التاريخ]
+🔹 *طريقة الدفع:* [طريقة_الدفع]
+━━━━━━━━━━━━━━━
+✨ نشكركم دائماً على حسن تعاونكم وثقتكم الغالية، متمنين لأبنائنا دوام التفوق والتميز الباهر 🌟
+[خاتمة_الإيصال]
+[هاتف_التواصل]`;
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   centerName: 'مجموعات العلوم المتطورة',
@@ -164,7 +184,8 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   showNotes: true,
   showPhone: true,
   showWatermark: true,
-  receiptSize: 'standard'
+  receiptSize: 'standard',
+  whatsappMessageTemplate: DEFAULT_WHATSAPP_RECEIPT_TEMPLATE
 };
 
 export const ARABIC_MONTHS_MAP: { [key: string]: number } = {
@@ -257,6 +278,68 @@ export function normalizePhoneNumber(phone: string): string {
   else if (clean.startsWith('20') && clean.length === 12) clean = '0' + clean.slice(2);
   return clean.trim();
 }
+
+export function formatReceiptWhatsAppMessage(
+  payment: {
+    id?: string;
+    studentId?: string;
+    studentName?: string;
+    studentCode?: string;
+    grade?: string;
+    month?: string;
+    amountPaid?: number;
+    amountDue?: number;
+    date?: string;
+    paymentMethod?: string;
+    receivedBy?: string;
+    notes?: string;
+  },
+  settings: ReceiptSettings,
+  customTemplateOverride?: string
+): string {
+  const rawTemplate = (customTemplateOverride !== undefined && customTemplateOverride !== '')
+    ? customTemplateOverride
+    : (settings.whatsappMessageTemplate && settings.whatsappMessageTemplate.trim() !== '')
+      ? settings.whatsappMessageTemplate
+      : DEFAULT_WHATSAPP_RECEIPT_TEMPLATE;
+
+  const teacher = settings.teacherName || 'الأستاذ محمود أبوذكري';
+  const center = settings.centerName || 'مجموعات العلوم المتطورة';
+  const contactPhone = settings.phone ? `📞 *للتواصل والاستفسار:* ${settings.phone}` : (settings.phone || '');
+  const receiver = payment.receivedBy || settings.receiverName || 'إدارة المركز';
+  const notes = payment.notes ? `📝 *ملاحظات السداد:* ${payment.notes}` : '';
+  const footer = settings.footerMessage ? `_${settings.footerMessage}_` : '';
+  const payMethod = payment.paymentMethod || 'نقدي';
+  
+  const paid = payment.amountPaid ?? 0;
+  const due = payment.amountDue ?? paid;
+  const remaining = Math.max(0, due - paid);
+
+  let message = rawTemplate
+    // Student Info
+    .replace(/\[(اسم_الطالب|الطالب|اسم_الطالبة)\]/g, payment.studentName || '')
+    .replace(/\[(كود_الطالب|الكود|رقم_الطالب)\]/g, payment.studentCode || '')
+    .replace(/\[(الصف_الدراسي|الصف|المرحلة|المرحلة_الدراسية)\]/g, payment.grade || '')
+    .replace(/\[(الشهر|شهر_المصروفات|شهر|عن_شهر)\]/g, payment.month || '')
+    // Financial figures
+    .replace(/\[(المبلغ_المدفوع|المبلغ_المسدد|المبلغ|القيمة_المسددة|المسدد)\]/g, String(paid))
+    .replace(/\[(المبلغ_المستحق|المقرر_الشهري|إجمالي_الرسوم|الرسوم|المستحق)\]/g, String(due))
+    .replace(/\[(المبلغ_المتبقي|المتبقي|المتبقي_المطلوب|الباقي)\]/g, String(remaining))
+    // Receipt Metadata
+    .replace(/\[(رقم_السند|رقم_الإيصال|رقم_الوصل|رقم_العملية|السند|الإيصال)\]/g, String(payment.id || ''))
+    .replace(/\[(التاريخ|تاريخ_السداد|تاريخ_التحصيل|تاريخ_الإيصال|تاريخ_العملية)\]/g, payment.date || new Date().toISOString().split('T')[0])
+    .replace(/\[(طريقة_الدفع|طريقة_السداد|وسيلة_الدفع)\]/g, payMethod)
+    .replace(/\[(المستلم|المحصل|اسم_المستلم|المسؤول)\]/g, receiver)
+    .replace(/\[(الملاحظات|ملاحظات_السداد|ملاحظات)\]/g, notes)
+    // Teacher & Center Info
+    .replace(/\[(اسم_المعلم|المعلم|الأستاذ)\]/g, teacher)
+    .replace(/\[(اسم_السنتر|السنتر|اسم_المركز|المركز)\]/g, center)
+    .replace(/\[(هاتف_التواصل|رقم_التواصل|هاتف_السنتر|هاتف_المعلم|رقم_الهاتف|الهاتف)\]/g, contactPhone)
+    .replace(/\[(خاتمة_الإيصال|رسالة_التذييل|التذييل|الخاتمة)\]/g, footer);
+
+  return message.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 
 
 
