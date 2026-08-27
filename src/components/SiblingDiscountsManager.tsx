@@ -13,7 +13,7 @@ import {
   Users, UserCheck, Sparkles, Percent, Tag, Phone, ExternalLink, 
   Copy, Check, CheckCircle2, AlertTriangle, Printer, Download, 
   Search, Filter, ArrowRight, Edit3, Save, X, Receipt, Plus, 
-  RefreshCw, Sliders, DollarSign, Gift, ArrowUpRight, MessageSquare
+  RefreshCw, Sliders, DollarSign, Gift, ArrowUpRight, MessageSquare, MessageCircle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { PrivacyCard, PrivacyAmount } from './PrivacyAmount';
@@ -252,6 +252,26 @@ export default function SiblingDiscountsManager({
     dbEngine.setStudents(updated);
     onRefresh();
     showNotification(`تم إلغاء خصومات الإخوة بنجاح لـ ${resetCount} طالب وتصفير الحسابات.`, 'info');
+  };
+
+  // Quick send WhatsApp message for sibling
+  const handleSendSiblingWhatsApp = (sibling: Student, isPaid: boolean, monthPaid: number, due: number, balance: number) => {
+    const rawPhone = sibling.parentPhone || sibling.phone;
+    const cleanPhone = normalizePhoneNumber(rawPhone);
+    const settings = dbEngine.getReceiptSettings();
+    const teacher = settings.teacherName || 'الأستاذ محمود أبوذكري';
+    const center = settings.centerName || 'مجموعات العلوم المتطورة';
+    
+    let text = '';
+    if (isPaid) {
+      text = `السلام عليكم ورحمة الله وبركاته 🌸\nتحية طيبة لولي أمر الطالب/ـة: *${sibling.name}* المحترم/ـة،\n\nنحيطكم علماً بأنه تم سداد مصروفات شهر *${currentMonth}* لمادة العلوم بمبلغ (*${monthPaid}* ج.م) خالص ومسدد ✅.\n\nشاكرين ومقدرين حسن تعاونكم وثقتكم الغالية 🌟\n👨‍🏫 *${teacher}* - *${center}*`;
+    } else {
+      const remainingAmount = balance > 0 ? balance : due;
+      text = `السلام عليكم ورحمة الله وبركاته 🌸\nتحية طيبة لولي أمر الطالب/ـة: *${sibling.name}* المحترم/ـة،\n\nنود تذكير سيادتكم بمصروفات الاشتراك لشهر *${currentMonth}* (مجموعات العلوم - *${sibling.grade}*):\n🔹 *المبلغ المطلوب:* ${remainingAmount} ج.م (إجمالي الرسوم: ${due} ج.م)\n\nشاكرين ومقدرين دائماً حسن تعاونكم وثقتكم الغالية 🌟\n👨‍🏫 *${teacher}* - *${center}*`;
+    }
+
+    const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
   };
 
   // Apply quick discount to a single student
@@ -985,8 +1005,17 @@ export default function SiblingDiscountsManager({
                           </div>
 
                           <div className="space-y-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="font-extrabold text-slate-900 text-sm">{sibling.name}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleSendSiblingWhatsApp(sibling, isPaid, monthPaid, due, balance)}
+                                className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md text-[11px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                                title={isPaid ? `إرسال رسالة تأكيد سداد المصروفات فوراً لولي أمر (${sibling.name})` : `إرسال رسالة تذكير بالمصروفات فوراً لولي أمر (${sibling.name})`}
+                              >
+                                <MessageCircle className="w-3 h-3" />
+                                <span>{isPaid ? 'واتساب السداد 📲' : 'تذكير واتساب 💬'}</span>
+                              </button>
                               <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-black">
                                 {sibling.code}
                               </span>

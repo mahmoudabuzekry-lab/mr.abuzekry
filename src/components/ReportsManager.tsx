@@ -11,7 +11,7 @@ import {
   TrendingUp, Users, Calendar, DollarSign, Award, Download, Printer, Search, 
   FileText, CheckCircle, AlertTriangle, Copy, Percent, ChevronLeft, UserCheck, 
   BookOpen, Star, Frown, Sparkles, HelpCircle, Phone, MapPin, CheckCircle2,
-  Trash2, X, MessageSquare, ListTodo
+  Trash2, X, MessageSquare, ListTodo, MessageCircle
 } from 'lucide-react';
 import { PrivacyCard, PrivacyAmount } from './PrivacyAmount';
 
@@ -1609,7 +1609,34 @@ export default function ReportsManager({
                       return (
                         <tr key={student.id} className="hover:bg-slate-50/50">
                           <td className="py-3 px-4 font-mono font-bold text-slate-500">{student.code}</td>
-                          <td className="py-3 px-4 font-bold text-slate-800">{student.name}</td>
+                          <td className="py-3 px-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-bold text-slate-800">{student.name}</span>
+                              {remaining > 0 ? (
+                                <a
+                                  href={`https://wa.me/${student.parentPhone.startsWith('0') ? '2' + student.parentPhone : student.parentPhone}?text=${encodeURIComponent(waText)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer no-print"
+                                  title={`إرسال تذكير المصروفات فوراً لولي أمر (${student.name}) عبر واتساب`}
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                  <span>واتساب 💬</span>
+                                </a>
+                              ) : paid > 0 ? (
+                                <a
+                                  href={`https://wa.me/${student.parentPhone.startsWith('0') ? '2' + student.parentPhone : student.parentPhone}?text=${encodeURIComponent(`السلام عليكم يا فندم، نحيطكم علماً بأنه تم تأكيد سداد اشتراك شهر ${selectedMonth} لمادة العلوم للطالب/ـة ${student.name} بمبلغ ${paid} ج.م خالص ومسدد ✅. شاكرين ومقدرين حسن تعاونكم الأستاذ محمود أبوذكري.`)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer no-print"
+                                  title={`إرسال تأكيد السداد فوراً لولي أمر (${student.name}) عبر واتساب`}
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                  <span>واتساب 📲</span>
+                                </a>
+                              ) : null}
+                            </div>
+                          </td>
                           <td className="py-3 px-4 font-medium text-slate-500">{student.grade}</td>
                           <td className="py-3 px-4 text-slate-600 font-medium">
                             {groups.find(g => g.id === student.groupId)?.name || 'غير محدد'}

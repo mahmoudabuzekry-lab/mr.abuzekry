@@ -1331,7 +1331,7 @@ export default function App() {
                   <div className="bg-slate-900 border border-slate-800 text-white rounded-2xl p-6 md:p-8 space-y-3 relative overflow-hidden shadow-md">
                     <div className="relative z-10 max-w-2xl space-y-2.5">
                       <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-400/30 px-3 py-1 rounded-full font-extrabold">لوحة القيادة والمتابعة</span>
-                      <h3 className="text-2xl md:text-3xl font-black font-sans leading-tight">مرحباً بك يا أستاذ محمود أبوذكري! 👨‍🏫</h3>
+                      <h3 className="text-2xl md:text-3xl font-black font-sans leading-tight text-[#f5fbfb]">مرحباً بك يا أستاذ محمود أبوذكري! 👨‍🏫</h3>
                       <p className="text-slate-200 text-xs md:text-sm font-semibold leading-relaxed">
                         هذه اللوحة الموحدة تمنحك إحصائيات متكاملة ودقيقة وفورية لجميع مجموعات العلوم لصفوف الابتدائي والإعدادي المعتمدة بالسجلات.
                       </p>

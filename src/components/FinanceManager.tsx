@@ -226,6 +226,20 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     setCustomReceiptMessageDraft(formatReceiptWhatsAppMessage(paymentWithExtra, settings));
   };
 
+  const handleSendWhatsAppTextDirect = (payment: Payment) => {
+    const phoneToUse = getParentPhoneForPayment(payment);
+    const cleanPhone = formatPhoneForWhatsApp(phoneToUse);
+    const settings = dbEngine.getReceiptSettings();
+    const text = generateReceiptWhatsAppText(payment, settings);
+    const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+    triggerWhatsAppToast(
+      cleanPhone 
+        ? `تم فتح واتساب لإرسال رسالة سداد المصروفات لولي أمر (${payment.studentName}) - ${phoneToUse} 📲` 
+        : `تم فتح واتساب لإرسال رسالة سداد المصروفات لـ (${payment.studentName}) 📲`
+    );
+  };
+
   const handleSendWhatsAppText = (payment: Payment) => {
     const phoneToUse = targetParentPhone || getParentPhoneForPayment(payment);
     const cleanPhone = formatPhoneForWhatsApp(phoneToUse);
@@ -1148,7 +1162,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
         >
           <div className="space-y-1">
             <p className={`text-xs ${activeSubTab === 'debtors' && filterPaymentStatus === 'unpaid' ? 'text-slate-300' : 'text-slate-500'}`}>المتخلفين عن السداد</p>
-            <h4 className="text-xl font-bold font-sans">{debtorsList.filter(d => d.status === 'debtor' && d.amountDue > 0).length} طالب</h4>
+            <h4 className="text-xl font-bold font-sans text-[#f2f4f9]">{debtorsList.filter(d => d.status === 'debtor' && d.amountDue > 0).length} طالب</h4>
             <p className={`text-[10px] ${activeSubTab === 'debtors' && filterPaymentStatus === 'unpaid' ? 'text-slate-400' : 'text-red-650 font-bold'}`}>يتطلب تدخلاً ماليًا للمستحقات</p>
           </div>
           <div className={`p-3 rounded-lg ${activeSubTab === 'debtors' && filterPaymentStatus === 'unpaid' ? 'bg-slate-800 text-white border border-slate-700' : 'bg-red-50 text-red-650 border border-red-100'}`}>
@@ -1366,51 +1380,75 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                     </td>
                   </tr>
                 ) : (
-                  filteredPayments.map((p) => (
-                    <tr key={p.id} className="hover:bg-slate-55/50 hover:bg-slate-50/40 transition-colors">
-                      <td className="py-3.5 px-6">
-                        <div className="font-bold text-slate-800 text-sm">{p.studentName}</div>
-                        <div className="text-[10px] text-slate-400 mt-1">كود المالية: {p.id}</div>
-                      </td>
-                      <td className="py-3.5 px-6 text-slate-650">{p.grade}</td>
-                      <td className="py-3.5 px-6 text-slate-900 font-bold">{p.month}</td>
-                      <td className="py-3.5 px-6">
-                        <span className="bg-emerald-50 text-emerald-800 font-bold text-xs px-2.5 py-1 rounded border border-emerald-100">
-                          {p.amountPaid} ج.م
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-6 font-bold text-slate-500 font-mono">{p.amountDue} ج.م</td>
-                      <td className="py-3.5 px-6 font-mono space-y-0.5 text-slate-600">
-                        <div className="font-bold text-xs">{p.paymentMethod}</div>
-                        <div className="text-[10px] text-slate-400">{p.date}</div>
-                      </td>
-                      <td className="py-3.5 px-6 text-left space-x-1.5 space-x-reverse">
-                        <button
-                          onClick={() => openReceiptModal(p, 'preview')}
-                          className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold"
-                          title="إرسال صورة أو نص الإيصال عبر واتساب لولي الأمر"
-                        >
-                          <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>واتساب 📲</span>
-                        </button>
-                        <button
-                          onClick={() => openReceiptModal(p, 'preview')}
-                          className="px-2.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold"
-                          title="معاينة وطباعة وتعديل إيصال الاستلام"
-                        >
-                          <Receipt className="w-3.5 h-3.5" />
-                          <span>الإيصال</span>
-                        </button>
-                        <button
-                          onClick={() => setDeletingPayment(p)}
-                          className="p-1.5 bg-red-50 text-red-655 hover:bg-red-100 border border-red-100 rounded-lg inline-flex items-center transition cursor-pointer"
-                          title="حذف العملية من الدفاتر"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                  filteredPayments.map((p) => {
+                    const phone = getParentPhoneForPayment(p);
+                    return (
+                      <tr key={p.id} className="hover:bg-slate-50/40 transition-colors">
+                        <td className="py-3.5 px-6">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold text-slate-800 text-sm">{p.studentName}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleSendWhatsAppTextDirect(p)}
+                              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md text-[11px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                              title={`إرسال رسالة واتساب نصية فوراً لولي أمر الطالب (${p.studentName}) لتأكيد سداد المصروفات`}
+                            >
+                              <MessageCircle className="w-3 h-3" />
+                              <span>واتساب 📲</span>
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-1">
+                            <span>كود المالية: {p.id}</span>
+                            {phone && (
+                              <span className="font-mono text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded font-bold">
+                                📱 {phone}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-6 text-slate-650">{p.grade}</td>
+                        <td className="py-3.5 px-6 text-slate-900 font-bold">{p.month}</td>
+                        <td className="py-3.5 px-6">
+                          <span className="bg-emerald-50 text-emerald-800 font-bold text-xs px-2.5 py-1 rounded border border-emerald-100">
+                            {p.amountPaid} ج.م
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-6 font-bold text-slate-500 font-mono">{p.amountDue} ج.م</td>
+                        <td className="py-3.5 px-6 font-mono space-y-0.5 text-slate-600">
+                          <div className="font-bold text-xs">{p.paymentMethod}</div>
+                          <div className="text-[10px] text-slate-400">{p.date}</div>
+                        </td>
+                        <td className="py-3.5 px-6 text-left space-x-1.5 space-x-reverse">
+                          <button
+                            type="button"
+                            onClick={() => handleSendWhatsAppTextDirect(p)}
+                            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold shadow-xs"
+                            title="إرسال رسالة واتساب نصية فوراً لولي الأمر بضغطة واحدة"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            <span>إرسال واتساب 📲</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openReceiptModal(p, 'preview')}
+                            className="px-2.5 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold"
+                            title="معاينة وطباعة وتعديل وتنزيل إيصال الاستلام"
+                          >
+                            <Receipt className="w-3.5 h-3.5 text-slate-600" />
+                            <span>الإيصال 🧾</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingPayment(p)}
+                            className="p-1.5 bg-red-50 text-red-650 hover:bg-red-100 border border-red-100 rounded-lg inline-flex items-center transition cursor-pointer"
+                            title="حذف العملية من الدفاتر"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -1988,7 +2026,22 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                   debtorsList.map(({ student, amountDue, balance }) => (
                     <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="py-3.5 px-6 font-mono text-slate-500 font-bold">{student.code}</td>
-                      <td className="py-3.5 px-6 font-bold text-slate-900">{student.name}</td>
+                      <td className="py-3.5 px-6">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-slate-900">{student.name}</span>
+                          {balance > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleSendDebtorWhatsAppReminder(student, filterMonth, balance, amountDue)}
+                              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md text-[11px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                              title={`إرسال رسالة تذكير بالمصروفات فوراً لولي أمر الطالب (${student.name})`}
+                            >
+                              <MessageCircle className="w-3 h-3" />
+                              <span>واتساب 💬</span>
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3.5 px-6 text-slate-650">{student.grade}</td>
                       <td className="py-3.5 px-6">
                         {balance <= 0 ? (
