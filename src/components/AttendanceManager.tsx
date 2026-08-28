@@ -3,14 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { dbEngine } from '../db';
 import { Student, Group, Attendance, ALL_GRADES } from '../types';
 import { isStudentInGroupOnDay } from './WeeklyAttendancePlanner';
 import { 
   Calendar, Users, QrCode, Camera, CheckCircle2, AlertTriangle, 
   Clock, X, Search, Check, AlertCircle, HelpCircle, LogIn, LogOut,
-  MessageSquare, Sparkles, Send, Info, Trash2, Edit, CheckSquare
+  MessageSquare, Sparkles, Send, Info, Trash2, Edit, CheckSquare,
+  UserCheck, ChevronRight, ChevronLeft, RotateCcw, User
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
@@ -159,6 +160,13 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [searchQuery, setSearchQuery] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // State for Sequential (Student-by-Student) Attendance Modal
+  const [isSequentialModalOpen, setIsSequentialModalOpen] = useState(false);
+  const [sequentialGrade, setSequentialGrade] = useState<string>('الكل');
+  const [sequentialGroupId, setSequentialGroupId] = useState<string>('الكل');
+  const [sequentialIndex, setSequentialIndex] = useState(0);
+  const [sequentialFinished, setSequentialFinished] = useState(false);
 
   // State for Editing Attendance Record
   const [editingAttendance, setEditingAttendance] = useState<{
@@ -530,6 +538,163 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
     ...students.filter(s => s.status === 'approved').map(s => s.grade)
   ])).filter(Boolean);
 
+  // Students list for Sequential (Student-by-Student) Attendance Modal
+  // Filtered strictly according to what is registered in flexible attendance (الحضور المرن) for selectedDate
+  const sequentialStudents = useMemo(() => {
+    const dayName = getArabicDayName(selectedDate);
+    if (!dayName) return [];
+
+    return students
+      .filter(s => {
+        // 1. Must be approved
+        if (s.status !== 'approved') return false;
+
+        // 2. Grade filter
+        if (sequentialGrade !== 'الكل' && s.grade !== sequentialGrade) return false;
+
+        // 3. Group filter: if a specific group is selected, student must be scheduled in it today
+        if (sequentialGroupId !== 'الكل') {
+          return isStudentInGroupOnDay(s, sequentialGroupId, dayName, groups);
+        }
+
+        // When sequentialGroupId === 'الكل' (all groups):
+        // Student must be scheduled in flexible attendance on dayName
+        const primaryGroup = groups.find(g => g.id === s.groupId);
+        const primaryDays = primaryGroup ? parseGroupDays(primaryGroup.day) : [];
+        const checkedDays = s.attendanceDays !== undefined ? s.attendanceDays : primaryDays;
+
+        // Scheduled in primary group on dayName
+        const inPrimary = s.groupId ? isStudentInGroupOnDay(s, s.groupId, dayName, groups) : false;
+
+        // Scheduled in any alternative group on dayName
+        const inAlt = (s.alternativeGroupIds || []).some(gid =>
+          isStudentInGroupOnDay(s, gid, dayName, groups)
+        );
+
+        // Or custom flexible attendance days include dayName
+        const inCustomDays = checkedDays.includes(dayName);
+
+        return inPrimary || inAlt || inCustomDays;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  }, [students, groups, sequentialGrade, sequentialGroupId, selectedDate]);
+
+  useEffect(() => {
+    setSequentialIndex(0);
+    setSequentialFinished(false);
+  }, [selectedDate, sequentialGrade, sequentialGroupId]);
+
+  const openSequentialModal = (grade?: string, groupId?: string) => {
+    const targetGrade = grade !== undefined ? grade : (selectedGrade !== 'الكل' ? selectedGrade : (availableGrades[0] || 'الكل'));
+    const targetGroup = groupId !== undefined ? groupId : (selectedGroupId !== 'الكل' ? selectedGroupId : 'الكل');
+    setSequentialGrade(targetGrade);
+    setSequentialGroupId(targetGroup);
+    setSequentialIndex(0);
+    setSequentialFinished(false);
+    setIsSequentialModalOpen(true);
+  };
+
+  const handleSequentialMark = (student: Student, status: 'present' | 'absent' | 'late' | 'excused') => {
+    const timeNow = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const dayName = getArabicDayName(selectedDate);
+
+    // Determine the accurate group for this student on this day in flexible schedule
+    let recordGroupId = student.groupId;
+    if (sequentialGroupId && sequentialGroupId !== 'الكل') {
+      recordGroupId = sequentialGroupId;
+    } else if (selectedGroupId && selectedGroupId !== 'الكل') {
+      recordGroupId = selectedGroupId;
+    } else {
+      if (isStudentInGroupOnDay(student, student.groupId, dayName, groups)) {
+        recordGroupId = student.groupId;
+      } else {
+        const altOnDay = (student.alternativeGroupIds || []).find(gid => 
+          isStudentInGroupOnDay(student, gid, dayName, groups)
+        );
+        if (altOnDay) {
+          recordGroupId = altOnDay;
+        }
+      }
+    }
+
+    dbEngine.addAttendance({
+      id: `${student.id}_${selectedDate}`,
+      studentId: student.id,
+      studentName: student.name,
+      groupId: recordGroupId,
+      date: selectedDate,
+      status,
+      checkInTime: (status === 'present' || status === 'late') ? timeNow : undefined
+    });
+
+    if (status === 'present') {
+      playAudioFeedback('success');
+    } else {
+      playAudioFeedback('warning');
+    }
+
+    onRefresh();
+
+    // Advance to next student or finish
+    if (sequentialIndex + 1 < sequentialStudents.length) {
+      setSequentialIndex(prev => prev + 1);
+    } else {
+      setSequentialFinished(true);
+    }
+  };
+
+  const handleSequentialClear = (student: Student) => {
+    const todayRecord = attendance.find(a => a.studentId === student.id && a.date === selectedDate);
+    if (todayRecord) {
+      dbEngine.deleteAttendance(todayRecord.id || `${student.id}_${selectedDate}`, student.id, selectedDate);
+      onRefresh();
+    }
+  };
+
+  // Keyboard navigation for Sequential Attendance Modal
+  useEffect(() => {
+    if (!isSequentialModalOpen || sequentialFinished) return;
+    const safeIdx = Math.min(sequentialIndex, Math.max(0, sequentialStudents.length - 1));
+    const currentStudent = sequentialStudents[safeIdx];
+    if (!currentStudent) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = (document.activeElement?.tagName || '').toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
+
+      if (e.key === '1' || e.key === '١') {
+        e.preventDefault();
+        handleSequentialMark(currentStudent, 'present');
+      } else if (e.key === '2' || e.key === '٢') {
+        e.preventDefault();
+        handleSequentialMark(currentStudent, 'absent');
+      } else if (e.key === '3' || e.key === '٣') {
+        e.preventDefault();
+        handleSequentialMark(currentStudent, 'excused');
+      } else if (e.key === '4' || e.key === '٤') {
+        e.preventDefault();
+        handleSequentialMark(currentStudent, 'late');
+      } else if (e.key === 'ArrowLeft' || e.key === 'Enter') {
+        e.preventDefault();
+        if (sequentialIndex + 1 < sequentialStudents.length) {
+          setSequentialIndex(prev => prev + 1);
+        } else {
+          setSequentialFinished(true);
+        }
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (sequentialIndex > 0) {
+          setSequentialIndex(prev => prev - 1);
+        }
+      } else if (e.key === 'Escape') {
+        setIsSequentialModalOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSequentialModalOpen, sequentialFinished, sequentialIndex, sequentialStudents, sequentialGroupId, selectedGroupId, selectedDate]);
+
   // Filter students showing the active selected grade/group roster
   const activeGroup = groups.find(g => g.id === selectedGroupId);
   const groupStudents = students.filter(s => {
@@ -596,14 +761,26 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
   const attendancePercentage = totalRosterCount > 0 ? Math.round((presentCount / totalRosterCount) * 100) : 0;
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200" id="attendance-manager">
+    <div className="space-y-4 animate-in fade-in duration-200" id="attendance-manager">
       {/* Upper Control Bar */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-right">
         {/* Select Group & Date */}
         <div className="bg-white p-5 rounded-xl shadow-xs border border-slate-200 space-y-4 md:col-span-2">
-          <div className="border-b border-slate-100 pb-3">
-            <h3 className="font-bold text-slate-850 text-base">دفتر التحضير وتسجيل الحضور اليومي</h3>
-            <p className="text-slate-500 text-xs mt-1">تحديد المجموعة والتاريخ يدوياً أو بدء المسح الذكي الفوري لكروت المتعلمين.</p>
+          <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-slate-850 text-base">دفتر التحضير وتسجيل الحضور اليومي</h3>
+              <p className="text-slate-500 text-xs mt-1">تحديد المجموعة والتاريخ يدوياً أو بدء المسح الذكي الفوري لكروت المتعلمين.</p>
+            </div>
+            <button
+              type="button"
+              id="start-sequential-attendance-header-btn"
+              onClick={() => openSequentialModal()}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer self-start sm:self-auto shadow-xs shrink-0"
+              title="فتح نافذة رصد الحضور طالب بطالب للصف المحدد"
+            >
+              <UserCheck className="w-4 h-4" />
+              <span>التحضير السريع (طالب بطالب) ⚡</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -717,37 +894,37 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
       )}
 
       {/* Attendance stats summary - replacing simulation bar */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs text-right space-y-4">
-        <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-          <h4 className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
-            <Sparkles className="w-4 h-4 text-indigo-600" />
+      <div className="bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-xs text-right space-y-2.5">
+        <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
+          <h4 className="font-bold text-xs sm:text-sm text-slate-800 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
             تفاصيل الحضور للمجموعة
           </h4>
-          <span className="text-xs text-slate-505 font-bold font-sans">تاريخ اليوم المعتمد: {selectedDate}</span>
+          <span className="text-[11px] text-slate-505 font-bold font-sans">تاريخ اليوم المعتمد: {selectedDate}</span>
         </div>
         
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 font-bold text-xs">
-          <div className="bg-slate-50 border border-slate-100 p-3 rounded-lg flex flex-col justify-between">
-            <span className="text-slate-500 text-[11px] mb-1">إجمالي المقيدين</span>
-            <strong className="text-slate-900 text-base font-sans">{totalRosterCount}</strong>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 font-bold text-xs">
+          <div className="bg-slate-50 border border-slate-100 py-2 px-2.5 rounded-lg flex flex-col justify-between">
+            <span className="text-slate-500 text-[10px] sm:text-[11px] mb-0.5">إجمالي المقيدين</span>
+            <strong className="text-slate-900 text-sm sm:text-base font-sans">{totalRosterCount}</strong>
           </div>
-          <div className="bg-emerald-50/75 border border-emerald-100 p-3 rounded-lg flex flex-col justify-between text-emerald-800">
-            <span className="text-emerald-600 text-[11px] mb-1">الحاضرين</span>
-            <strong className="text-emerald-700 text-base font-sans">{presentCount} <span className="text-[10px] text-emerald-600 font-normal">(منهم {lateCount} متأخر)</span></strong>
+          <div className="bg-emerald-50/75 border border-emerald-100 py-2 px-2.5 rounded-lg flex flex-col justify-between text-emerald-800">
+            <span className="text-emerald-600 text-[10px] sm:text-[11px] mb-0.5">الحاضرين</span>
+            <strong className="text-emerald-700 text-sm sm:text-base font-sans">{presentCount} <span className="text-[10px] text-emerald-600 font-normal">(منهم {lateCount} متأخر)</span></strong>
           </div>
-          <div className="bg-red-50/75 border border-red-100 p-3 rounded-lg flex flex-col justify-between text-red-800">
-            <span className="text-red-600 text-[11px] mb-1">الغائبين اليوم</span>
-            <strong className="text-red-700 text-base font-sans">{absentCount}</strong>
+          <div className="bg-red-50/75 border border-red-100 py-2 px-2.5 rounded-lg flex flex-col justify-between text-red-800">
+            <span className="text-red-600 text-[10px] sm:text-[11px] mb-0.5">الغائبين اليوم</span>
+            <strong className="text-red-700 text-sm sm:text-base font-sans">{absentCount}</strong>
           </div>
-          <div className="bg-amber-50/75 border border-amber-100 p-3 rounded-lg flex flex-col justify-between text-amber-800">
-            <span className="text-amber-600 text-[11px] mb-1">المستأذنين مسبقاً</span>
-            <strong className="text-amber-700 text-base font-sans">{excusedCount}</strong>
+          <div className="bg-amber-50/75 border border-amber-100 py-2 px-2.5 rounded-lg flex flex-col justify-between text-amber-800">
+            <span className="text-amber-600 text-[10px] sm:text-[11px] mb-0.5">المستأذنين مسبقاً</span>
+            <strong className="text-amber-700 text-sm sm:text-base font-sans">{excusedCount}</strong>
           </div>
-          <div className="bg-slate-900 text-white p-3 rounded-lg flex flex-col justify-between col-span-2 sm:col-span-1">
-            <span className="text-slate-400 text-[11px] mb-1">نسبة الحضور</span>
+          <div className="bg-slate-900 text-white py-2 px-2.5 rounded-lg flex flex-col justify-between col-span-2 sm:col-span-1">
+            <span className="text-slate-400 text-[10px] sm:text-[11px] mb-0.5">نسبة الحضور</span>
             <div className="flex items-center justify-between gap-2">
-              <strong className="text-white text-base font-sans">{attendancePercentage}%</strong>
-              <div className="w-16 bg-slate-700 h-2 rounded-full overflow-hidden">
+              <strong className="text-white text-sm sm:text-base font-sans">{attendancePercentage}%</strong>
+              <div className="w-16 bg-slate-700 h-1.5 rounded-full overflow-hidden">
                 <div className="bg-emerald-500 h-full rounded-full animate-pulse" style={{ width: `${attendancePercentage}%` }} />
               </div>
             </div>
@@ -774,6 +951,17 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                   className="w-full pr-8 pl-3 py-1.5 bg-white border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none transition-all"
                 />
               </div>
+
+              <button
+                type="button"
+                id="sequential-attendance-table-btn"
+                onClick={() => openSequentialModal()}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs border border-slate-700"
+                title="فتح نافذة تسجيل الحضور الفردي السريع (طالب بطالب)"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>التحضير الفردي (طالب بطالب) ⚡</span>
+              </button>
 
               {selectedGroupId !== 'الكل' && (
                 <button
@@ -1621,6 +1809,453 @@ export default function AttendanceManager({ students, groups, attendance, onRefr
                 إلغاء
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* SEQUENTIAL (STUDENT-BY-STUDENT) ATTENDANCE POPUP MODAL */}
+      {isSequentialModalOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 text-right space-y-5 shadow-2xl relative border border-slate-200 animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3 gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
+                    <UserCheck className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 font-sans flex items-center gap-2">
+                      تسجيل الحضور الفردي المتتالي (طالب بطالب)
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      رصد سريع وفردي لكل طالب مع الانتقال التلقائي المباشر للطالب التالي
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsSequentialModalOpen(false)}
+                className="p-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-500 rounded-lg cursor-pointer transition-colors"
+                title="إغلاق النافذة (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scope selectors & Filters inside Modal */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                  تاريخ اليوم المحدد:
+                </label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setSelectedDate(e.target.value);
+                      }
+                    }}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-indigo-400 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-indigo-700 font-bold block mt-0.5">
+                    اليوم: {getArabicDayName(selectedDate)}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">الصف الدراسي:</label>
+                <select
+                  value={sequentialGrade}
+                  onChange={(e) => {
+                    setSequentialGrade(e.target.value);
+                    setSequentialGroupId('الكل');
+                    setSequentialIndex(0);
+                    setSequentialFinished(false);
+                  }}
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-indigo-400"
+                >
+                  <option value="الكل">كل الصفوف الدراسية</option>
+                  {availableGrades.map(g => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">المجموعة (اختياري):</label>
+                <select
+                  value={sequentialGroupId}
+                  onChange={(e) => {
+                    setSequentialGroupId(e.target.value);
+                    setSequentialIndex(0);
+                    setSequentialFinished(false);
+                  }}
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-indigo-400"
+                >
+                  <option value="الكل">كل مجموعات الصف (المرن لليوم)</option>
+                  {groups
+                    .filter(g => sequentialGrade === 'الكل' || g.grade === sequentialGrade)
+                    .map(g => {
+                      const meetsToday = parseGroupDays(g.day).includes(getArabicDayName(selectedDate));
+                      return (
+                        <option key={g.id} value={g.id}>
+                          {g.name} - ({g.grade}) {meetsToday ? '⭐ موعدها اليوم' : `(${g.day})`}
+                        </option>
+                      );
+                    })
+                  }
+                </select>
+              </div>
+            </div>
+
+            {/* Flexible Attendance Information Banner */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/90 border border-indigo-150 px-3.5 py-2 rounded-xl text-xs">
+              <div className="flex items-center gap-2">
+                <span className="p-1 bg-indigo-600 text-white rounded-md shrink-0">
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-indigo-950 font-bold">
+                  مفلتر حصرياً حسب <span className="text-indigo-600 font-black underline underline-offset-2">الحضور المرن</span> ليوم ({getArabicDayName(selectedDate)} - {selectedDate}) فقط
+                </span>
+              </div>
+              <span className="text-[11px] font-mono font-bold text-indigo-800 bg-white border border-indigo-200 px-2.5 py-0.5 rounded-lg shadow-2xs">
+                {sequentialStudents.length} طالب مجدول
+              </span>
+            </div>
+
+            {/* If no students available in flexible attendance for this day */}
+            {sequentialStudents.length === 0 ? (
+              <div className="py-12 text-center space-y-3">
+                <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto shadow-xs">
+                  <Calendar className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-bold text-slate-800">
+                  لا يوجد طلاب مسجلين في الحضور المرن ليوم ({getArabicDayName(selectedDate)} {selectedDate})
+                </h4>
+                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                  لم يتم العثور على أي طلاب مجدولين للحضور في هذا اليوم وفقاً لمخطط الحضور المرن أو مواعيد المجموعات المعتمدة. يمكنك تغيير تاريخ اليوم أو اختيار صف/مجموعة أخرى.
+                </p>
+              </div>
+            ) : sequentialFinished ? (
+              /* Completion Screen */
+              <div className="py-6 text-center space-y-5">
+                <div className="w-16 h-16 rounded-full bg-emerald-50 border-2 border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto shadow-sm animate-in zoom-in">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-600" />
+                </div>
+                
+                <div className="space-y-1">
+                  <h3 className="text-lg font-black text-slate-900">
+                    اكتمل تسجيل الحضور لجميع الطلاب! 🎉
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    تم المرور على جميع طلاب {sequentialGrade !== 'الكل' ? `(${sequentialGrade})` : ''} والبالغ عددهم ({sequentialStudents.length}) طالب بنجاح.
+                  </p>
+                </div>
+
+                {/* Batch Stats */}
+                {(() => {
+                  const currentBatchIds = new Set(sequentialStudents.map(s => s.id));
+                  const batchAttendance = attendance.filter(a => currentBatchIds.has(a.studentId) && a.date === selectedDate);
+                  const pCount = batchAttendance.filter(a => a.status === 'present').length;
+                  const aCount = batchAttendance.filter(a => a.status === 'absent').length;
+                  const eCount = batchAttendance.filter(a => a.status === 'excused').length;
+                  const lCount = batchAttendance.filter(a => a.status === 'late').length;
+                  const unrecorded = sequentialStudents.length - batchAttendance.length;
+
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-w-md mx-auto text-xs font-bold pt-2">
+                      <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800">
+                        <span className="text-[10px] text-emerald-600 block mb-1">حاضر 🟢</span>
+                        <strong className="text-base font-sans">{pCount}</strong>
+                      </div>
+                      <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800">
+                        <span className="text-[10px] text-rose-600 block mb-1">غائب 🔴</span>
+                        <strong className="text-base font-sans">{aCount}</strong>
+                      </div>
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800">
+                        <span className="text-[10px] text-amber-600 block mb-1">مستأذن 🟡</span>
+                        <strong className="text-base font-sans">{eCount}</strong>
+                      </div>
+                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700">
+                        <span className="text-[10px] text-slate-500 block mb-1">متأخر ⏰</span>
+                        <strong className="text-base font-sans">{lCount}</strong>
+                      </div>
+                      {unrecorded > 0 && (
+                        <div className="col-span-2 sm:col-span-4 p-2 bg-slate-100 rounded-lg text-slate-600 text-[11px]">
+                          لم يتم تحديد حالة {unrecorded} طالب (تم تخطيهم).
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div className="flex items-center justify-center gap-3 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSequentialIndex(0);
+                      setSequentialFinished(false);
+                    }}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>مراجعة الطلاب من الأول</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsSequentialModalOpen(false)}
+                    className="px-6 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+                  >
+                    إغلاق والعودة للدَفتر
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Active Student Screen */
+              (() => {
+                const safeIndex = Math.min(sequentialIndex, sequentialStudents.length - 1);
+                const curStudent = sequentialStudents[safeIndex];
+                if (!curStudent) return null;
+
+                const curTodayRecord = attendance.find(a => a.studentId === curStudent.id && a.date === selectedDate);
+                const curGroup = groups.find(g => g.id === curStudent.groupId);
+                const hasPaid = curStudent.exemptionType === 'full' || (curStudent.paidMonths && curStudent.paidMonths.includes(new Date(selectedDate).toISOString().slice(0, 7)));
+
+                const progressPercent = Math.round(((safeIndex + 1) / sequentialStudents.length) * 100);
+
+                return (
+                  <div className="space-y-4">
+                    {/* Progress Bar & Counter */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="text-slate-850 font-sans">
+                          الطالب رقم <span className="text-indigo-600 font-extrabold text-sm">{safeIndex + 1}</span> من إجمالي <span className="text-slate-900 font-extrabold text-sm">{sequentialStudents.length}</span>
+                        </span>
+                        <span className="text-slate-500 font-mono text-[11px]">
+                          {progressPercent}% مكتمل
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200/50">
+                        <div
+                          className="bg-indigo-600 h-full rounded-full transition-all duration-200"
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Single Student Card */}
+                    <div className="bg-slate-50/90 border border-slate-200 rounded-2xl p-6 text-center space-y-3 relative shadow-2xs">
+                      {/* Avatar Icon */}
+                      <div className="w-14 h-14 mx-auto rounded-full bg-indigo-100/80 border-2 border-indigo-200 text-indigo-700 flex items-center justify-center shadow-2xs">
+                        <User className="w-7 h-7 text-indigo-600" />
+                      </div>
+
+                      {/* Student Full Name - Large, prominent, clear */}
+                      <div className="space-y-1">
+                        <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-tight select-all">
+                          {curStudent.name}
+                        </h2>
+                        <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs">
+                          <span className="px-2.5 py-0.5 bg-white border border-slate-200 rounded-md font-mono font-bold text-slate-700">
+                            كود: {curStudent.code || curStudent.id}
+                          </span>
+                          <span className="px-2.5 py-0.5 bg-white border border-slate-200 rounded-md font-bold text-slate-700">
+                            الصف: {curStudent.grade}
+                          </span>
+                          <span className="px-2.5 py-0.5 bg-white border border-slate-200 rounded-md font-bold text-slate-700">
+                            المجموعة: {curGroup ? curGroup.name : 'عامة'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Status & Financial badges */}
+                      <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                        {/* Current Recorded Status */}
+                        {curTodayRecord ? (
+                          curTodayRecord.status === 'present' ? (
+                            <span className="px-3 py-1 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-full text-xs font-black flex items-center gap-1.5 animate-in fade-in">
+                              <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                              مسجل حالياً: حاضر 🟢 {curTodayRecord.checkInTime ? `(${curTodayRecord.checkInTime})` : ''}
+                            </span>
+                          ) : curTodayRecord.status === 'absent' ? (
+                            <span className="px-3 py-1 bg-rose-100 text-rose-800 border border-rose-200 rounded-full text-xs font-black flex items-center gap-1.5 animate-in fade-in">
+                              <span className="w-2 h-2 rounded-full bg-rose-600" />
+                              مسجل حالياً: غائب 🔴
+                            </span>
+                          ) : curTodayRecord.status === 'excused' ? (
+                            <span className="px-3 py-1 bg-amber-100 text-amber-800 border border-amber-200 rounded-full text-xs font-black flex items-center gap-1.5 animate-in fade-in">
+                              <span className="w-2 h-2 rounded-full bg-amber-600" />
+                              مسجل حالياً: مستأذن 🟡
+                            </span>
+                          ) : (
+                            <span className="px-3 py-1 bg-orange-100 text-orange-800 border border-orange-200 rounded-full text-xs font-black flex items-center gap-1.5 animate-in fade-in">
+                              <span className="w-2 h-2 rounded-full bg-orange-600" />
+                              مسجل حالياً: متأخر ⏰ {curTodayRecord.checkInTime ? `(${curTodayRecord.checkInTime})` : ''}
+                            </span>
+                          )
+                        ) : (
+                          <span className="px-3 py-1 bg-slate-200/70 text-slate-600 border border-slate-300/60 rounded-full text-xs font-bold flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-slate-400" />
+                            لم يتم تسجيل حالته اليوم بعد ⚪
+                          </span>
+                        )}
+
+                        {/* Payment badge */}
+                        {curStudent.exemptionType === 'full' ? (
+                          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">إعفاء كلي مجاني</span>
+                        ) : hasPaid ? (
+                          <span className="text-[11px] font-bold text-slate-800 bg-white border border-slate-200 px-2 py-0.5 rounded-md">سداد الشهر موثق</span>
+                        ) : (
+                          <span className="text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md">مصروفات معلقة</span>
+                        )}
+
+                        {/* Flexible attendance indicator badge */}
+                        <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-md flex items-center gap-1">
+                          <RotateCcw className="w-3 h-3 text-indigo-600" />
+                          <span>حضور مرن ({getArabicDayName(selectedDate)})</span>
+                          {curStudent.attendanceDays !== undefined && (
+                            <span className="text-[10px] text-indigo-800 bg-white px-1 py-0.5 rounded border border-indigo-150 font-mono">
+                              {curStudent.attendanceDays.join('، ')}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* MAIN ATTENDANCE BUTTONS UNDER THE NAME */}
+                    {/* حاضر / غائب / مستأذن */}
+                    <div className="space-y-2 pt-1">
+                      <div className="text-center">
+                        <span className="text-xs font-bold text-slate-600">اختر حالة الطالب للتسجيل والانتقال الفوري للطالب التالي:</span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3">
+                        {/* حاضر */}
+                        <button
+                          type="button"
+                          id="seq-mark-present-btn"
+                          onClick={() => handleSequentialMark(curStudent, 'present')}
+                          className="py-3.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-xs hover:shadow-md cursor-pointer border border-emerald-700"
+                          title="تسجيل حاضر والانتقال للطالب التالي (مفتاح 1)"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <CheckCircle2 className="w-5 h-5" />
+                            <span className="text-base sm:text-lg font-black">حاضر</span>
+                          </div>
+                          <span className="text-[10px] text-emerald-100 font-mono font-medium">[ 1 ]</span>
+                        </button>
+
+                        {/* غائب */}
+                        <button
+                          type="button"
+                          id="seq-mark-absent-btn"
+                          onClick={() => handleSequentialMark(curStudent, 'absent')}
+                          className="py-3.5 px-3 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white rounded-xl font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-xs hover:shadow-md cursor-pointer border border-rose-700"
+                          title="تسجيل غائب والانتقال للطالب التالي (مفتاح 2)"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <X className="w-5 h-5" />
+                            <span className="text-base sm:text-lg font-black">غائب</span>
+                          </div>
+                          <span className="text-[10px] text-rose-100 font-mono font-medium">[ 2 ]</span>
+                        </button>
+
+                        {/* مستأذن */}
+                        <button
+                          type="button"
+                          id="seq-mark-excused-btn"
+                          onClick={() => handleSequentialMark(curStudent, 'excused')}
+                          className="py-3.5 px-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-xs hover:shadow-md cursor-pointer border border-amber-600"
+                          title="تسجيل مستأذن والانتقال للطالب التالي (مفتاح 3)"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <AlertCircle className="w-5 h-5" />
+                            <span className="text-base sm:text-lg font-black">مستأذن</span>
+                          </div>
+                          <span className="text-[10px] text-amber-100 font-mono font-medium">[ 3 ]</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Secondary Controls: Late, Clear record, Prev, Next */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
+                      <div className="flex items-center gap-2">
+                        {/* متأخر */}
+                        <button
+                          type="button"
+                          onClick={() => handleSequentialMark(curStudent, 'late')}
+                          className="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer"
+                          title="تسجيل متأخر والانتقال للطالب التالي (مفتاح 4)"
+                        >
+                          <Clock className="w-3.5 h-3.5 text-orange-600" />
+                          <span>متأخر [4]</span>
+                        </button>
+
+                        {/* مسح التسجيل الحالي إن وجد */}
+                        {curTodayRecord && (
+                          <button
+                            type="button"
+                            onClick={() => handleSequentialClear(curStudent)}
+                            className="px-2.5 py-1.5 text-slate-500 hover:text-red-650 hover:bg-red-50 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer"
+                            title="مسح تسجيل هذا الطالب لليوم"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>مسح التسجيل</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Navigation Controls */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={safeIndex === 0}
+                          onClick={() => setSequentialIndex(prev => Math.max(0, prev - 1))}
+                          className={`px-3 py-1.5 rounded-lg font-bold border transition flex items-center gap-1 ${
+                            safeIndex > 0
+                              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 cursor-pointer'
+                              : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
+                          }`}
+                          title="الرجوع للطالب السابق"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                          <span>السابق</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (safeIndex + 1 < sequentialStudents.length) {
+                              setSequentialIndex(prev => prev + 1);
+                            } else {
+                              setSequentialFinished(true);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer"
+                          title="تخطي للطالب التالي بدون تعديل حالته"
+                        >
+                          <span>تخطي للتالي</span>
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Keyboard hint note */}
+                    <div className="bg-slate-50 rounded-lg p-2 text-center text-[11px] text-slate-400 font-medium">
+                      💡 اختصارات لوحة المفاتيح: <strong>[1]</strong> حاضر | <strong>[2]</strong> غائب | <strong>[3]</strong> مستأذن | <strong>[4]</strong> متأخر | <strong>[Enter أو سهم يسار]</strong> تخطي
+                    </div>
+                  </div>
+                );
+              })()
+            )}
           </div>
         </div>
       )}

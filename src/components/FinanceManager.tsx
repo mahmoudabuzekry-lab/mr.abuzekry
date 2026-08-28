@@ -123,6 +123,30 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPaymentStatus, setFilterPaymentStatus] = useState<'all' | 'paid' | 'unpaid'>('unpaid');
 
+  // Date filter for receipts ledger (سجل المقبوضات)
+  const [filterDateMode, setFilterDateMode] = useState<'all' | 'today' | 'custom'>('all');
+  const [filterCustomDate, setFilterCustomDate] = useState<string>('');
+  const [filterDateAllMonths, setFilterDateAllMonths] = useState<boolean>(true);
+
+  // Today's local date string formatted as YYYY-MM-DD
+  const todayDateStr = useMemo(() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, []);
+
+  // Today's payments statistics
+  const todayPayments = useMemo(() => {
+    return payments.filter(p => (p.date || '').split('T')[0] === todayDateStr);
+  }, [payments, todayDateStr]);
+
+  const todayPaymentsCount = todayPayments.length;
+  const todayPaymentsTotal = useMemo(() => {
+    return todayPayments.reduce((sum, p) => sum + (Number(p.amountPaid) || 0), 0);
+  }, [todayPayments]);
+
   // Count of sibling families
   const siblingFamiliesCount = useMemo(() => {
     const approvedStudents = students.filter(s => s.status === 'approved');
@@ -167,6 +191,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
   const [customReceiptMessageDraft, setCustomReceiptMessageDraft] = useState<string>('');
   const [isEditingMessageDraft, setIsEditingMessageDraft] = useState<boolean>(false);
   const [whatsAppToast, setWhatsAppToast] = useState<{ msg: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const [paymentSuccessFeedback, setPaymentSuccessFeedback] = useState<{ msg: string; payment: Payment } | null>(null);
 
   const triggerWhatsAppToast = (msg: string, type: 'success' | 'info' | 'error' = 'success') => {
     setWhatsAppToast({ msg, type });
@@ -878,7 +903,11 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     });
 
     onRefresh();
-    openReceiptModal(recorded, 'preview'); // Show receipt after immediate success!
+    // Do NOT auto-open receipt modal; user can open it on demand by clicking the receipt button
+    setPaymentSuccessFeedback({
+      msg: `تم تسجيل وحفظ عملية التحصيل بنجاح في الدفاتر للطالب (${student.name}) بمبلغ ${paymentForm.amountPaid} ج.م عن شهر (${paymentForm.month}) ✅`,
+      payment: recorded
+    });
     setPaymentForm({
       studentId: '',
       month: paymentForm.month,
@@ -961,7 +990,12 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
       const worksheet = XLSX.utils.json_to_sheet(data);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'التقرير_المالي');
-      XLSX.writeFile(workbook, `سجل_المدفوعات_${filterMonth.replace(' ', '_')}.xlsx`);
+      const filename = filterDateMode === 'today'
+        ? `سجل_مقبوضات_اليوم_${todayDateStr}.xlsx`
+        : filterDateMode === 'custom' && filterCustomDate
+        ? `سجل_مقبوضات_تاريخ_${filterCustomDate}.xlsx`
+        : `سجل_المدفوعات_${filterMonth.replace(' ', '_')}.xlsx`;
+      XLSX.writeFile(workbook, filename);
     } else {
       const data = debtorsList.map((record, idx) => ({
         'م': idx + 1,
@@ -983,25 +1017,44 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     }
   };
 
-  // Filter payments list
-  const filteredPayments = payments.filter(p => {
-    const matchesMonth = p.month === filterMonth;
-    const matchesGrade = filterGrade === 'all' || p.grade === filterGrade;
-    const matchesSearch = p.studentName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesMonth && matchesGrade && matchesSearch;
-  });
+  // Filter payments list with date filter support
+  const filteredPayments = useMemo(() => {
+    return payments.filter(p => {
+      // Date filter
+      let matchesDate = true;
+      const paymentDate = (p.date || '').split('T')[0];
+
+      if (filterDateMode === 'today') {
+        matchesDate = paymentDate === todayDateStr;
+      } else if (filterDateMode === 'custom' && filterCustomDate) {
+        matchesDate = paymentDate === filterCustomDate;
+      }
+
+      // Month filter: When filtering by specific date and filterDateAllMonths is true, match all months
+      const matchesMonth = (filterDateMode !== 'all' && filterDateAllMonths) || filterMonth === 'all' || p.month === filterMonth;
+      const matchesGrade = filterGrade === 'all' || p.grade === filterGrade;
+      const q = searchQuery.toLowerCase().trim();
+      const matchesSearch = !q || p.studentName.toLowerCase().includes(q) || String(p.id).toLowerCase().includes(q);
+
+      return matchesDate && matchesMonth && matchesGrade && matchesSearch;
+    });
+  }, [payments, filterDateMode, filterCustomDate, todayDateStr, filterDateAllMonths, filterMonth, filterGrade, searchQuery]);
+
+  const filteredTotalPaid = useMemo(() => {
+    return filteredPayments.reduce((acc, p) => acc + (Number(p.amountPaid) || 0), 0);
+  }, [filteredPayments]);
 
   const debtorsList = getDebtors();
 
   // Computations
   const totalReceivedForMonth = payments
-    .filter(p => p.month === filterMonth)
+    .filter(p => filterMonth === 'all' ? true : p.month === filterMonth)
     .reduce((acc, p) => acc + p.amountPaid, 0);
 
   const totalDuesExpectedForMonth = students
     .filter(s => s.status === 'approved')
     .reduce((acc, s) => {
-      return acc + dbEngine.calculateStudentDue(s, filterMonth);
+      return acc + dbEngine.calculateStudentDue(s, filterMonth === 'all' ? getCurrentArabicMonthName() : filterMonth);
     }, 0);
 
   const collectionPercentage = totalDuesExpectedForMonth > 0 
@@ -1225,13 +1278,20 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
             </button>
             <button
               onClick={() => setActiveSubTab('history')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 activeSubTab === 'history' 
-                  ? 'bg-slate-900 text-white' 
+                  ? 'bg-slate-900 text-white shadow-xs' 
                   : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}
             >
-              سجل المقبوضات
+              <span>سجل المقبوضات</span>
+              {todayPaymentsCount > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black font-mono ${
+                  activeSubTab === 'history' ? 'bg-emerald-500 text-white' : 'bg-emerald-100 text-emerald-800'
+                }`} title={`${todayPaymentsCount} عملية مقبوضات في تاريخ اليوم`}>
+                  {todayPaymentsCount} اليوم
+                </span>
+              )}
             </button>
             <button
               onClick={() => setActiveSubTab('add')}
@@ -1286,6 +1346,9 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               onChange={(e) => setFilterMonth(e.target.value)}
               className="px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs font-bold outline-none text-right transition-all"
             >
+              {activeSubTab === 'history' && (
+                <option value="all">كل الشهور المالية 🗓️</option>
+              )}
               {MONTHS.map(m => (
                 <option key={m} value={m}>{m}</option>
               ))}
@@ -1295,62 +1358,173 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
 
         {/* Filters shown ONLY on receipts history and debtors */}
         {(activeSubTab === 'history' || activeSubTab === 'debtors') && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="relative">
-              <Search className="absolute right-3 top-3 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="ابحث باسم الطالب أو الكود..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none transition-all"
-              />
-            </div>
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="relative">
+                <Search className="absolute right-3 top-3 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="ابحث باسم الطالب أو الكود..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none transition-all"
+                />
+              </div>
 
-            <div>
-              <select
-                value={filterGrade}
-                onChange={(e) => setFilterGrade(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all"
-              >
-                <option value="all">كل المراحل والصفوف الدراسية</option>
-                <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
-                <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
-                <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
-                <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
-                <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
-                <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
-              </select>
-            </div>
-
-            {/* Payment Status Filter */}
-            <div>
-              {activeSubTab === 'debtors' ? (
+              <div>
                 <select
-                  value={filterPaymentStatus}
-                  onChange={(e) => setFilterPaymentStatus(e.target.value as 'all' | 'paid' | 'unpaid')}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all font-bold text-slate-700"
+                  value={filterGrade}
+                  onChange={(e) => setFilterGrade(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all"
                 >
-                  <option value="unpaid">حالة السداد: غير المسددين 🔴</option>
-                  <option value="paid">حالة السداد: المسددين والمعفيين 🟢</option>
-                  <option value="all">حالة السداد: كل الحالات ⚪</option>
+                  <option value="all">كل المراحل والصفوف الدراسية</option>
+                  <option value="الصف الرابع الابتدائي">الصف الرابع الابتدائي</option>
+                  <option value="الصف الخامس الابتدائي">الصف الخامس الابتدائي</option>
+                  <option value="الصف السادس الابتدائي">الصف السادس الابتدائي</option>
+                  <option value="الصف الأول الإعدادي">الصف الأول الإعدادي</option>
+                  <option value="الصف الثاني الإعدادي">الصف الثاني الإعدادي</option>
+                  <option value="الصف الثالث الإعدادي">الصف الثالث الإعدادي</option>
                 </select>
-              ) : (
-                <div className="px-3 py-2 bg-slate-100 text-slate-400 border border-slate-200 rounded-lg text-xs text-center font-bold">
-                  حالة السداد: مسدد 🟢
-                </div>
-              )}
+              </div>
+
+              {/* In debtors: Payment status. In history: Date filter! */}
+              <div>
+                {activeSubTab === 'debtors' ? (
+                  <select
+                    value={filterPaymentStatus}
+                    onChange={(e) => setFilterPaymentStatus(e.target.value as 'all' | 'paid' | 'unpaid')}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs outline-none text-right transition-all font-bold text-slate-700"
+                  >
+                    <option value="unpaid">حالة السداد: غير المسددين 🔴</option>
+                    <option value="paid">حالة السداد: المسددين والمعفيين 🟢</option>
+                    <option value="all">حالة السداد: كل الحالات ⚪</option>
+                  </select>
+                ) : (
+                  <div className="space-y-1.5">
+                    <select
+                      value={filterDateMode}
+                      onChange={(e) => {
+                        const mode = e.target.value as 'all' | 'today' | 'custom';
+                        setFilterDateMode(mode);
+                        if (mode === 'today') {
+                          setFilterCustomDate(todayDateStr);
+                        }
+                      }}
+                      className={`w-full px-3 py-2 border rounded-lg text-xs outline-none text-right transition-all font-bold ${
+                        filterDateMode === 'today'
+                          ? 'bg-emerald-50 text-emerald-950 border-emerald-300 ring-1 ring-emerald-400 shadow-2xs'
+                          : filterDateMode === 'custom'
+                          ? 'bg-blue-50 text-blue-950 border-blue-300 ring-1 ring-blue-400 shadow-2xs'
+                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <option value="all">تصفية التاريخ: كل التواريخ 📋</option>
+                      <option value="today">تصفية التاريخ: تاريخ اليوم فقط ({todayDateStr}) ⚡</option>
+                      <option value="custom">تصفية التاريخ: تحديد تاريخ مخصص... 🗓️</option>
+                    </select>
+                    {filterDateMode === 'custom' && (
+                      <input
+                        type="date"
+                        value={filterCustomDate}
+                        onChange={(e) => setFilterCustomDate(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-blue-300 rounded-lg text-xs text-right outline-none font-bold text-blue-900 shadow-2xs"
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={handleExportPaymentsExcel}
+                  className="w-full px-4 py-2 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold rounded-lg flex items-center justify-center gap-1 transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {filterDateMode === 'today' ? 'تصدير مقبوضات اليوم إكسل' : 'تصدير السجل إكسل'}
+                </button>
+              </div>
             </div>
 
-            <div className="flex justify-end">
-              <button
-                onClick={handleExportPaymentsExcel}
-                className="w-full px-4 py-2 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold rounded-lg flex items-center justify-center gap-1 transition cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                تصدير السجل إكسل
-              </button>
-            </div>
+            {/* Quick Action Toolbar for Date Filtering in Receipts History */}
+            {activeSubTab === 'history' && (
+              <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2.5 border-t border-slate-100 bg-slate-50/70 p-2.5 rounded-xl">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-extrabold text-slate-500">تصفية سريعة:</span>
+                  
+                  {/* Today's filter button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (filterDateMode === 'today') {
+                        setFilterDateMode('all');
+                      } else {
+                        setFilterDateMode('today');
+                        setFilterCustomDate(todayDateStr);
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer inline-flex items-center gap-1.5 ${
+                      filterDateMode === 'today'
+                        ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400/40 scale-101'
+                        : 'bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs'
+                    }`}
+                    title="تصفية سجل المقبوضات حسب تاريخ اليوم بضغطة واحدة"
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>مقبوضات تاريخ اليوم ({todayDateStr})</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                      filterDateMode === 'today' ? 'bg-white/25 text-white' : 'bg-emerald-100 text-emerald-900'
+                    }`}>
+                      {todayPaymentsCount} عملية
+                    </span>
+                    {todayPaymentsTotal > 0 && (
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-black ${
+                        filterDateMode === 'today' ? 'bg-emerald-700 text-emerald-100' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      }`}>
+                        {todayPaymentsTotal} ج.م
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Show All Dates button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterDateMode('all');
+                      setFilterCustomDate('');
+                    }}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      filterDateMode === 'all'
+                        ? 'bg-slate-800 text-white shadow-2xs'
+                        : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}
+                  >
+                    عرض كل التواريخ 📋
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {filterDateMode !== 'all' && (
+                    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={filterDateAllMonths}
+                        onChange={(e) => setFilterDateAllMonths(e.target.checked)}
+                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>شمول كل الشهور المالية لهذا التاريخ</span>
+                    </label>
+                  )}
+
+                  <div className="text-[11px] font-bold text-slate-600 bg-white px-3 py-1 rounded-lg border border-slate-200 flex items-center gap-2 shadow-2xs">
+                    <span>العمليات:</span>
+                    <span className="text-slate-900 font-extrabold">{filteredPayments.length}</span>
+                    <span className="text-slate-300">|</span>
+                    <span>الإجمالي:</span>
+                    <span className="text-emerald-700 font-mono font-extrabold">{filteredTotalPaid} ج.م</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1360,6 +1534,49 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
         {/* SUBTAB 1: PAYMENTS HISTORY/LEDGER */}
         {activeSubTab === 'history' && (
           <div className="overflow-x-auto text-right">
+            {paymentSuccessFeedback && (
+              <div className="p-4 bg-emerald-50/90 border-b border-emerald-200 flex flex-wrap items-center justify-between gap-3 text-right animate-in fade-in duration-200">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                    <CheckCircle2 className="w-4.5 h-4.5" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-black text-emerald-950">{paymentSuccessFeedback.msg}</p>
+                    <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+                      تم التقييد في سجل المقبوضات — يمكنك معاينة أو طباعة الإيصال أو إرساله في أي وقت بالضغط على الزر المقابل للعملية.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openReceiptModal(paymentSuccessFeedback.payment, 'preview')}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="معاينة أو طباعة الإيصال عند الحاجة"
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>معاينة الإيصال عند الحاجة 🧾</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSendWhatsAppTextDirect(paymentSuccessFeedback.payment)}
+                    className="px-3 py-1.5 bg-white text-emerald-700 hover:bg-emerald-100 border border-emerald-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                    title="إرسال رسالة واتساب مباشرة لولي الأمر"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>إرسال واتساب 📲</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentSuccessFeedback(null)}
+                    className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-100 rounded-lg transition cursor-pointer"
+                    title="إغلاق الإشعار"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
             <table className="w-full text-xs text-right border-collapse">
               <thead>
                 <tr className="bg-slate-50/70 text-slate-600 font-bold border-b border-slate-200">
@@ -1369,41 +1586,66 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                   <th className="py-3 px-6">المبلغ المسدد</th>
                   <th className="py-3 px-6">المطلوب أساساً</th>
                   <th className="py-3 px-6">قناة وتاريخ السداد</th>
-                  <th className="py-3 px-6 text-left">العمليات</th>
+                  <th className="py-3 px-6 text-left whitespace-nowrap">العمليات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredPayments.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="text-center py-12 text-slate-400">
-                      لا توجد مدفوعات مقيدة لشهر {filterMonth} تتطابق مع التصفية.
+                      {filterDateMode === 'today' ? (
+                        <div className="space-y-2.5 max-w-md mx-auto py-3">
+                          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                            <Calendar className="w-6 h-6" />
+                          </div>
+                          <p className="text-sm font-bold text-slate-700">لا توجد مقبوضات مقيدة في تاريخ اليوم ({todayDateStr})</p>
+                          <p className="text-xs text-slate-400">لم يتم تسجيل أي عمليات تحصيل مالية بتاريخ اليوم حتى الآن، أو لا توجد نتائج تطابق معايير البحث.</p>
+                          <div className="pt-2 flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setFilterDateMode('all')}
+                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition cursor-pointer"
+                            >
+                              عرض كل التواريخ 📋
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveSubTab('add')}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition cursor-pointer"
+                            >
+                              + قيد سداد جديد
+                            </button>
+                          </div>
+                        </div>
+                      ) : filterDateMode === 'custom' && filterCustomDate ? (
+                        <div className="space-y-2.5 max-w-md mx-auto py-3">
+                          <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
+                            <Calendar className="w-6 h-6" />
+                          </div>
+                          <p className="text-sm font-bold text-slate-700">لا توجد مقبوضات مقيدة في تاريخ ({filterCustomDate})</p>
+                          <button
+                            type="button"
+                            onClick={() => { setFilterDateMode('all'); setFilterCustomDate(''); }}
+                            className="mt-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition cursor-pointer"
+                          >
+                            عرض كل التواريخ 📋
+                          </button>
+                        </div>
+                      ) : (
+                        <span>لا توجد مدفوعات مقيدة {filterMonth === 'all' ? '' : `لشهر ${filterMonth}`} تتطابق مع التصفية.</span>
+                      )}
                     </td>
                   </tr>
                 ) : (
                   filteredPayments.map((p) => {
-                    const phone = getParentPhoneForPayment(p);
                     return (
                       <tr key={p.id} className="hover:bg-slate-50/40 transition-colors">
                         <td className="py-3.5 px-6">
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex items-center gap-2">
                             <span className="font-bold text-slate-800 text-sm">{p.studentName}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleSendWhatsAppTextDirect(p)}
-                              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-md text-[11px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
-                              title={`إرسال رسالة واتساب نصية فوراً لولي أمر الطالب (${p.studentName}) لتأكيد سداد المصروفات`}
-                            >
-                              <MessageCircle className="w-3 h-3" />
-                              <span>واتساب 📲</span>
-                            </button>
                           </div>
-                          <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-1">
+                          <div className="text-[10px] text-slate-400 mt-0.5">
                             <span>كود المالية: {p.id}</span>
-                            {phone && (
-                              <span className="font-mono text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded font-bold">
-                                📱 {phone}
-                              </span>
-                            )}
                           </div>
                         </td>
                         <td className="py-3.5 px-6 text-slate-650">{p.grade}</td>
@@ -1416,35 +1658,42 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                         <td className="py-3.5 px-6 font-bold text-slate-500 font-mono">{p.amountDue} ج.م</td>
                         <td className="py-3.5 px-6 font-mono space-y-0.5 text-slate-600">
                           <div className="font-bold text-xs">{p.paymentMethod}</div>
-                          <div className="text-[10px] text-slate-400">{p.date}</div>
+                          <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
+                            <span>{p.date}</span>
+                            {(p.date || '').split('T')[0] === todayDateStr && (
+                              <span className="bg-emerald-100 text-emerald-800 text-[9px] px-1.5 py-0.2 rounded font-sans font-black shadow-2xs">
+                                اليوم ⚡
+                              </span>
+                            )}
+                          </div>
                         </td>
-                        <td className="py-3.5 px-6 text-left space-x-1.5 space-x-reverse">
-                          <button
-                            type="button"
-                            onClick={() => handleSendWhatsAppTextDirect(p)}
-                            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold shadow-xs"
-                            title="إرسال رسالة واتساب نصية فوراً لولي الأمر بضغطة واحدة"
-                          >
-                            <MessageCircle className="w-3.5 h-3.5" />
-                            <span>إرسال واتساب 📲</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openReceiptModal(p, 'preview')}
-                            className="px-2.5 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 rounded-lg inline-flex items-center gap-1 transition cursor-pointer text-[11px] font-bold"
-                            title="معاينة وطباعة وتعديل وتنزيل إيصال الاستلام"
-                          >
-                            <Receipt className="w-3.5 h-3.5 text-slate-600" />
-                            <span>الإيصال 🧾</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeletingPayment(p)}
-                            className="p-1.5 bg-red-50 text-red-650 hover:bg-red-100 border border-red-100 rounded-lg inline-flex items-center transition cursor-pointer"
-                            title="حذف العملية من الدفاتر"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                        <td className="py-3.5 px-6 text-left whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5 flex-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => handleSendWhatsAppTextDirect(p)}
+                              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg inline-flex items-center justify-center transition cursor-pointer shadow-xs shrink-0"
+                              title="إرسال رسالة واتساب نصية فوراً لولي الأمر بضغطة واحدة"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openReceiptModal(p, 'preview')}
+                              className="p-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 rounded-lg inline-flex items-center justify-center transition cursor-pointer shrink-0"
+                              title="معاينة وطباعة وتعديل وتنزيل إيصال الاستلام"
+                            >
+                              <Receipt className="w-3.5 h-3.5 text-slate-600" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeletingPayment(p)}
+                              className="p-1.5 bg-red-50 text-red-650 hover:bg-red-100 border border-red-100 rounded-lg inline-flex items-center justify-center transition cursor-pointer shrink-0"
+                              title="حذف العملية من الدفاتر"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1967,10 +2216,10 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               <button
                 type="submit"
                 disabled={!paymentForm.studentId}
-                className="px-6 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-slate-850 transition cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed"
+                className="px-6 py-2.5 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 hover:bg-slate-800 transition cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed shadow-xs"
               >
                 <Check className="w-4 h-4" />
-                تحصيل دفعة وإصدار سند الإيصال
+                تسجيل وحفظ عملية التحصيل في الدفاتر
               </button>
             </div>
           </form>
@@ -3351,6 +3600,20 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING TOAST FEEDBACK WHEN RECEIPT MODAL IS CLOSED */}
+      {whatsAppToast && !selectedReceiptPayment && (
+        <div className="fixed bottom-6 left-6 z-50 max-w-md animate-in slide-in-from-bottom-5 fade-in duration-200 pointer-events-auto">
+          <div className={`p-4 rounded-xl text-xs font-bold flex items-center gap-3 shadow-xl border ${
+            whatsAppToast.type === 'error' ? 'bg-red-50 text-red-900 border-red-200' :
+            whatsAppToast.type === 'info' ? 'bg-blue-50 text-blue-900 border-blue-200' :
+            'bg-slate-900 text-white border-slate-700 shadow-slate-900/30'
+          }`}>
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            <span className="leading-snug">{whatsAppToast.msg}</span>
           </div>
         </div>
       )}
