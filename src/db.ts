@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, doesMonthPrecedeDate, RegistrationSettings, SiblingDiscountPolicy, normalizePhoneNumber, ALL_GRADES, ReceiptSettings, DEFAULT_RECEIPT_SETTINGS } from './types';
+import { Student, Group, Payment, Attendance, Exam, ExamScore, WhatsAppTemplate, GradeType, ExemptionType, MonthlyExemption, StudentDiscountsBreakdown, doesMonthPrecedeDate, RegistrationSettings, SiblingDiscountPolicy, normalizePhoneNumber, ALL_GRADES, ReceiptSettings, DEFAULT_RECEIPT_SETTINGS } from './types';
 import { syncEntityToFirebase, uploadBackupToFirebase, downloadBackupFromFirebase, fetchEntityFromFirebase, getPendingQueue, getItemHashes, setItemHashes, computeEntityHash } from './firebase';
 
 // Price mapping for each grade
@@ -596,43 +596,115 @@ class LocalDatabase {
     return this.isMonthOutsideBillingRange(month, startMonth);
   }
 
-  public calculateStudentDue(student: Student, month: string): number {
+  public getStudentBasePrice(student: Student): { basePrice: number; isCustomPrice: boolean; customPriceSource?: 'student' | 'group' } {
     const prices = this.getPrices();
     let basePrice = prices[student.grade] || 0;
+    let isCustomPrice = false;
+    let customPriceSource: 'student' | 'group' | undefined = undefined;
 
-    // Check individual student custom price or special group custom price override
     if (student.customPrice !== undefined && student.customPrice > 0) {
       basePrice = student.customPrice;
+      isCustomPrice = true;
+      customPriceSource = 'student';
     } else if (student.groupId) {
       const group = this.getGroups().find(g => g.id === student.groupId);
       if (group && group.customPrice !== undefined && group.customPrice > 0) {
         basePrice = group.customPrice;
+        isCustomPrice = true;
+        customPriceSource = 'group';
       }
     }
-    
-    // Check global start & end month billing range
-    if (this.isMonthOutsideBillingRange(month)) {
-      return 0;
+
+    return { basePrice, isCustomPrice, customPriceSource };
+  }
+
+  public getStudentDiscountsBreakdown(student: Student, month: string): StudentDiscountsBreakdown {
+    const { basePrice, isCustomPrice, customPriceSource } = this.getStudentBasePrice(student);
+
+    const outsideBillingRange = this.isMonthOutsideBillingRange(month);
+    const precedesRegistration = doesMonthPrecedeDate(month, student.createdAt);
+
+    if (outsideBillingRange || precedesRegistration) {
+      return {
+        basePrice,
+        isCustomPrice,
+        customPriceSource,
+        isFullExemption: false,
+        gradeDiscount: 0,
+        permanentDiscount: 0,
+        monthlyDiscount: 0,
+        totalDiscount: 0,
+        finalDue: 0,
+        precedesRegistration,
+        outsideBillingRange,
+      };
     }
-    
-    // Also check registration date check
-    if (doesMonthPrecedeDate(month, student.createdAt)) {
-      return 0;
+
+    // Check specific month exemption for this student if present (إعفاء شهري مخصص)
+    let mEx: MonthlyExemption | undefined = undefined;
+    if (student.monthlyExemptions) {
+      mEx = student.monthlyExemptions[month];
+      if (!mEx) {
+        for (const [mKey, val] of Object.entries(student.monthlyExemptions)) {
+          if (month.includes(mKey) || mKey.includes(month)) {
+            mEx = val;
+            break;
+          }
+        }
+      }
     }
-    
-    // Get grade month discount
+
+    // Full exemption check: whether from permanent student status or this month's status
+    const isPermanentFull = student.exemptionType === 'full';
+    const isMonthlyFull = mEx?.type === 'full';
+    if (isPermanentFull || isMonthlyFull) {
+      return {
+        basePrice,
+        isCustomPrice,
+        customPriceSource,
+        isFullExemption: true,
+        fullExemptionSource: (isPermanentFull && isMonthlyFull) ? 'both' : isPermanentFull ? 'permanent' : 'monthly',
+        gradeDiscount: 0,
+        permanentDiscount: 0,
+        monthlyDiscount: 0,
+        totalDiscount: basePrice,
+        finalDue: 0,
+        precedesRegistration: false,
+        outsideBillingRange: false,
+      };
+    }
+
+    // 1. Grade-Month discount (خصم دفعة المرحلة لهذا الشهر إن وجد)
     const discounts = this.getGradeMonthDiscounts();
     const gradeDiscount = discounts.find(d => d.grade === student.grade && d.month === month)?.discount || 0;
-    
-    const effectiveBasePrice = Math.max(0, basePrice - gradeDiscount);
-    
-    if (student.exemptionType === 'full') {
-      return 0;
-    } else if (student.exemptionType === 'partial') {
-      return Math.max(0, effectiveBasePrice - student.discountAmount);
-    } else {
-      return effectiveBasePrice;
-    }
+
+    // 2. Previously registered permanent discount on student (إعفاء جزئي عام أو خصم إخوة مسجل مسبقاً)
+    const permanentDiscount = student.exemptionType === 'partial' ? (student.discountAmount || 0) : 0;
+
+    // 3. Month-specific exceptional partial discount (إعفاء أو خصم جزئي استثنائي للشهر المحدد)
+    const monthlyDiscount = (mEx && mEx.type === 'partial') ? (mEx.discountAmount || 0) : 0;
+
+    // All registered discounts of ANY type are fully accounted for cumulatively
+    const totalDiscount = Math.min(basePrice, gradeDiscount + permanentDiscount + monthlyDiscount);
+    const finalDue = Math.max(0, basePrice - totalDiscount);
+
+    return {
+      basePrice,
+      isCustomPrice,
+      customPriceSource,
+      isFullExemption: false,
+      gradeDiscount,
+      permanentDiscount,
+      monthlyDiscount,
+      totalDiscount,
+      finalDue,
+      precedesRegistration: false,
+      outsideBillingRange: false,
+    };
+  }
+
+  public calculateStudentDue(student: Student, month: string): number {
+    return this.getStudentDiscountsBreakdown(student, month).finalDue;
   }
 
   // Firebase configuration toggle

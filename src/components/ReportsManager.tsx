@@ -445,21 +445,32 @@ export default function ReportsManager({
   }, [activeStudents, payments, selectedMonth, prices]);
 
   const handleExportFinancialToExcel = () => {
-    const data = financialStats.list.map(item => ({
-      'كود الطالب': item.student.code,
-      'الاسم': item.student.name,
-      'الصف الدراسي': item.student.grade,
-      'المجموعة': groups.find(g => g.id === item.student.groupId)?.name || 'غير محدد',
-      'تليفون ولي الأمر': item.student.parentPhone,
-      'الشهر المالي': selectedMonth,
-      'المبلغ المطلوب ج.م': item.amountDue,
-      'المسدد ج.م': item.paid,
-      'المتبقي ج.م': item.remaining,
-      'حالة السداد': 
-        item.status === 'fully_paid' ? 'مسدد بالكامل' : 
-        item.status === 'partially_paid' ? 'مسدد جزئياً' : 
-        item.status === 'exempted' ? 'معفى / غير مطالب' : 'غير مسدد'
-    }));
+    const data = financialStats.list.map(item => {
+      const breakdown = dbEngine.getStudentDiscountsBreakdown(item.student, selectedMonth);
+      const discountDetails: string[] = [];
+      if (breakdown.permanentDiscount > 0) discountDetails.push(`دائم/إخوة: ${breakdown.permanentDiscount} ج.م`);
+      if (breakdown.monthlyDiscount > 0) discountDetails.push(`شهري: ${breakdown.monthlyDiscount} ج.م`);
+      if (breakdown.gradeDiscount > 0) discountDetails.push(`دفعة: ${breakdown.gradeDiscount} ج.م`);
+
+      return {
+        'كود الطالب': item.student.code,
+        'الاسم': item.student.name,
+        'الصف الدراسي': item.student.grade,
+        'المجموعة': groups.find(g => g.id === item.student.groupId)?.name || 'غير محدد',
+        'تليفون ولي الأمر': item.student.parentPhone,
+        'الشهر المالي': selectedMonth,
+        'السعر الأساسي ج.م': breakdown.basePrice,
+        'إجمالي الخصومات المسجلة ج.م': breakdown.totalDiscount,
+        'تفاصيل الخصومات المطبقة': discountDetails.join(' + ') || (breakdown.isFullExemption ? 'إعفاء كلي 100%' : 'بدون خصم'),
+        'المبلغ المطلوب ج.م': item.amountDue,
+        'المسدد ج.م': item.paid,
+        'المتبقي ج.م': item.remaining,
+        'حالة السداد': 
+          item.status === 'fully_paid' ? 'مسدد بالكامل' : 
+          item.status === 'partially_paid' ? 'مسدد جزئياً' : 
+          item.status === 'exempted' ? 'معفى / غير مطالب' : 'غير مسدد'
+      };
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();

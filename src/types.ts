@@ -26,6 +26,28 @@ export type StudentStatus = 'pending' | 'approved' | 'rejected';
 
 export type ExemptionType = 'none' | 'full' | 'partial';
 
+export interface MonthlyExemption {
+  type: ExemptionType;
+  discountAmount: number; // قيمة الخصم الجزئي لهذا الشهر (ج.م)
+  reason?: string; // سبب الإعفاء الجزئي لهذا الشهر (اختياري)
+  updatedAt?: string;
+}
+
+export interface StudentDiscountsBreakdown {
+  basePrice: number;
+  isCustomPrice: boolean;
+  customPriceSource?: 'student' | 'group';
+  isFullExemption: boolean;
+  fullExemptionSource?: 'permanent' | 'monthly' | 'both';
+  gradeDiscount: number;
+  permanentDiscount: number; // General partial exemption or sibling discount registered on student
+  monthlyDiscount: number; // Specific partial exemption for this month
+  totalDiscount: number;
+  finalDue: number;
+  precedesRegistration: boolean;
+  outsideBillingRange: boolean;
+}
+
 export interface Student {
   id: string;
   code: string; // Dynamic code like S-1002
@@ -44,6 +66,7 @@ export interface Student {
   exemptionType: ExemptionType;
   discountAmount: number; // For partial exemptions
   customPrice?: number; // سعر اشتراك مخصص فردي للطالب (اختياري)
+  monthlyExemptions?: Record<string, MonthlyExemption>; // إعفاءات الشهور المحددة (جزئي أو كلي) للطالب
   isSiblingApproved?: boolean; // Whether duplicate accounts have been approved as siblings
   createdAt: string;
 }
