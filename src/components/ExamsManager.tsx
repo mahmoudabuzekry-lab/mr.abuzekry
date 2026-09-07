@@ -5,11 +5,36 @@
 
 import React, { useState } from 'react';
 import { dbEngine } from '../db';
-import { Student, Exam, ExamScore, GradeType } from '../types';
+import { Student, Exam, ExamScore, GradeType, normalizePhoneNumber, WhatsAppTemplate } from '../types';
 import { 
   FileText, Award, Calendar, BookOpen, Search, Plus, Trash2, Edit, X, Check,
-  TrendingUp, AlertTriangle, Users, BarChart2, Star, MessageCircle, Copy, ShieldAlert, CheckCircle
+  TrendingUp, AlertTriangle, Users, BarChart2, Star, MessageCircle, Copy, ShieldAlert, CheckCircle,
+  Settings, RotateCcw, Send, ExternalLink, Sliders, CheckCircle2, MessageSquare, Phone
 } from 'lucide-react';
+
+export const DEFAULT_EXAM_WHATSAPP_TEMPLATE = 
+`أولياء الأمور الأفاضل، يسر الأستاذ محمود أبوذكري إحاطتكم بنتيجة الطالب/الطالبة *[اسم_الطالب]* في *[اسم_الاختبار]* لمادة العلوم.
+📊 الدرجة المكتسبة: *[الدرجة]* من *[الدرجة_النهائية]* (النسبة: *[النسبة]*).
+🌟 التقييم العام: *[التقييم]*.
+📝 ملاحظات المعلم: *[ملاحظات]*.
+نتطلع لدوام الاجتهاد والتفوق المستمر بإذن الله.
+مع تحيات الأستاذ محمود أبوذكري.`;
+
+export const EXAM_TEMPLATE_VARIABLES = [
+  { label: 'اسم الطالب', tag: '[اسم_الطالب]' },
+  { label: 'كود الطالب', tag: '[كود_الطالب]' },
+  { label: 'اسم الاختبار', tag: '[اسم_الاختبار]' },
+  { label: 'الدرجة المكتسبة', tag: '[الدرجة]' },
+  { label: 'الدرجة النهائية', tag: '[الدرجة_النهائية]' },
+  { label: 'النسبة المئوية', tag: '[النسبة]' },
+  { label: 'التقييم العام', tag: '[التقييم]' },
+  { label: 'ملاحظات المعلم', tag: '[ملاحظات]' },
+  { label: 'الصف الدراسي', tag: '[الصف_الدراسي]' },
+  { label: 'اسم المجموعة', tag: '[اسم_المجموعة]' },
+  { label: 'تاريخ الاختبار', tag: '[تاريخ_الاختبار]' },
+  { label: 'ترتيب الطالب', tag: '[ترتيب_الطالب]' },
+  { label: 'اسم المعلم', tag: '[اسم_المعلم]' }
+];
 
 interface ExamsManagerProps {
   students: Student[];
@@ -36,6 +61,156 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
   // Scores state during console entry
   const [scoreEntryBuffer, setScoreEntryBuffer] = useState<Record<string, { score: number; notes: string }>>({});
   const [searchRosterQuery, setSearchRosterQuery] = useState('');
+
+  // WhatsApp Exam Message Template Customization & Student Messaging States
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [templateEditText, setTemplateEditText] = useState('');
+  const [customMessageModal, setCustomMessageModal] = useState<{
+    isOpen: boolean;
+    student: Student | null;
+    score: number;
+    maxScore: number;
+    notes: string;
+    rank?: number;
+    messageText: string;
+    copied: boolean;
+  }>({
+    isOpen: false,
+    student: null,
+    score: 0,
+    maxScore: 20,
+    notes: '',
+    rank: undefined,
+    messageText: '',
+    copied: false
+  });
+
+  const QUICK_PHRASES = [
+    '🌟 ما شاء الله، أداء ممتاز وفائق وتفوق مستمر!',
+    '👏 مجهود رائع ومبذول، فخورين بك استمر على هذا النهج.',
+    '⚠️ مستوى متوسط، يرجى بذل مزيد من الجهد والتركيز في حل التدريبات.',
+    '📌 يرجى مراجعة الأسئلة غير الصحيحة وحل نموذج الاختبار مرة أخرى.',
+    '📞 برجاء تواصل ولي الأمر هاتفياً مع الأستاذ للاطمئنان والتنسيق.'
+  ];
+
+  const getActiveExamTemplate = (): string => {
+    const templates = dbEngine.getTemplates();
+    const examTemplate = templates.find(t => t.type === 'exam_result');
+    return examTemplate?.text || DEFAULT_EXAM_WHATSAPP_TEMPLATE;
+  };
+
+  const formatExamMessage = (
+    templateText: string,
+    params: {
+      studentName: string;
+      studentCode?: string;
+      examTitle: string;
+      score: number;
+      maxScore: number;
+      assessmentLabel: string;
+      notes?: string;
+      grade?: string;
+      groupName?: string;
+      examDate?: string;
+      rank?: number | string;
+      teacherName?: string;
+    }
+  ): string => {
+    const pct = params.maxScore > 0 ? Math.round((params.score / params.maxScore) * 100) : 0;
+    const teacher = params.teacherName || 'الأستاذ محمود أبوذكري';
+    const notesClean = params.notes?.trim() ? params.notes.trim() : 'لا توجد ملاحظات إضافية';
+    
+    return templateText
+      .replace(/\[(اسم_الطالب|الطالب|اسم_الطالبة)\]/g, params.studentName || '')
+      .replace(/\[(كود_الطالب|الكود)\]/g, params.studentCode || '')
+      .replace(/\[(اسم_الاختبار|الاختبار|عنوان_الاختبار)\]/g, params.examTitle || '')
+      .replace(/\[(الدرجة|درجة_الطالب|درجة)\]/g, String(params.score))
+      .replace(/\[(الدرجة_النهائية|الدرجة_القصوى|النهاية_العظمى)\]/g, String(params.maxScore))
+      .replace(/\[(النسبة|النسبة_المئوية)\]/g, `${pct}%`)
+      .replace(/\[(التقييم|مستوى_التقييم|المستوى)\]/g, params.assessmentLabel || '')
+      .replace(/\[(الملاحظات|ملاحظات|ملاحظة)\]/g, notesClean)
+      .replace(/\[(الصف_الدراسي|الصف|المرحلة)\]/g, params.grade || '')
+      .replace(/\[(اسم_المجموعة|المجموعة)\]/g, params.groupName || '')
+      .replace(/\[(تاريخ_الاختبار|التاريخ)\]/g, params.examDate || '')
+      .replace(/\[(ترتيب_الطالب|الترتيب|المركز)\]/g, params.rank !== undefined ? String(params.rank) : '—')
+      .replace(/\[(اسم_المعلم|المعلم|الأستاذ)\]/g, teacher);
+  };
+
+  const createWhatsAppUrl = (phone: string, text: string): string => {
+    let clean = normalizePhoneNumber(phone);
+    if (clean.startsWith('01') && clean.length === 11) {
+      clean = '20' + clean.substring(1);
+    } else if (clean.startsWith('0')) {
+      clean = '20' + clean.substring(1);
+    }
+    return `https://wa.me/${clean}?text=${encodeURIComponent(text)}`;
+  };
+
+  const handleOpenTemplateModal = () => {
+    const current = getActiveExamTemplate();
+    setTemplateEditText(current);
+    setIsTemplateModalOpen(true);
+  };
+
+  const handleSaveTemplate = () => {
+    const list = dbEngine.getTemplates();
+    const existingIndex = list.findIndex(t => t.type === 'exam_result');
+    let updated: WhatsAppTemplate[];
+    if (existingIndex >= 0) {
+      updated = list.map((t, idx) => idx === existingIndex ? { ...t, text: templateEditText.trim() } : t);
+    } else {
+      updated = [...list, {
+        id: `t_exam_${Date.now()}`,
+        title: 'إشعار نتيجة اختبار دوري 🏆',
+        type: 'exam_result',
+        text: templateEditText.trim()
+      }];
+    }
+    dbEngine.setTemplates(updated);
+    setIsTemplateModalOpen(false);
+    setShowSuccessMessage('تم حفظ وتحديث قالب رسائل نتائج الاختبارات بنجاح!');
+    setTimeout(() => setShowSuccessMessage(null), 3000);
+    onRefresh();
+  };
+
+  const handleOpenStudentMessageModal = (
+    student: Student,
+    score: number,
+    notes: string = '',
+    rank?: number
+  ) => {
+    if (!activeExam) return;
+    const groups = dbEngine.getGroups();
+    const group = groups.find(g => g.id === student.groupId);
+    const assess = getAssessmentText(score, activeExam.maxScore);
+    const tpl = getActiveExamTemplate();
+
+    const text = formatExamMessage(tpl, {
+      studentName: student.name,
+      studentCode: student.code,
+      examTitle: activeExam.title,
+      score,
+      maxScore: activeExam.maxScore,
+      assessmentLabel: assess.label,
+      notes,
+      grade: student.grade,
+      groupName: group?.name || 'مجموعة عامة',
+      examDate: activeExam.date,
+      rank,
+      teacherName: 'الأستاذ محمود أبوذكري'
+    });
+
+    setCustomMessageModal({
+      isOpen: true,
+      student,
+      score,
+      maxScore: activeExam.maxScore,
+      notes,
+      rank,
+      messageText: text,
+      copied: false
+    });
+  };
 
   const handleCreateExam = (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,22 +317,24 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
   };
 
   // WhatsApp Message Composer for Exam
-  const composeWhatsAppExamLink = (studentName: string, score: number, parentPhone: string) => {
+  const composeWhatsAppExamLink = (studentName: string, score: number, parentPhone: string, notes?: string, rank?: number) => {
     if (!activeExam) return '';
-    const pct = (score / activeExam.maxScore) * 100;
-    let label = 'ممتاز ومتميز جداً';
-    if (pct < 50) label = 'ضعيف ويحتاج اهتمام ومتابعة واجباته بانتظام';
-    else if (pct < 75) label = 'جيد ويحتاج مراجعة طفيفة للحفاظ على التفوق';
-
-    const text = `أولياء الأمور الأفاضل، يسر الأستاذ محمود أبوذكري إحاطتكم بنتيجة الطالب/الطالبة *[${studentName}]* في *[${activeExam.title}]* لمادة العلوم.\nالدرجة: *[${score}]* من *[${activeExam.maxScore}]*.\nالتقييم العام: *[${label}]*. نتطلع لدوام الاجتهاد والتميز. الأستاذ محمود أبوذكري.`;
+    const assess = getAssessmentText(score, activeExam.maxScore);
+    const tpl = getActiveExamTemplate();
+    const text = formatExamMessage(tpl, {
+      studentName,
+      examTitle: activeExam.title,
+      score,
+      maxScore: activeExam.maxScore,
+      assessmentLabel: assess.label,
+      notes,
+      grade: activeExam.grade,
+      examDate: activeExam.date,
+      rank,
+      teacherName: 'الأستاذ محمود أبوذكري'
+    });
     
-    // Clean parent number
-    let cleanPhone = parentPhone.replace(/\D/g, '');
-    if (cleanPhone.startsWith('01')) {
-      cleanPhone = `20${cleanPhone}`; // Add Egypt code
-    }
-    
-    return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
+    return createWhatsAppUrl(parentPhone, text);
   };
 
   return (
@@ -168,7 +345,16 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
           <h3 className="font-bold text-slate-850 text-base">دفتر الاختبارات والدرجات والتقييم الأكاديمي</h3>
           <p className="text-slate-500 text-xs mt-1">تتبع درجات المتعلمين، إصدار لوائح الشرف والترتيب وتحديد المتعثرين لدعمهم العلمي.</p>
         </div>
-        <div className="flex space-x-1.5 space-x-reverse mt-3 sm:mt-0">
+        <div className="flex flex-wrap gap-1.5 mt-3 sm:mt-0">
+          <button
+            type="button"
+            onClick={handleOpenTemplateModal}
+            className="px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 shadow-2xs"
+            title="التحكم في نص قالب رسائل نتائج الاختبارات لولي الأمر وتعديل المتغيرات"
+          >
+            <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+            <span>تخصيص قالب رسالة ولي الأمر 💬</span>
+          </button>
           <button
             onClick={() => setActiveSubTab('list')}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
@@ -351,7 +537,16 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
               <strong className="text-sm font-bold text-slate-800 font-sans">{examStudents.length} طلاب مسجلين</strong>
             </div>
 
-            <div className="self-center flex space-x-2 space-x-reverse justify-end">
+            <div className="self-center flex flex-wrap gap-2 justify-end">
+              <button
+                type="button"
+                onClick={handleOpenTemplateModal}
+                className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-lg border border-emerald-200 cursor-pointer flex items-center gap-1.5 transition"
+                title="تخصيص نص قالب رسالة نتائج الاختبارات لولي الأمر"
+              >
+                <Sliders className="w-3.5 h-3.5 text-emerald-600" />
+                <span>تخصيص قالب الرسالة</span>
+              </button>
               <button
                 onClick={handleSaveGrades}
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-850 text-white font-bold text-xs rounded-lg shadow-xs transition cursor-pointer"
@@ -392,6 +587,7 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
                     <th className="py-3 px-5">الدرجة المكتسبة (من {activeExam.maxScore})</th>
                     <th className="py-3 px-5">التقييم التلقائي</th>
                     <th className="py-3 px-5">ملاحظات وشهادة الأستاذ بالنتيجة الكلية</th>
+                    <th className="py-3 px-5 text-left">إشعار ولي الأمر</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -441,6 +637,21 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
                               className="w-full max-w-xs px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-400 rounded-lg text-xs text-right outline-none"
                             />
                           </td>
+                          <td className="py-3.5 px-5 text-left">
+                            {s.parentPhone ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenStudentMessageModal(s, record.score, record.notes)}
+                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                                title={`معاينة وتعديل نص الرسالة وإرسالها لولي أمر الطالب (${s.name})`}
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" />
+                                <span>واتساب 💬</span>
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-medium">لا يوجد هاتف</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })
@@ -466,14 +677,25 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
       {activeSubTab === 'rankings' && activeExam && (
         <div className="space-y-6 text-right">
           {/* Back btn */}
-          <div className="flex justify-between items-center text-right">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 text-right">
             <h4 className="font-bold text-slate-900 text-sm">لوحة رصد تفوق والتحصيل العلمي: {activeExam.title}</h4>
-            <button
-              onClick={() => setActiveSubTab('list')}
-              className="px-3 py-1.5 bg-slate-50 hover:bg-slate-105 border border-slate-200 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-all"
-            >
-              رجوع لسجل الاختبارات
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleOpenTemplateModal}
+                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-lg border border-emerald-200 cursor-pointer flex items-center gap-1.5 transition"
+                title="تخصيص نص قالب رسالة نتائج الاختبارات لولي الأمر"
+              >
+                <Sliders className="w-3.5 h-3.5 text-emerald-600" />
+                <span>تخصيص قالب الرسالة</span>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('list')}
+                className="px-3 py-1.5 bg-slate-50 hover:bg-slate-105 border border-slate-200 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-all"
+              >
+                رجوع لسجل الاختبارات
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -566,15 +788,17 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
                             </td>
                             <td className="py-3.5 px-5 text-left">
                               {studentDetails && (
-                                <a
-                                  href={composeWhatsAppExamLink(studentDetails.name, score.score, studentDetails.parentPhone)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 label-shadow text-white rounded-lg text-[10px] font-bold flex items-center gap-1 w-fit inline-flex cursor-pointer transition-colors"
-                                >
-                                  <MessageCircle className="w-3.5 h-3.5" />
-                                  إشعار ولي الأمر
-                                </a>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenStudentMessageModal(studentDetails, score.score, score.notes, index + 1)}
+                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-[10px] font-bold flex items-center gap-1.5 w-fit cursor-pointer transition shadow-2xs"
+                                    title={`معاينة وتعديل نص الرسالة وإرسالها لولي أمر الطالب (${studentDetails.name})`}
+                                  >
+                                    <MessageCircle className="w-3.5 h-3.5" />
+                                    <span>إشعار ولي الأمر 💬</span>
+                                  </button>
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -584,6 +808,290 @@ export default function ExamsManager({ students, exams, examScores, onRefresh }:
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TEMPLATE CUSTOMIZATION MODAL */}
+      {isTemplateModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 text-right space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 border border-slate-200 max-h-[92vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-100">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    تخصيص قالب رسالة نتائج الاختبارات (واتساب)
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    التحكم في نص القالب التلقائي لرسائل أولياء الأمور وتعديل المتغيرات
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTemplateModalOpen(false)}
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 pl-1">
+              {/* Helper Note & Reset Button */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                <div className="flex items-center gap-2 text-slate-600">
+                  <Sliders className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <span>انقر على أي متغير بالأسفل لإدراجه تلقائياً في نهاية نص القالب:</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTemplateEditText(DEFAULT_EXAM_WHATSAPP_TEMPLATE)}
+                  className="text-[11px] font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1 cursor-pointer self-end sm:self-auto"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>استعادة القالب الافتراضي</span>
+                </button>
+              </div>
+
+              {/* Variables chips */}
+              <div className="flex flex-wrap gap-1.5">
+                {EXAM_TEMPLATE_VARIABLES.map(v => (
+                  <button
+                    key={v.tag}
+                    type="button"
+                    onClick={() => {
+                      setTemplateEditText(prev => `${prev} ${v.tag}`);
+                    }}
+                    className="px-2 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 hover:border-emerald-300 border border-slate-200 rounded-md text-[11px] font-bold text-slate-700 transition cursor-pointer"
+                  >
+                    +{v.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Text Area */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 block">نص القالب العام للرسالة:</label>
+                <textarea
+                  rows={6}
+                  value={templateEditText}
+                  onChange={(e) => setTemplateEditText(e.target.value)}
+                  dir="rtl"
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl text-xs leading-relaxed outline-none font-sans font-medium text-slate-900"
+                  placeholder="اكتب قالب رسالة الواتساب هنا..."
+                />
+              </div>
+
+              {/* Live Preview Box */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    معاينة حية لشكل الرسالة مع بيانات طالب تجريبية:
+                  </span>
+                  <span className="text-[10px] text-slate-400">ستظهر هكذا على هاتف ولي الأمر</span>
+                </div>
+                <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-3.5 text-xs text-slate-800 leading-relaxed whitespace-pre-line shadow-xs font-sans">
+                  {formatExamMessage(templateEditText, {
+                    studentName: 'أحمد محمود السعيد',
+                    studentCode: '1042',
+                    examTitle: activeExam?.title || 'اختبار منتصف الفصل الدراسي لمادة العلوم',
+                    score: 18.5,
+                    maxScore: activeExam?.maxScore || 20,
+                    assessmentLabel: 'ممتاز وفائق 🌟',
+                    notes: 'طالب متميز وإجاباته نموذجية ومكتملة الخطوات.',
+                    grade: activeExam?.grade || 'الصف الثالث الإعدادي',
+                    groupName: 'مجموعة الأحد والثلاثاء (4 مساءً)',
+                    examDate: activeExam?.date || new Date().toISOString().split('T')[0],
+                    rank: 1,
+                    teacherName: 'الأستاذ محمود أبوذكري'
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={handleSaveTemplate}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>حفظ القالب المعتمد</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsTemplateModalOpen(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STUDENT WHATSAPP MESSAGE CUSTOMIZATION & SENDING MODAL */}
+      {customMessageModal.isOpen && customMessageModal.student && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 text-right space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 border border-slate-200 max-h-[92vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-100">
+                  <MessageCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    إشعار ولي أمر الطالب بنتيجة الاختبار
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    يمكنك مراجعة وتعديل نص الرسالة وإضافة أي ملاحظات قبل الإرسال عبر واتساب
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomMessageModal(prev => ({ ...prev, isOpen: false }))}
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 pl-1">
+              {/* Student Details Card */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                <div>
+                  <span className="text-[10px] text-slate-400 block font-bold">الطالب</span>
+                  <strong className="text-slate-900 font-bold">{customMessageModal.student.name}</strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block font-bold">الدرجة المحققة</span>
+                  <strong className="text-emerald-700 font-bold font-sans">
+                    {customMessageModal.score} / {customMessageModal.maxScore}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block font-bold">التقييم الأكاديمي</span>
+                  <span className="font-bold text-slate-800">
+                    {getAssessmentText(customMessageModal.score, customMessageModal.maxScore).label}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block font-bold">هاتف ولي الأمر</span>
+                  <span className="font-mono text-slate-700 font-bold" dir="ltr">
+                    {customMessageModal.student.parentPhone || 'غير مسجل'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick phrases to add */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700">إضافة عبارة سريعة لنص الرسالة:</label>
+                  <button
+                    type="button"
+                    onClick={handleOpenTemplateModal}
+                    className="text-[11px] text-emerald-700 hover:text-emerald-800 flex items-center gap-1 font-bold cursor-pointer"
+                  >
+                    <Settings className="w-3 h-3" />
+                    <span>تعديل القالب العام</span>
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {QUICK_PHRASES.map((phrase, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setCustomMessageModal(prev => ({
+                          ...prev,
+                          messageText: `${prev.messageText}\n${phrase}`
+                        }));
+                      }}
+                      className="px-2.5 py-1 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-800 hover:border-emerald-300 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 transition cursor-pointer text-right"
+                    >
+                      + {phrase}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Editable Textarea */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-800 block">
+                  نص الرسالة المرسلة (قابل للتعديل بحرية):
+                </label>
+                <textarea
+                  rows={7}
+                  value={customMessageModal.messageText}
+                  onChange={(e) => setCustomMessageModal(prev => ({ ...prev, messageText: e.target.value }))}
+                  dir="rtl"
+                  className="w-full p-3.5 bg-white border border-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl text-xs leading-relaxed outline-none font-sans font-medium text-slate-900 shadow-2xs"
+                  placeholder="اكتب نص الرسالة التي ستصل إلى ولي الأمر..."
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {customMessageModal.student.parentPhone ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = createWhatsAppUrl(customMessageModal.student!.parentPhone, customMessageModal.messageText);
+                      window.open(url, '_blank');
+                    }}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition cursor-pointer"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>فتح محادثة واتساب الآن 🚀</span>
+                  </button>
+                ) : (
+                  <span className="text-xs text-amber-600 font-bold bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                    ⚠️ لا يتوفر رقم هاتف لولي الأمر للإرسال المباشر
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(customMessageModal.messageText);
+                    setCustomMessageModal(prev => ({ ...prev, copied: true }));
+                    setTimeout(() => setCustomMessageModal(prev => ({ ...prev, copied: false })), 2500);
+                  }}
+                  className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border border-slate-200"
+                >
+                  {customMessageModal.copied ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span className="text-emerald-700">تم النسخ!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      <span>نسخ النص</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setCustomMessageModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                إغلاق
+              </button>
             </div>
           </div>
         </div>
