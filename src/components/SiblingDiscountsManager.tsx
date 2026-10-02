@@ -37,6 +37,7 @@ interface SiblingDiscountsManagerProps {
   currentMonth: string;
   onRefresh: () => void;
   onSelectStudentForPayment: (studentId: string, month: string, dueAmount: number) => void;
+  onSelectFamilyForPayment?: (familyPhoneKey: string, siblings: Student[]) => void;
 }
 
 export default function SiblingDiscountsManager({
@@ -45,7 +46,8 @@ export default function SiblingDiscountsManager({
   prices,
   currentMonth,
   onRefresh,
-  onSelectStudentForPayment
+  onSelectStudentForPayment,
+  onSelectFamilyForPayment
 }: SiblingDiscountsManagerProps) {
   // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -923,6 +925,26 @@ export default function SiblingDiscountsManager({
                         )}
                       </div>
                     </div>
+
+                    {/* 1-Click Family Batch Payment Button */}
+                    {onSelectFamilyForPayment && (
+                      family.allPaid ? (
+                        <div className="px-3 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>مسددين جميعاً ✅</span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onSelectFamilyForPayment(family.phoneKey, family.siblings)}
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                          title="تسديد اشتراك جميع الأخوات معاً بنقرة واحدة لتوفير الوقت"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>سداد العائلة معاً ⚡</span>
+                        </button>
+                      )
+                    )}
 
                     {/* Quick Family Preset Dropdown / Buttons */}
                     <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1">

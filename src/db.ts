@@ -1189,6 +1189,26 @@ class LocalDatabase {
     return newPayment;
   }
 
+  public addPayments(paymentsData: Omit<Payment, 'id'>[]): Payment[] {
+    const payments = this.getPayments();
+    const created: Payment[] = [];
+    let counter = 0;
+    for (const item of paymentsData) {
+      let uniqueId = `p_${Date.now()}_${counter++}`;
+      while (payments.some(p => p.id === uniqueId) || created.some(p => p.id === uniqueId)) {
+        uniqueId = `p_${Date.now()}_${counter++}`;
+      }
+      const newPayment: Payment = {
+        ...item,
+        id: uniqueId
+      };
+      created.push(newPayment);
+    }
+    payments.push(...created);
+    this.setPayments(payments);
+    return created;
+  }
+
   public updatePayment(payment: Payment): void {
     const payments = this.getPayments().map(p => p.id === payment.id ? payment : p);
     this.setPayments(payments);

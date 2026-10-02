@@ -5,7 +5,13 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dbEngine } from '../db';
-import { Student, Payment, GradeType, ExemptionType, MonthlyExemption, doesMonthPrecedeDate, getCurrentArabicMonthName, normalizePhoneNumber, ReceiptSettings, DEFAULT_RECEIPT_SETTINGS, ALL_GRADES, formatReceiptWhatsAppMessage, DEFAULT_WHATSAPP_RECEIPT_TEMPLATE } from '../types';
+import { 
+  Student, Payment, GradeType, ExemptionType, MonthlyExemption, 
+  doesMonthPrecedeDate, getCurrentArabicMonthName, normalizePhoneNumber, 
+  ReceiptSettings, DEFAULT_RECEIPT_SETTINGS, ALL_GRADES, 
+  formatReceiptWhatsAppMessage, DEFAULT_WHATSAPP_RECEIPT_TEMPLATE,
+  SiblingPaymentItem, FamilyBatchPaymentData, formatFamilyReceiptWhatsAppMessage
+} from '../types';
 import { 
   DollarSign, Landmark, Filter, Search, Plus, Trash2, Printer, X, Download, 
   Settings, Check, TrendingUp, AlertTriangle, User, Calendar, Receipt, FileText, AlertCircle, ShieldAlert, CheckCircle,
@@ -160,6 +166,97 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     return Object.values(phoneGroups).filter(count => count > 1).length;
   }, [students]);
 
+  // Sibling families directory with current month payment status
+  const siblingFamiliesList = useMemo(() => {
+    const approvedStudents = students.filter(s => s.status === 'approved');
+    const phoneGroups: Record<string, Student[]> = {};
+    approvedStudents.forEach(st => {
+      const cleanPhone = normalizePhoneNumber(st.parentPhone || st.phone);
+      if (cleanPhone && cleanPhone.length >= 8) {
+        if (!phoneGroups[cleanPhone]) phoneGroups[cleanPhone] = [];
+        phoneGroups[cleanPhone].push(st);
+      }
+    });
+
+    const families: {
+      phoneKey: string;
+      parentPhone: string;
+      siblings: Student[];
+      totalDue: number;
+      totalDiscount: number;
+      allPaid: boolean;
+      unpaidCount: number;
+    }[] = [];
+
+    Object.entries(phoneGroups).forEach(([phoneKey, sibs]) => {
+      if (sibs.length > 1) {
+        const sorted = [...sibs].sort((a, b) => {
+          const tA = new Date(a.createdAt || 0).getTime();
+          const tB = new Date(b.createdAt || 0).getTime();
+          if (tA !== tB) return tA - tB;
+          return a.code.localeCompare(b.code);
+        });
+        const parentPhone = sorted[0].parentPhone || sorted[0].phone || phoneKey;
+        
+        let totalDue = 0;
+        let totalDiscount = 0;
+        let unpaidCount = 0;
+
+        sorted.forEach(s => {
+          const due = dbEngine.calculateStudentDue(s, filterMonth);
+          const basePrice = prices[s.grade] || 0;
+          totalDiscount += Math.max(0, basePrice - due);
+
+          const paid = payments
+            .filter(p => p.studentId === s.id && p.month === filterMonth)
+            .reduce((sum, p) => sum + p.amountPaid, 0);
+
+          const remaining = Math.max(0, due - paid);
+          totalDue += remaining;
+
+          if (paid < due && (due > 0 || s.exemptionType !== 'full')) {
+            unpaidCount++;
+          }
+        });
+
+        families.push({
+          phoneKey,
+          parentPhone,
+          siblings: sorted,
+          totalDue,
+          totalDiscount,
+          allPaid: unpaidCount === 0,
+          unpaidCount
+        });
+      }
+    });
+
+    return families.sort((a, b) => {
+      if (a.allPaid !== b.allPaid) return a.allPaid ? 1 : -1;
+      return b.siblings.length - a.siblings.length;
+    });
+  }, [students, payments, prices, filterMonth]);
+
+  // Family Batch Payment States
+  const [addPaymentSubMode, setAddPaymentSubMode] = useState<'single' | 'family'>('single');
+  const [familyPaymentOption, setFamilyPaymentOption] = useState<'family' | 'single'>('family'); // When student with siblings is selected
+  const [activeFamilyKey, setActiveFamilyKey] = useState<string | null>(null);
+  const [familySearchQuery, setFamilySearchQuery] = useState<string>('');
+  const [familyFilterStatus, setFamilyFilterStatus] = useState<'all' | 'unpaid' | 'paid'>('all');
+  const [selectedSiblingsForPayment, setSelectedSiblingsForPayment] = useState<Record<string, {
+    selected: boolean;
+    amountPaid: number;
+    month: string;
+    notes?: string;
+  }>>({});
+  const [familyBatchPaymentMethod, setFamilyBatchPaymentMethod] = useState<string>('نقدي');
+  const [familyBatchNotes, setFamilyBatchNotes] = useState<string>('');
+  const [familyBatchReceivedBy, setFamilyBatchReceivedBy] = useState<string>('');
+  const [familyBatchSuccess, setFamilyBatchSuccess] = useState<FamilyBatchPaymentData | null>(null);
+  const [familyBatchSuccessFeedback, setFamilyBatchSuccessFeedback] = useState<{ msg: string; data: FamilyBatchPaymentData } | null>(null);
+  const [isFamilyReceiptModalOpen, setIsFamilyReceiptModalOpen] = useState<boolean>(false);
+  const [selectedFamilyReceipt, setSelectedFamilyReceipt] = useState<FamilyBatchPaymentData | null>(null);
+
   // Record Payment search and filter states
   const [addSearchQuery, setAddSearchQuery] = useState('');
   const [addFilterGrade, setAddFilterGrade] = useState<string>('all');
@@ -306,6 +403,218 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
     const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank');
     triggerWhatsAppToast(cleanPhone ? `تم فتح واتساب لإرسال تذكير المصروفات لولي أمر (${student.name})!` : 'تم فتح واتساب لإرسال تذكير المصروفات!');
+  };
+
+  const handleSelectFamilyForBatchPayment = (
+    phoneKey: string,
+    customSiblings?: Student[],
+    targetMonth?: string
+  ) => {
+    const fam = siblingFamiliesList.find(f => f.phoneKey === phoneKey);
+    const sibs = customSiblings || fam?.siblings || [];
+    if (sibs.length === 0) return;
+
+    const m = targetMonth || filterMonth || getCurrentArabicMonthName();
+    const configMap: Record<string, { selected: boolean; amountPaid: number; month: string; notes?: string }> = {};
+
+    sibs.forEach(sib => {
+      const due = dbEngine.calculateStudentDue(sib, m);
+      const paid = payments
+        .filter(p => p.studentId === sib.id && p.month === m)
+        .reduce((sum, p) => sum + p.amountPaid, 0);
+      const remaining = Math.max(0, due - paid);
+      const isAlreadyPaid = (paid >= due && due > 0) || (due === 0 && sib.exemptionType === 'full');
+
+      configMap[sib.id] = {
+        selected: !isAlreadyPaid,
+        amountPaid: remaining > 0 ? remaining : due,
+        month: m,
+        notes: ''
+      };
+    });
+
+    if (Object.values(configMap).every(c => !c.selected) && sibs.length > 0) {
+      configMap[sibs[0].id].selected = true;
+    }
+
+    setSelectedSiblingsForPayment(configMap);
+    setActiveFamilyKey(phoneKey);
+    setFamilyBatchPaymentMethod('نقدي');
+    setFamilyBatchNotes('');
+    setFamilyBatchReceivedBy('');
+    setAddPaymentSubMode('family');
+    setFamilyPaymentOption('family');
+    setActiveSubTab('add');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleBatchFamilyPaymentSubmit = (e: React.FormEvent, familySiblings: Student[], parentPhone: string) => {
+    e.preventDefault();
+    const selectedSibs = familySiblings.filter(sib => selectedSiblingsForPayment[sib.id]?.selected);
+    if (selectedSibs.length === 0) {
+      triggerWhatsAppToast('يرجى تحديد طالب واحد على الأقل لإتمام السداد', 'error');
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const paymentsToCreate: Omit<Payment, 'id'>[] = [];
+    const items: SiblingPaymentItem[] = [];
+
+    selectedSibs.forEach(sib => {
+      const cfg = selectedSiblingsForPayment[sib.id] || {
+        selected: true,
+        amountPaid: dbEngine.calculateStudentDue(sib, filterMonth),
+        month: filterMonth
+      };
+      const targetMonth = cfg.month || filterMonth;
+      const paid = Number(cfg.amountPaid) || 0;
+      const due = dbEngine.calculateStudentDue(sib, targetMonth);
+      const grp = allGroups.find(g => g.id === sib.groupId);
+
+      paymentsToCreate.push({
+        studentId: sib.id,
+        studentName: sib.name,
+        grade: sib.grade,
+        month: targetMonth,
+        amountPaid: paid,
+        amountDue: due,
+        date: todayStr,
+        paymentMethod: familyBatchPaymentMethod || 'نقدي',
+        receivedBy: familyBatchReceivedBy || undefined,
+        notes: familyBatchNotes 
+          ? `${familyBatchNotes} (سداد عائلي مشترك للأخوات)`
+          : 'سداد عائلي مشترك للأخوات'
+      });
+
+      items.push({
+        studentId: sib.id,
+        studentName: sib.name,
+        studentCode: sib.code,
+        grade: sib.grade,
+        month: targetMonth,
+        amountPaid: paid,
+        amountDue: due,
+        basePrice: prices[sib.grade] || 0,
+        discountAmount: sib.discountAmount,
+        exemptionType: sib.exemptionType,
+        groupName: grp?.name
+      });
+    });
+
+    const created = dbEngine.addPayments(paymentsToCreate);
+    created.forEach((c, i) => {
+      if (items[i]) items[i].paymentId = c.id;
+    });
+
+    const totalPaid = items.reduce((s, it) => s + it.amountPaid, 0);
+    const totalDue = items.reduce((s, it) => s + it.amountDue, 0);
+    const totalDiscount = Math.max(0, totalDue - totalPaid);
+
+    const batchData: FamilyBatchPaymentData = {
+      familyPhone: parentPhone,
+      familyKey: activeFamilyKey || parentPhone,
+      parentPhone,
+      studentNames: items.map(i => i.studentName),
+      items,
+      totalPaid,
+      totalDue,
+      totalDiscount,
+      date: todayStr,
+      paymentMethod: familyBatchPaymentMethod || 'نقدي',
+      receivedBy: familyBatchReceivedBy || undefined,
+      notes: familyBatchNotes,
+      createdPaymentIds: created.map(c => c.id)
+    };
+
+    setFamilyBatchSuccess(batchData);
+    setIsFamilyReceiptModalOpen(false);
+    setFamilyBatchSuccessFeedback({
+      msg: `تم تسجيل وحفظ سداد اشتراك الإخوة (${batchData.studentNames.join(' و ')}) بنجاح في الدفاتر! إجمالي المسدد: ${batchData.totalPaid} ج.م ✅`,
+      data: batchData
+    });
+    triggerWhatsAppToast(`تم تسجيل وحفظ سداد اشتراك الإخوة (${batchData.studentNames.join(' و ')}) بمبلغ ${batchData.totalPaid} ج.م بنجاح ✅`, 'success');
+    onRefresh();
+  };
+
+  const handleSendFamilyWhatsApp = (familyData: FamilyBatchPaymentData) => {
+    const rawPhone = familyData.parentPhone;
+    const cleanPhone = normalizePhoneNumber(rawPhone);
+    const settings = dbEngine.getReceiptSettings();
+    const text = formatFamilyReceiptWhatsAppMessage(familyData, settings);
+    const url = cleanPhone
+      ? `https://wa.me/${cleanPhone.startsWith('0') ? '2' + cleanPhone : cleanPhone}?text=${encodeURIComponent(text)}`
+      : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+    triggerWhatsAppToast(`تم تجهيز وفتح واتساب لإرسال الإيصال العائلي الموحد لولي الأمر (${familyData.studentNames.join(' و ')})! 📲`);
+  };
+
+  const handlePrintFamilyReceipt = (familyData: FamilyBatchPaymentData) => {
+    const printElement = document.getElementById('family-receipt-print-area');
+    if (!printElement) return;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (!doc) {
+      window.print();
+      return;
+    }
+
+    let stylesHtml = '';
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((el) => {
+      stylesHtml += el.outerHTML;
+    });
+
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+        <head>
+          <title>إيصال سداد عائلي موحد - ${familyData.studentNames.join(' و ')}</title>
+          ${stylesHtml}
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+            body {
+              background-color: white !important;
+              color: #0f172a !important;
+              font-family: 'Cairo', sans-serif !important;
+              margin: 0;
+              padding: 20px;
+              direction: rtl;
+              text-align: right;
+            }
+            @media print {
+              body { padding: 0 !important; }
+              @page { margin: 10mm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div>
+            ${printElement.innerHTML}
+          </div>
+          <script>
+            window.addEventListener('load', () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.parent.document.body.removeChild(window.frameElement);
+                }, 100);
+              }, 150);
+            });
+          </script>
+        </body>
+      </html>
+    `);
+    doc.close();
   };
 
   const captureReceiptBlob = async (): Promise<Blob | null> => {
@@ -1049,6 +1358,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
       msg: `تم تسجيل وحفظ عملية التحصيل بنجاح في الدفاتر للطالب (${student.name}) بمبلغ ${paymentForm.amountPaid} ج.م عن شهر (${paymentForm.month}) ✅`,
       payment: recorded
     });
+    triggerWhatsAppToast(`تم تسجيل وحفظ سداد الطالب (${student.name}) بمبلغ ${paymentForm.amountPaid} ج.م بنجاح ✅`, 'success');
     setPaymentForm({
       studentId: '',
       month: paymentForm.month,
@@ -1056,7 +1366,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
       paymentMethod: 'نقدي',
       notes: ''
     });
-    setActiveSubTab('history');
+    // Do NOT navigate to 'history'; stay on the current page with confirmation message
   };
 
   const confirmDeletePayment = () => {
@@ -1886,13 +2196,670 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
           </div>
         )}
 
-        {/* SUBTAB 2: RECORD PAYMENT FORM */}
+        {/* SUBTAB 2: RECORD PAYMENT (SINGLE OR FAMILY BATCH) */}
         {activeSubTab === 'add' && (
-          <form onSubmit={handleRecordPayment} className="p-6 md:p-8 space-y-6 text-right">
-            <div>
-              <h3 className="font-bold text-slate-850 text-base">تسجيل وتحصيل معاملة اشتراك جديدة</h3>
-              <p className="text-slate-500 text-xs mt-1">يجرى توجيه المدفوعات وتحديد الخصومات المعفاة لمستحقي الدعم تلقائيًا وفق الإعداد المسبق للمتعلم.</p>
+          <div className="p-6 md:p-8 space-y-6 text-right">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="font-bold text-slate-850 text-base">تسجيل وتحصيل معاملة اشتراك جديدة</h3>
+                <p className="text-slate-500 text-xs mt-1">يجرى توجيه المدفوعات وتحديد الخصومات المعفاة لمستحقي الدعم تلقائيًا وفق الإعداد المسبق للمتعلم.</p>
+              </div>
+
+              {/* Mode Switcher: Single Student vs Family Batch */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-200/70 rounded-xl shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddPaymentSubMode('single');
+                    setActiveFamilyKey(null);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    addPaymentSubMode === 'single'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <User className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>سداد فردي لطالب</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddPaymentSubMode('family');
+                    setPaymentForm({ ...paymentForm, studentId: '', amountPaid: 0 });
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                    addPaymentSubMode === 'family'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>سداد الإخوة معاً ⚡</span>
+                  <span className={`text-[10px] font-mono px-2 py-0.2 rounded-full ${
+                    addPaymentSubMode === 'family' ? 'bg-indigo-700 text-amber-200' : 'bg-slate-300 text-slate-700'
+                  }`}>
+                    {siblingFamiliesList.length} عائلات
+                  </span>
+                </button>
+              </div>
             </div>
+
+            {/* INLINE PAYMENT CONFIRMATION ALERTS (CONFIRMATION MESSAGE ONLY, NO PAGE SWITCH) */}
+            {paymentSuccessFeedback && (
+              <div className="p-4 bg-emerald-50/95 border-2 border-emerald-500 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-right animate-in fade-in slide-in-from-top-2 duration-200 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-emerald-950">{paymentSuccessFeedback.msg}</p>
+                    <p className="text-xs text-emerald-700 font-semibold mt-0.5">
+                      تم قيد العملية في الدفاتر المالية وسجلات الاشتراكات بنجاح — النموذج جاهز لتسجيل المعاملة التالية فوراً.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleSendWhatsAppTextDirect(paymentSuccessFeedback.payment)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="إرسال رسالة واتساب لولي الأمر"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>إرسال واتساب 📲</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openReceiptModal(paymentSuccessFeedback.payment, 'preview')}
+                    className="px-3 py-1.5 bg-white text-emerald-800 hover:bg-emerald-100 border border-emerald-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                    title="معاينة أو طباعة الإيصال عند الرغبة"
+                  >
+                    <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>معاينة الإيصال 🧾</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentSuccessFeedback(null)}
+                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-emerald-100 rounded-lg transition cursor-pointer"
+                    title="إغلاق التنبيه"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {familyBatchSuccessFeedback && (
+              <div className="p-4 bg-emerald-50/95 border-2 border-emerald-500 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-right animate-in fade-in slide-in-from-top-2 duration-200 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <Sparkles className="w-5 h-5 text-amber-300" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-emerald-950">{familyBatchSuccessFeedback.msg}</p>
+                    <p className="text-xs text-emerald-700 font-semibold mt-0.5">
+                      تم قيد سندات القبض لجميع الأخوات في الدفاتر المحاسبية (المبلغ الإجمالي: {familyBatchSuccessFeedback.data.totalPaid} ج.م — عدد الأبناء: {familyBatchSuccessFeedback.data.items.length} طلاب).
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleSendFamilyWhatsApp(familyBatchSuccessFeedback.data)}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="إرسال إيصال عائلي موحد عبر واتساب"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>إرسال إيصال واتساب 📲</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePrintFamilyReceipt(familyBatchSuccessFeedback.data)}
+                    className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="طباعة إيصال عائلي موحد"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>طباعة الإيصال 🖨️</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsFamilyReceiptModalOpen(true)}
+                    className="px-3 py-1.5 bg-white text-indigo-800 hover:bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                    title="معاينة الإيصال العائلي المفصل"
+                  >
+                    <Receipt className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>معاينة الإيصال 🧾</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFamilyBatchSuccessFeedback(null)}
+                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-emerald-100 rounded-lg transition cursor-pointer"
+                    title="إغلاق التنبيه"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {addPaymentSubMode === 'family' ? (
+              <div className="space-y-6">
+                {/* Family Awareness Banner */}
+                <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-indigo-50 border border-indigo-200 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <h4 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                        <span>نظام تحصيل وسداد الإخوة معاً في نفس اليوم ⚡</span>
+                        <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-md">توفير الوقت والجهد</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-600 font-medium">
+                        نظراً لأن أغلب أولياء الأمور يسددون لجميع أبنائهم معاً، يتيح لك هذا النظام سداد رسوم جميع الأخوات دفعة واحدة مع تطبيق خصومات الإخوة تلقائياً وتوليد إيصال عائلي موحد ومشاركته فوراً.
+                      </p>
+                    </div>
+                  </div>
+                  {activeFamilyKey && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveFamilyKey(null)}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer shadow-xs"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>اختيار عائلة أخرى</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* If a family is selected for batch payment */}
+                {activeFamilyKey ? (
+                  (() => {
+                    const fam = siblingFamiliesList.find(f => f.phoneKey === activeFamilyKey);
+                    if (!fam) {
+                      return (
+                        <div className="p-8 text-center text-slate-400 text-xs bg-slate-50 rounded-xl">
+                          لم يتم العثور على بيانات العائلة المحددة.
+                        </div>
+                      );
+                    }
+
+                    const allSibs = fam.siblings;
+                    let batchTotalPaid = 0;
+                    let batchTotalBase = 0;
+                    let batchTotalDue = 0;
+                    let selectedCount = 0;
+
+                    allSibs.forEach(sib => {
+                      const isSelected = selectedSiblingsForPayment[sib.id]?.selected ?? true;
+                      const currentAmount = selectedSiblingsForPayment[sib.id]?.amountPaid !== undefined
+                        ? Number(selectedSiblingsForPayment[sib.id].amountPaid)
+                        : dbEngine.calculateStudentDue(sib, filterMonth);
+
+                      const baseP = prices[sib.grade] || 0;
+                      const dueP = dbEngine.calculateStudentDue(sib, filterMonth);
+
+                      if (isSelected) {
+                        selectedCount++;
+                        batchTotalPaid += currentAmount;
+                        batchTotalBase += baseP;
+                        batchTotalDue += dueP;
+                      }
+                    });
+
+                    const batchTotalSavings = Math.max(0, batchTotalBase - batchTotalDue);
+
+                    return (
+                      <div className="bg-white border-2 border-indigo-200 rounded-2xl p-5 space-y-5 shadow-sm animate-in fade-in duration-150">
+                        {/* Family Title Card */}
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-indigo-100 pb-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] bg-indigo-600 text-white font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs">
+                                <Sparkles className="w-3 h-3 text-amber-300" />
+                                عائلة إخوة بالسنتر
+                              </span>
+                              <span className="text-xs font-mono bg-indigo-50 text-indigo-900 px-2.5 py-0.5 rounded-md font-black border border-indigo-200">
+                                هاتف ولي الأمر: {fam.parentPhone}
+                              </span>
+                            </div>
+                            <h4 className="text-sm font-black text-slate-900">
+                              تحصيل اشتراك الإخوة: ({fam.siblings.map(s => s.name).join(' و ')}) لشهر ({filterMonth})
+                            </h4>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setActiveFamilyKey(null)}
+                            className="text-xs font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
+                          >
+                            تغيير العائلة / العودة للدليل
+                          </button>
+                        </div>
+
+                        {/* Siblings list checklist */}
+                        <div className="space-y-3">
+                          <span className="text-xs font-bold text-slate-700 block">
+                            قائمة الأبناء - حدد من ترغب بتحصيل اشتراكه مع إمكانية تعديل المبالغ أو تطبيق الخصم فورياً:
+                          </span>
+
+                          <div className="grid grid-cols-1 gap-2.5">
+                            {allSibs.map(sib => {
+                              const grp = allGroups.find(g => g.id === sib.groupId);
+                              const baseGradePrice = prices[sib.grade] || 0;
+                              const dueAmount = dbEngine.calculateStudentDue(sib, filterMonth);
+
+                              const prevPaidMonth = payments
+                                .filter(p => p.studentId === sib.id && p.month === filterMonth)
+                                .reduce((sum, p) => sum + p.amountPaid, 0);
+
+                              const isAlreadyPaid = (prevPaidMonth >= dueAmount && dueAmount > 0) || (dueAmount === 0 && sib.exemptionType === 'full');
+                              const remainingDue = Math.max(0, dueAmount - prevPaidMonth);
+
+                              const currentConfig = selectedSiblingsForPayment[sib.id] || {
+                                selected: !isAlreadyPaid,
+                                amountPaid: remainingDue > 0 ? remainingDue : dueAmount,
+                                month: filterMonth,
+                                notes: ''
+                              };
+
+                              return (
+                                <div
+                                  key={sib.id}
+                                  className={`p-3.5 rounded-xl border transition-all ${
+                                    currentConfig.selected
+                                      ? 'bg-slate-50 border-indigo-300 shadow-xs'
+                                      : 'bg-slate-50/50 border-slate-200 opacity-60'
+                                  }`}
+                                >
+                                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                                    <div className="flex items-center gap-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={currentConfig.selected}
+                                        onChange={(e) => {
+                                          setSelectedSiblingsForPayment(prev => ({
+                                            ...prev,
+                                            [sib.id]: {
+                                              ...currentConfig,
+                                              selected: e.target.checked,
+                                              amountPaid: currentConfig.amountPaid || (remainingDue > 0 ? remainingDue : dueAmount)
+                                            }
+                                          }));
+                                        }}
+                                        className="w-4.5 h-4.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                                      />
+                                      <div className="space-y-0.5">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-extrabold text-slate-900 text-xs sm:text-sm">
+                                            {sib.name}
+                                          </span>
+                                          <span className="text-[10px] font-mono bg-white text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200">
+                                            {sib.code}
+                                          </span>
+                                          {isAlreadyPaid && (
+                                            <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.2 rounded-md font-bold flex items-center gap-0.5">
+                                              <Check className="w-3 h-3 text-emerald-600" />
+                                              مسدد ({prevPaidMonth} ج.م)
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <div className="text-[11px] text-slate-500 font-semibold flex items-center gap-2 flex-wrap">
+                                          <span>{sib.grade}</span>
+                                          <span>•</span>
+                                          <span>المجموعة: {grp ? grp.name : 'غير محددة'}</span>
+                                          <span>•</span>
+                                          <span className="text-slate-600 font-bold">
+                                            الاشتراك: {baseGradePrice} ج.م
+                                          </span>
+                                          {sib.exemptionType === 'partial' && (
+                                            <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded font-extrabold text-[10px]">
+                                              خصم إخوة: -{sib.discountAmount} ج.م
+                                            </span>
+                                          )}
+                                          {sib.exemptionType === 'full' && (
+                                            <span className="text-purple-700 bg-purple-50 px-1.5 py-0.2 rounded font-extrabold text-[10px]">
+                                              إعفاء كامل 🎁
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Discount buttons & Amount to pay */}
+                                    <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
+                                      <div className="flex items-center gap-1 bg-slate-200/70 p-1 rounded-lg">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updated = { ...sib, exemptionType: 'partial' as const, discountAmount: 50 };
+                                            dbEngine.updateStudent(updated);
+                                            onRefresh();
+                                            const newDue = dbEngine.calculateStudentDue(updated, filterMonth);
+                                            setSelectedSiblingsForPayment(prev => ({
+                                              ...prev,
+                                              [sib.id]: { ...currentConfig, amountPaid: newDue, selected: true }
+                                            }));
+                                          }}
+                                          className="px-1.5 py-0.5 text-[10px] font-bold bg-white hover:bg-indigo-600 hover:text-white rounded text-slate-700 transition cursor-pointer"
+                                          title="خصم 50 ج.م لهذا الأخ"
+                                        >
+                                          -50
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updated = { ...sib, exemptionType: 'partial' as const, discountAmount: 25 };
+                                            dbEngine.updateStudent(updated);
+                                            onRefresh();
+                                            const newDue = dbEngine.calculateStudentDue(updated, filterMonth);
+                                            setSelectedSiblingsForPayment(prev => ({
+                                              ...prev,
+                                              [sib.id]: { ...currentConfig, amountPaid: newDue, selected: true }
+                                            }));
+                                          }}
+                                          className="px-1.5 py-0.5 text-[10px] font-bold bg-white hover:bg-indigo-600 hover:text-white rounded text-slate-700 transition cursor-pointer"
+                                          title="خصم 25 ج.م لهذا الأخ"
+                                        >
+                                          -25
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updated = { ...sib, exemptionType: 'none' as const, discountAmount: 0 };
+                                            dbEngine.updateStudent(updated);
+                                            onRefresh();
+                                            const newDue = dbEngine.calculateStudentDue(updated, filterMonth);
+                                            setSelectedSiblingsForPayment(prev => ({
+                                              ...prev,
+                                              [sib.id]: { ...currentConfig, amountPaid: newDue, selected: true }
+                                            }));
+                                          }}
+                                          className="px-1.5 py-0.5 text-[10px] font-bold bg-white hover:bg-slate-200 rounded text-slate-700 transition cursor-pointer"
+                                          title="سعر كامل بدون خصم"
+                                        >
+                                          كامل
+                                        </button>
+                                      </div>
+
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[10px] text-slate-500 font-bold">المسدد:</span>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          value={currentConfig.amountPaid}
+                                          onChange={(e) => {
+                                            const val = Number(e.target.value);
+                                            setSelectedSiblingsForPayment(prev => ({
+                                              ...prev,
+                                              [sib.id]: { ...currentConfig, amountPaid: val, selected: true }
+                                            }));
+                                          }}
+                                          className="w-20 px-2 py-1.5 bg-white border border-slate-300 focus:border-indigo-500 rounded-lg text-xs font-mono font-black text-emerald-800 text-center outline-none"
+                                        />
+                                        <span className="text-[10px] text-slate-400 font-bold">ج.م</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Batch Action Bar */}
+                        <div className="bg-slate-900 text-white rounded-xl p-4 sm:p-5 space-y-4 shadow-md">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-3">
+                            <div className="space-y-0.5">
+                              <span className="text-xs text-slate-400 font-bold block">ملخص التحصيل العائلي المشترك:</span>
+                              <div className="flex items-center gap-3">
+                                <span className="text-sm font-bold text-slate-200">
+                                  المحدد: <strong className="text-white font-mono">{selectedCount}</strong> إخوة
+                                </span>
+                                {batchTotalSavings > 0 && (
+                                  <span className="text-xs font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-lg">
+                                    وفر الخصم: {batchTotalSavings} ج.م 🎁
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="text-right sm:text-left bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700">
+                              <span className="text-[10px] text-slate-400 font-bold block">إجمالي المبلغ المطلوب تحصيله</span>
+                              <strong className="text-xl sm:text-2xl font-black text-amber-400 font-mono">
+                                {batchTotalPaid} ج.م
+                              </strong>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-right">
+                            <div>
+                              <label className="block text-[11px] text-slate-300 font-bold mb-1">طريقة الدفع *</label>
+                              <select
+                                value={familyBatchPaymentMethod}
+                                onChange={(e) => setFamilyBatchPaymentMethod(e.target.value)}
+                                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 focus:border-indigo-400 rounded-lg text-xs font-bold text-white outline-none"
+                              >
+                                <option value="نقدي">نقدي (في السنتر)</option>
+                                <option value="فودافون كاش">فودافون كاش (Vodafone Cash)</option>
+                                <option value="فيزا">بطاقة فيزا / ماستر كارد</option>
+                                <option value="أخرى">أخرى</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] text-slate-300 font-bold mb-1">المحصل / المستلم</label>
+                              <input
+                                type="text"
+                                placeholder="مثال: الإدارة أو أ/ محمود"
+                                value={familyBatchReceivedBy}
+                                onChange={(e) => setFamilyBatchReceivedBy(e.target.value)}
+                                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 focus:border-indigo-400 rounded-lg text-xs text-white outline-none font-medium"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] text-slate-300 font-bold mb-1">ملاحظات السداد العائلي</label>
+                              <input
+                                type="text"
+                                placeholder="مثال: سداد نقدي مشترك للإخوة بالسنتر..."
+                                value={familyBatchNotes}
+                                onChange={(e) => setFamilyBatchNotes(e.target.value)}
+                                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 focus:border-indigo-400 rounded-lg text-xs text-white outline-none font-medium"
+                              />
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={selectedCount === 0 || batchTotalPaid <= 0}
+                            onClick={(e) => handleBatchFamilyPaymentSubmit(e, allSibs, fam.parentPhone)}
+                            className="w-full py-3.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-950/40"
+                          >
+                            <Sparkles className="w-5 h-5 text-amber-300" />
+                            <span>
+                              ⚡ تحصيل وسداد الإخوة معاً بنقرة واحدة (إجمالي {batchTotalPaid} ج.م) وحفظ في الدفاتر فوراً
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  /* Family Directory Grid */
+                  <div className="space-y-4">
+                    {/* Search and filters for families */}
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div className="relative flex-1 w-full">
+                        <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="ابحث برقم هاتف ولي الأمر أو اسم أحد الأخوات أو الكود..."
+                          value={familySearchQuery}
+                          onChange={(e) => setFamilySearchQuery(e.target.value)}
+                          className="w-full pr-9 pl-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs outline-none text-right transition-all font-sans font-medium"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-lg shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setFamilyFilterStatus('all')}
+                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                            familyFilterStatus === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          الكل ({siblingFamiliesList.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFamilyFilterStatus('unpaid')}
+                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                            familyFilterStatus === 'unpaid' ? 'bg-red-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          عليهم مستحقات ({siblingFamiliesList.filter(f => !f.allPaid).length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFamilyFilterStatus('paid')}
+                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition cursor-pointer ${
+                            familyFilterStatus === 'paid' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          مسددين ({siblingFamiliesList.filter(f => f.allPaid).length})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Families Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {(() => {
+                        const filteredFamilies = siblingFamiliesList.filter(fam => {
+                          if (familyFilterStatus === 'unpaid' && fam.allPaid) return false;
+                          if (familyFilterStatus === 'paid' && !fam.allPaid) return false;
+                          if (!familySearchQuery.trim()) return true;
+                          const q = familySearchQuery.toLowerCase().trim();
+                          const matchPhone = fam.parentPhone.includes(q);
+                          const matchSib = fam.siblings.some(s => s.name.toLowerCase().includes(q) || (s.code && s.code.toLowerCase().includes(q)));
+                          return matchPhone || matchSib;
+                        });
+
+                        if (filteredFamilies.length === 0) {
+                          return (
+                            <div className="md:col-span-2 p-10 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center space-y-2">
+                              <Users className="w-8 h-8 text-slate-400 mx-auto" />
+                              <h4 className="text-xs font-bold text-slate-700">لا توجد عائلات تطابق خيارات البحث</h4>
+                              <p className="text-[11px] text-slate-500">
+                                يتم تجميع الأخوات تلقائياً عند تطابق رقم هاتف ولي الأمر بين طالبين معتمدين أو أكثر.
+                              </p>
+                            </div>
+                          );
+                        }
+
+                        return filteredFamilies.map(fam => (
+                          <div
+                            key={fam.phoneKey}
+                            className={`p-4 rounded-2xl border transition-all ${
+                              fam.allPaid
+                                ? 'bg-slate-50/70 border-slate-200'
+                                : 'bg-white border-indigo-200 hover:border-indigo-400 shadow-xs'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-mono bg-indigo-50 text-indigo-900 border border-indigo-200 px-2 py-0.5 rounded font-black">
+                                    {fam.parentPhone}
+                                  </span>
+                                  <span className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-bold">
+                                    {fam.siblings.length} إخوة
+                                  </span>
+                                </div>
+                                <h4 className="text-xs font-black text-slate-900">
+                                  عائلة: {fam.siblings.map(s => s.name.split(' ')[0]).join(' و ')}
+                                </h4>
+                              </div>
+
+                              <div>
+                                {fam.allPaid ? (
+                                  <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-1 rounded-lg font-bold flex items-center gap-1">
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                    مسددين بالكامل ✅
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] bg-red-50 text-red-800 border border-red-200 px-2 py-1 rounded-lg font-bold font-mono">
+                                    متبقي: {fam.totalDue} ج.م
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Siblings items preview */}
+                            <div className="py-3 space-y-1.5 divide-y divide-slate-100">
+                              {fam.siblings.map(s => {
+                                const due = dbEngine.calculateStudentDue(s, filterMonth);
+                                const paid = payments
+                                  .filter(p => p.studentId === s.id && p.month === filterMonth)
+                                  .reduce((sum, p) => sum + p.amountPaid, 0);
+                                const isPaid = paid >= due && due > 0;
+
+                                return (
+                                  <div key={s.id} className="pt-1.5 flex items-center justify-between text-[11px]">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-bold text-slate-800">{s.name}</span>
+                                      <span className="text-[9.5px] text-slate-400 font-mono">({s.grade})</span>
+                                      {s.exemptionType === 'partial' && (
+                                        <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1 rounded font-bold">
+                                          -50 ج.م
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="font-mono text-[10.5px]">
+                                      {isPaid ? (
+                                        <span className="text-emerald-700 font-bold">مسدد ✅</span>
+                                      ) : (
+                                        <span className="text-red-700 font-bold">{Math.max(0, due - paid)} ج.م</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Action Button */}
+                            <div className="pt-2 border-t border-slate-100">
+                              {fam.allPaid ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectFamilyForBatchPayment(fam.phoneKey, fam.siblings, filterMonth)}
+                                  className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>مراجعة أو إعادة السداد للعائلة</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectFamilyForBatchPayment(fam.phoneKey, fam.siblings, filterMonth)}
+                                  className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-[0.99]"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                                  <span>⚡ سداد اشتراك العائلة معاً (متبقي {fam.totalDue} ج.م)</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <form onSubmit={handleRecordPayment} className="space-y-6">
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Smart Student Selector Panel */}
@@ -2014,135 +2981,358 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                           </div>
                         </div>
 
-                        {/* Sibling awareness banner */}
-                        {siblings.length > 0 && (
-                          <div className="bg-linear-to-r from-indigo-50/90 via-slate-50 to-indigo-50/90 border border-indigo-200 rounded-xl p-4 space-y-3 animate-in fade-in duration-200">
-                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-indigo-100 pb-2.5">
-                              <div className="flex items-center gap-2">
-                                <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
-                                  <Users className="w-4 h-4" />
-                                </div>
-                                <div>
-                                  <h5 className="text-xs font-black text-indigo-950 flex items-center gap-1.5">
-                                    <span>تنبيه عائلي: هذا الطالب لديه ({siblings.length}) إخوة مسجلين بالسنتر 👨‍👩‍👧‍👦</span>
-                                    <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-bold">
+                        {/* Sibling awareness & One-Click Multi-Payment */}
+                        {siblings.length > 0 && (() => {
+                          const allSibs = [student, ...siblings];
+                          
+                          // Calculate live stats for all selected siblings
+                          let batchTotalPaid = 0;
+                          let batchTotalBase = 0;
+                          let batchTotalDue = 0;
+                          let selectedCount = 0;
+
+                          allSibs.forEach(sib => {
+                            const isSelected = selectedSiblingsForPayment[sib.id]?.selected ?? (() => {
+                              const sibDue = dbEngine.calculateStudentDue(sib, paymentForm.month);
+                              const sibPaid = payments
+                                .filter(p => p.studentId === sib.id && p.month === paymentForm.month)
+                                .reduce((sum, p) => sum + p.amountPaid, 0);
+                              return (sibDue - sibPaid) > 0 || (sib.id === student.id);
+                            })();
+
+                            const currentAmount = selectedSiblingsForPayment[sib.id]?.amountPaid !== undefined
+                              ? Number(selectedSiblingsForPayment[sib.id].amountPaid)
+                              : dbEngine.calculateStudentDue(sib, paymentForm.month);
+
+                            const baseP = prices[sib.grade] || 0;
+                            const dueP = dbEngine.calculateStudentDue(sib, paymentForm.month);
+
+                            if (isSelected) {
+                              selectedCount++;
+                              batchTotalPaid += currentAmount;
+                              batchTotalBase += baseP;
+                              batchTotalDue += dueP;
+                            }
+                          });
+
+                          const batchTotalSavings = Math.max(0, batchTotalBase - batchTotalDue);
+
+                          return (
+                            <div className="bg-gradient-to-r from-indigo-50/95 via-purple-50/50 to-indigo-50/95 border-2 border-indigo-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm animate-in fade-in duration-200">
+                              {/* Header & Mode Switch */}
+                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-indigo-200/80 pb-3.5">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] bg-indigo-600 text-white font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs">
+                                      <Sparkles className="w-3 h-3 text-amber-300" />
+                                      نظام تسديد الإخوة الموحد 👨‍👩‍👧‍👦
+                                    </span>
+                                    <span className="text-[10px] font-mono bg-white text-indigo-900 px-2 py-0.5 rounded-md font-bold border border-indigo-200">
                                       هاتف الوالد: {student.parentPhone}
                                     </span>
-                                  </h5>
-                                  <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                                    يمكنك تطبيق خصم الأخوات فوراً على هذا الطالب أو التبديل لسداد اشتراك الإخوة.
+                                  </div>
+                                  <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                                    <Users className="w-4.5 h-4.5 text-indigo-700" />
+                                    <span>عائلة الطالب ({student.name}) - {allSibs.length} إخوة بالسنتر</span>
+                                  </h4>
+                                  <p className="text-xs text-slate-600 font-medium">
+                                    أغلب أولياء الأمور يسددون لجميع أبنائهم معاً في نفس اليوم. يمكنك تحصيلهم دفعة واحدة بضغطة زر وتوليد إيصال عائلي موحد!
                                   </p>
+                                </div>
+
+                                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-indigo-200 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setFamilyPaymentOption('family')}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                                      familyPaymentOption === 'family'
+                                        ? 'bg-indigo-600 text-white shadow-xs'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                                    <span>سداد الإخوة معاً ⚡</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setFamilyPaymentOption('single')}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                                      familyPaymentOption === 'single'
+                                        ? 'bg-slate-900 text-white shadow-xs'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    <User className="w-3.5 h-3.5" />
+                                    <span>سداد هذا الطالب فقط</span>
+                                  </button>
                                 </div>
                               </div>
 
-                              {/* Quick 1-click Discount Actions for Current Student */}
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-[10px] text-indigo-900 font-bold">خصم سريع:</span>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const updated: Student = { ...student, exemptionType: 'partial', discountAmount: 50 };
-                                    dbEngine.updateStudent(updated);
-                                    onRefresh();
-                                    const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
-                                    setPaymentForm(prev => ({ ...prev, amountPaid: newDue }));
-                                  }}
-                                  className="px-2.5 py-1 bg-white hover:bg-indigo-600 hover:text-white text-indigo-900 border border-indigo-200 rounded-lg text-xs font-bold transition cursor-pointer shadow-2xs"
-                                  title="تطبيق خصم 50 ج.م على الطالب الحالي"
-                                >
-                                  -50 ج.م
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const updated: Student = { ...student, exemptionType: 'partial', discountAmount: 25 };
-                                    dbEngine.updateStudent(updated);
-                                    onRefresh();
-                                    const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
-                                    setPaymentForm(prev => ({ ...prev, amountPaid: newDue }));
-                                  }}
-                                  className="px-2.5 py-1 bg-white hover:bg-indigo-600 hover:text-white text-indigo-900 border border-indigo-200 rounded-lg text-xs font-bold transition cursor-pointer shadow-2xs"
-                                  title="تطبيق خصم 25 ج.م على الطالب الحالي"
-                                >
-                                  -25 ج.م
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const updated: Student = { ...student, exemptionType: 'none', discountAmount: 0 };
-                                    dbEngine.updateStudent(updated);
-                                    onRefresh();
-                                    const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
-                                    setPaymentForm(prev => ({ ...prev, amountPaid: newDue }));
-                                  }}
-                                  className="px-2 py-1 bg-white hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-[10px] font-bold transition cursor-pointer"
-                                  title="إلغاء الخصم (سعر كامل)"
-                                >
-                                  كامل (إلغاء الخصم)
-                                </button>
-                              </div>
-                            </div>
+                              {familyPaymentOption === 'family' ? (
+                                <div className="space-y-4">
+                                  {/* Siblings Grid / Checklist */}
+                                  <div className="space-y-2.5">
+                                    <span className="text-xs font-bold text-slate-700 block">
+                                      حدد الأبناء المراد تحصيل اشتراكاتهم وتعديل المبالغ إن لزم:
+                                    </span>
 
-                            {/* Siblings list with their payment status */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
-                              {siblings.map((sib) => {
-                                const sibDue = dbEngine.calculateStudentDue(sib, paymentForm.month);
-                                const sibPaid = payments
-                                  .filter(p => p.studentId === sib.id && p.month === paymentForm.month)
-                                  .reduce((sum, p) => sum + p.amountPaid, 0);
-                                const sibIsPaid = (sibPaid >= sibDue && sibDue > 0) || (sibDue === 0 && sib.exemptionType === 'full');
+                                    <div className="grid grid-cols-1 gap-2.5">
+                                      {allSibs.map((sib) => {
+                                        const isMainSelected = sib.id === student.id;
+                                        const grp = allGroups.find(g => g.id === sib.groupId);
+                                        const baseGradePrice = prices[sib.grade] || 0;
+                                        const dueAmount = dbEngine.calculateStudentDue(sib, paymentForm.month);
+                                        
+                                        const prevPaidMonth = payments
+                                          .filter(p => p.studentId === sib.id && p.month === paymentForm.month)
+                                          .reduce((sum, p) => sum + p.amountPaid, 0);
 
-                                return (
-                                  <div 
-                                    key={sib.id}
-                                    className="bg-white border border-indigo-150 rounded-xl p-3 flex items-center justify-between gap-2 text-right shadow-2xs"
-                                  >
-                                    <div className="space-y-0.5">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="font-extrabold text-slate-900 text-xs">{sib.name}</span>
-                                        <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 rounded">
-                                          {sib.code}
-                                        </span>
-                                      </div>
-                                      <div className="text-[11px] text-slate-500 font-semibold flex items-center gap-1.5">
-                                        <span>{sib.grade}</span>
-                                        <span>•</span>
-                                        <span className="text-indigo-700 font-bold">
-                                          {sib.exemptionType === 'partial' ? `خصم ${sib.discountAmount} ج.م (المطلوب: ${sibDue} ج.م)` : sib.exemptionType === 'full' ? 'معفى كلياً' : `المطلوب: ${sibDue} ج.م`}
-                                        </span>
-                                      </div>
-                                    </div>
+                                        const isAlreadyPaid = (prevPaidMonth >= dueAmount && dueAmount > 0) || (dueAmount === 0 && sib.exemptionType === 'full');
+                                        const remainingDue = Math.max(0, dueAmount - prevPaidMonth);
 
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      {sibIsPaid ? (
-                                        <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg font-extrabold flex items-center gap-1">
-                                          <Check className="w-3 h-3 text-emerald-600" />
-                                          <span>مسدد</span>
-                                        </span>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setPaymentForm(prev => ({
-                                              ...prev,
-                                              studentId: sib.id,
-                                              amountPaid: sibDue > 0 ? sibDue : prices[sib.grade] || 100,
-                                              notes: `سداد اشتراك الأخ (${sib.name}) لشهر ${paymentForm.month}`
-                                            }));
-                                          }}
-                                          className="px-2.5 py-1 bg-indigo-900 hover:bg-indigo-800 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                                          title={`التبديل لسداد اشتراك ${sib.name}`}
-                                        >
-                                          <span>سداد {sibDue} ج.م</span>
-                                        </button>
-                                      )}
+                                        const currentConfig = selectedSiblingsForPayment[sib.id] || {
+                                          selected: !isAlreadyPaid || isMainSelected,
+                                          amountPaid: remainingDue > 0 ? remainingDue : dueAmount,
+                                          month: paymentForm.month,
+                                          notes: ''
+                                        };
+
+                                        return (
+                                          <div
+                                            key={sib.id}
+                                            className={`p-3.5 rounded-xl border transition-all ${
+                                              currentConfig.selected
+                                                ? 'bg-white border-indigo-300 shadow-xs'
+                                                : 'bg-slate-50/70 border-slate-200 opacity-60'
+                                            }`}
+                                          >
+                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                                              {/* Checkbox & Sibling Info */}
+                                              <div className="flex items-center gap-3">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={currentConfig.selected}
+                                                  onChange={(e) => {
+                                                    setSelectedSiblingsForPayment(prev => ({
+                                                      ...prev,
+                                                      [sib.id]: {
+                                                        ...currentConfig,
+                                                        selected: e.target.checked,
+                                                        amountPaid: currentConfig.amountPaid || (remainingDue > 0 ? remainingDue : dueAmount)
+                                                      }
+                                                    }));
+                                                  }}
+                                                  className="w-4.5 h-4.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                                                />
+
+                                                <div className="space-y-0.5">
+                                                  <div className="flex items-center gap-2">
+                                                    <span className="font-extrabold text-slate-900 text-xs sm:text-sm">
+                                                      {sib.name}
+                                                    </span>
+                                                    <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold">
+                                                      {sib.code}
+                                                    </span>
+                                                    {isMainSelected && (
+                                                      <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded font-bold">
+                                                        الطالب المختار
+                                                      </span>
+                                                    )}
+                                                    {isAlreadyPaid && (
+                                                      <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.2 rounded-md font-bold flex items-center gap-0.5">
+                                                        <Check className="w-3 h-3 text-emerald-600" />
+                                                        مسدد ({prevPaidMonth} ج.م)
+                                                      </span>
+                                                    )}
+                                                  </div>
+
+                                                  <div className="text-[11px] text-slate-500 font-semibold flex items-center gap-2 flex-wrap">
+                                                    <span>{sib.grade}</span>
+                                                    <span>•</span>
+                                                    <span>المجموعة: {grp ? grp.name : 'غير محددة'}</span>
+                                                    <span>•</span>
+                                                    <span className="text-slate-600 font-bold">
+                                                      الاشتراك: {baseGradePrice} ج.م
+                                                    </span>
+                                                    {sib.exemptionType === 'partial' && (
+                                                      <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded font-extrabold text-[10px]">
+                                                        خصم إخوة: -{sib.discountAmount} ج.م
+                                                      </span>
+                                                    )}
+                                                    {sib.exemptionType === 'full' && (
+                                                      <span className="text-purple-700 bg-purple-50 px-1.5 py-0.2 rounded font-extrabold text-[10px]">
+                                                        إعفاء كامل 🎁
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </div>
+
+                                              {/* Controls: Quick Discount & Amount to Pay */}
+                                              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
+                                                {/* 1-Click Discount adjustment for this child */}
+                                                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const updated = { ...sib, exemptionType: 'partial' as const, discountAmount: 50 };
+                                                      dbEngine.updateStudent(updated);
+                                                      onRefresh();
+                                                      const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
+                                                      setSelectedSiblingsForPayment(prev => ({
+                                                        ...prev,
+                                                        [sib.id]: { ...currentConfig, amountPaid: newDue, selected: true }
+                                                      }));
+                                                    }}
+                                                    className="px-1.5 py-0.5 text-[10px] font-bold bg-white hover:bg-indigo-600 hover:text-white rounded text-slate-700 transition cursor-pointer"
+                                                    title="خصم 50 ج.م لهذا الأخ"
+                                                  >
+                                                    -50
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const updated = { ...sib, exemptionType: 'partial' as const, discountAmount: 25 };
+                                                      dbEngine.updateStudent(updated);
+                                                      onRefresh();
+                                                      const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
+                                                      setSelectedSiblingsForPayment(prev => ({
+                                                        ...prev,
+                                                        [sib.id]: { ...currentConfig, amountPaid: newDue, selected: true }
+                                                      }));
+                                                    }}
+                                                    className="px-1.5 py-0.5 text-[10px] font-bold bg-white hover:bg-indigo-600 hover:text-white rounded text-slate-700 transition cursor-pointer"
+                                                    title="خصم 25 ج.م لهذا الأخ"
+                                                  >
+                                                    -25
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const updated = { ...sib, exemptionType: 'none' as const, discountAmount: 0 };
+                                                      dbEngine.updateStudent(updated);
+                                                      onRefresh();
+                                                      const newDue = dbEngine.calculateStudentDue(updated, paymentForm.month);
+                                                      setSelectedSiblingsForPayment(prev => ({
+                                                        ...prev,
+                                                        [sib.id]: { ...currentConfig, amountPaid: newDue, selected: true }
+                                                      }));
+                                                    }}
+                                                    className="px-1.5 py-0.5 text-[10px] font-bold bg-white hover:bg-slate-200 rounded text-slate-700 transition cursor-pointer"
+                                                    title="سعر كامل بدون خصم"
+                                                  >
+                                                    كامل
+                                                  </button>
+                                                </div>
+
+                                                {/* Amount Paid Input */}
+                                                <div className="flex items-center gap-1.5">
+                                                  <span className="text-[10px] text-slate-500 font-bold">المسدد:</span>
+                                                  <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={currentConfig.amountPaid}
+                                                    onChange={(e) => {
+                                                      const val = Number(e.target.value);
+                                                      setSelectedSiblingsForPayment(prev => ({
+                                                        ...prev,
+                                                        [sib.id]: { ...currentConfig, amountPaid: val, selected: true }
+                                                      }));
+                                                    }}
+                                                    className="w-20 px-2 py-1.5 bg-slate-50 border border-slate-300 focus:bg-white focus:border-indigo-500 rounded-lg text-xs font-mono font-black text-emerald-800 text-center outline-none"
+                                                  />
+                                                  <span className="text-[10px] text-slate-400 font-bold">ج.م</span>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   </div>
-                                );
-                              })}
+
+                                  {/* Financial Summary & Batch Payment Bar */}
+                                  <div className="bg-slate-900 text-white rounded-xl p-4 sm:p-5 space-y-4 shadow-md">
+                                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-3">
+                                      <div className="space-y-0.5">
+                                        <span className="text-xs text-slate-400 font-bold block">ملخص التحصيل العائلي:</span>
+                                        <div className="flex items-center gap-3">
+                                          <span className="text-sm font-bold text-slate-200">
+                                            المحدد: <strong className="text-white font-mono">{selectedCount}</strong> إخوة
+                                          </span>
+                                          {batchTotalSavings > 0 && (
+                                            <span className="text-xs font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-lg">
+                                              وفر الخصم: {batchTotalSavings} ج.م 🎁
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="text-right sm:text-left bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700">
+                                        <span className="text-[10px] text-slate-400 font-bold block">إجمالي المبلغ المطلوب تحصيله</span>
+                                        <strong className="text-xl sm:text-2xl font-black text-amber-400 font-mono">
+                                          {batchTotalPaid} ج.م
+                                        </strong>
+                                      </div>
+                                    </div>
+
+                                    {/* Payment Method & Notes */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-right">
+                                      <div>
+                                        <label className="block text-[11px] text-slate-300 font-bold mb-1">طريقة الدفع *</label>
+                                        <select
+                                          value={familyBatchPaymentMethod}
+                                          onChange={(e) => setFamilyBatchPaymentMethod(e.target.value)}
+                                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 focus:border-indigo-400 rounded-lg text-xs font-bold text-white outline-none"
+                                        >
+                                          <option value="نقدي">نقدي (في السنتر)</option>
+                                          <option value="فودافون كاش">فودافون كاش (Vodafone Cash)</option>
+                                          <option value="فيزا">بطاقة فيزا / ماستر كارد</option>
+                                          <option value="أخرى">أخرى</option>
+                                        </select>
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[11px] text-slate-300 font-bold mb-1">المحصل / المستلم</label>
+                                        <input
+                                          type="text"
+                                          placeholder="مثال: الإدارة أو أ/ محمود"
+                                          value={familyBatchReceivedBy}
+                                          onChange={(e) => setFamilyBatchReceivedBy(e.target.value)}
+                                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 focus:border-indigo-400 rounded-lg text-xs text-white outline-none font-medium"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[11px] text-slate-300 font-bold mb-1">ملاحظات السداد العائلي</label>
+                                        <input
+                                          type="text"
+                                          placeholder="مثال: سداد نقدي مشترك للإخوة بالسنتر..."
+                                          value={familyBatchNotes}
+                                          onChange={(e) => setFamilyBatchNotes(e.target.value)}
+                                          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 focus:border-indigo-400 rounded-lg text-xs text-white outline-none font-medium"
+                                        />
+                                      </div>
+                                    </div>
+
+                                    {/* The Grand One-Click Button */}
+                                    <button
+                                      type="button"
+                                      disabled={selectedCount === 0 || batchTotalPaid <= 0}
+                                      onClick={(e) => handleBatchFamilyPaymentSubmit(e, allSibs, student.parentPhone || student.phone)}
+                                      className="w-full py-3.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-950/40"
+                                    >
+                                      <Sparkles className="w-5 h-5 text-amber-300 animate-spin" style={{ animationDuration: '3s' }} />
+                                      <span>
+                                        ⚡ تحصيل وسداد الإخوة معاً بنقرة واحدة (إجمالي {batchTotalPaid} ج.م) وحفظ في الدفاتر فوراً
+                                      </span>
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     );
                   })()
@@ -2439,6 +3629,8 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
             </div>
           </form>
         )}
+      </div>
+    )}
 
         {/* SUBTAB 3: DEBTORS */}
         {activeSubTab === 'debtors' && (
@@ -2523,6 +3715,21 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                             <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
                             <span>تاريخ التسجيل: <strong className="font-sans text-slate-700 font-semibold">{formatStudentRegistrationDate(student.createdAt)}</strong></span>
                           </div>
+                          {(() => {
+                            const cleanPhone = normalizePhoneNumber(student.parentPhone || student.phone);
+                            const sibs = cleanPhone && cleanPhone.length >= 8
+                              ? students.filter(s => s.id !== student.id && s.status === 'approved' && normalizePhoneNumber(s.parentPhone || s.phone) === cleanPhone)
+                              : [];
+                            if (sibs.length === 0) return null;
+                            return (
+                              <div className="mt-1">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                                  <Users className="w-3 h-3" />
+                                  <span>له {sibs.length} إخوة بالسنتر</span>
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </td>
                       <td className="py-3.5 px-6 text-slate-650">{student.grade}</td>
@@ -2554,6 +3761,25 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                             <span className="text-xs text-emerald-600 font-bold px-2 py-1 bg-emerald-50 rounded-lg border border-emerald-100">مكتمل 🟢</span>
                           ) : (
                             <>
+                              {(() => {
+                                const cleanPhone = normalizePhoneNumber(student.parentPhone || student.phone);
+                                const sibs = cleanPhone && cleanPhone.length >= 8
+                                  ? students.filter(s => s.id !== student.id && s.status === 'approved' && normalizePhoneNumber(s.parentPhone || s.phone) === cleanPhone)
+                                  : [];
+                                if (sibs.length === 0) return null;
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectFamilyForBatchPayment(cleanPhone, [student, ...sibs], filterMonth)}
+                                    className="px-2.5 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg text-xs font-black transition flex items-center gap-1 cursor-pointer shadow-xs"
+                                    title="تسديد مصاريف الطالب وجميع إخوته معاً في نفس اليوم دفعة واحدة"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                                    <span>سداد الإخوة معاً ⚡</span>
+                                  </button>
+                                );
+                              })()}
+
                               <button
                                 type="button"
                                 onClick={() => handleSendDebtorWhatsAppReminder(student, filterMonth, balance, amountDue)}
@@ -2610,6 +3836,7 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
                 });
                 setActiveSubTab('add');
               }}
+              onSelectFamilyForPayment={handleSelectFamilyForBatchPayment}
             />
           </div>
         )}
@@ -4400,7 +5627,276 @@ export default function FinanceManager({ students, payments, prices, onRefresh }
         </div>
       )}
 
-      {/* FLOATING TOAST FEEDBACK WHEN RECEIPT MODAL IS CLOSED */}
+      {/* Hidden Printable Container for iframe printing - always in DOM when familyBatchSuccess exists */}
+      {familyBatchSuccess && (
+        <div id="family-receipt-print-area" className="hidden">
+          <div style={{ maxWidth: '500px', margin: '0 auto', fontFamily: 'Cairo, sans-serif', direction: 'rtl', padding: '20px', border: '2px solid #0f172a', borderRadius: '12px' }}>
+            {/* Receipt Header */}
+            <div style={{ textAlign: 'center', borderBottom: '2px solid #0f172a', paddingBottom: '12px', marginBottom: '14px' }}>
+              <h2 style={{ margin: '0 0 4px 0', fontSize: '18px', fontWeight: '900', color: '#0f172a' }}>
+                {dbEngine.getReceiptSettings().centerName || 'مجموعات العلوم المتطورة'}
+              </h2>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '14px', fontWeight: '700', color: '#334155' }}>
+                {dbEngine.getReceiptSettings().teacherName || 'الأستاذ محمود أبوذكري'}
+              </h3>
+              {dbEngine.getReceiptSettings().subTitle && (
+                <p style={{ margin: '0 0 4px 0', fontSize: '11px', color: '#64748b' }}>
+                  {dbEngine.getReceiptSettings().subTitle}
+                </p>
+              )}
+              {dbEngine.getReceiptSettings().phone && (
+                <p style={{ margin: '0', fontSize: '11px', fontFamily: 'monospace', color: '#475569' }}>
+                  هاتف / واتساب: {dbEngine.getReceiptSettings().phone}
+                </p>
+              )}
+            </div>
+
+            {/* Title Badge */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: '10px', marginBottom: '12px', fontSize: '12px' }}>
+              <span style={{ backgroundColor: '#0f172a', color: '#ffffff', padding: '4px 10px', borderRadius: '4px', fontWeight: '900', fontSize: '11px' }}>
+                إيصال سداد عائلي موحد للأخوات 👨‍👩‍👧‍👦
+              </span>
+              <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#475569' }}>
+                التاريخ: {familyBatchSuccess.date}
+              </span>
+            </div>
+
+            {/* Family Details */}
+            <div style={{ marginBottom: '12px', fontSize: '12px', lineHeight: '1.6' }}>
+              <div><strong>هاتف ولي الأمر:</strong> {familyBatchSuccess.parentPhone}</div>
+              <div><strong>طريقة التحصيل:</strong> {familyBatchSuccess.paymentMethod}</div>
+              {familyBatchSuccess.receivedBy && <div><strong>المستلم / المحصل:</strong> {familyBatchSuccess.receivedBy}</div>}
+              {familyBatchSuccess.notes && <div><strong>ملاحظات:</strong> {familyBatchSuccess.notes}</div>}
+            </div>
+
+            {/* Siblings Table */}
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', marginBottom: '14px', border: '1px solid #e2e8f0' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1', textAlign: 'right' }}>
+                  <th style={{ padding: '6px 8px' }}>اسم الطالب</th>
+                  <th style={{ padding: '6px 8px' }}>الصف والمجموعة</th>
+                  <th style={{ padding: '6px 8px' }}>الشهر</th>
+                  <th style={{ padding: '6px 8px' }}>الخصم</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'left' }}>المسدد</th>
+                </tr>
+              </thead>
+              <tbody>
+                {familyBatchSuccess.items.map((it) => (
+                  <tr key={it.studentId} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                    <td style={{ padding: '6px 8px', fontWeight: 'bold' }}>{it.studentName}</td>
+                    <td style={{ padding: '6px 8px' }}>{it.grade}</td>
+                    <td style={{ padding: '6px 8px' }}>{it.month}</td>
+                    <td style={{ padding: '6px 8px' }}>{it.discountAmount ? `-${it.discountAmount} ج.م` : '-'}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 'bold', fontFamily: 'monospace' }}>{it.amountPaid} ج.م</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Grand Total */}
+            <div style={{ backgroundColor: '#0f172a', color: '#ffffff', padding: '12px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#94a3b8' }}>إجمالي ما تم تحصيله للعائلة:</div>
+                <div style={{ fontSize: '10px', color: '#4ade80' }}>
+                  {familyBatchSuccess.totalDiscount > 0 ? `(وفر الخصومات العائلية: ${familyBatchSuccess.totalDiscount} ج.م)` : ''}
+                </div>
+              </div>
+              <div style={{ fontSize: '18px', fontWeight: '900', color: '#facc15', fontFamily: 'monospace' }}>
+                {familyBatchSuccess.totalPaid} ج.م
+              </div>
+            </div>
+
+            {/* Footer & QR */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #cbd5e1', paddingTop: '10px', fontSize: '10px', color: '#64748b' }}>
+              <div>
+                <div>شاكرين ومقدرين حسن تعاونكم وثقتكم الغالية 🌟</div>
+                <div>توقيع المستلم: ...............................</div>
+              </div>
+              <div>
+                <QRCodeSVG value={`FAMILY-RECEIPT|${familyBatchSuccess.parentPhone}|${familyBatchSuccess.totalPaid}EGP|${familyBatchSuccess.date}`} size={55} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FAMILY BATCH PAYMENT SUCCESS & UNIFIED RECEIPT MODAL (ONLY OPENED ON DEMAND) */}
+      {familyBatchSuccess && isFamilyReceiptModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full my-6 overflow-hidden text-right animate-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+            
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white p-5 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/20 rounded-xl">
+                  <Sparkles className="w-6 h-6 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base sm:text-lg flex items-center gap-2">
+                    <span>إيصال سداد اشتراك الإخوة الموحد 👨‍👩‍👧‍👦</span>
+                  </h3>
+                  <p className="text-emerald-100 text-xs mt-0.5">
+                    تفاصيل السندات المقيدة في الدفاتر المحاسبية
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsFamilyReceiptModalOpen(false)}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1">
+              {/* Financial Quick Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                  <span className="text-[10px] text-emerald-800 font-bold block">إجمالي المسدد</span>
+                  <strong className="text-lg font-black text-emerald-900 font-mono">
+                    {familyBatchSuccess.totalPaid} ج.م
+                  </strong>
+                </div>
+
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
+                  <span className="text-[10px] text-purple-800 font-bold block">وفر الخصومات</span>
+                  <strong className="text-lg font-black text-purple-900 font-mono">
+                    {familyBatchSuccess.totalDiscount} ج.م
+                  </strong>
+                </div>
+
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3">
+                  <span className="text-[10px] text-indigo-800 font-bold block">عدد الإخوة المسددين</span>
+                  <strong className="text-lg font-black text-indigo-900 font-mono">
+                    {familyBatchSuccess.items.length} طلاب
+                  </strong>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <span className="text-[10px] text-slate-600 font-bold block">طريقة الدفع</span>
+                  <strong className="text-xs font-black text-slate-900 block mt-1">
+                    {familyBatchSuccess.paymentMethod}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Family & Contact Info */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div>
+                  <span className="text-slate-500 font-bold">هاتف ولي الأمر: </span>
+                  <strong className="font-mono text-slate-900 font-bold">{familyBatchSuccess.parentPhone}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 font-bold">تاريخ المعاملة: </span>
+                  <strong className="font-mono text-slate-900 font-bold">{familyBatchSuccess.date}</strong>
+                </div>
+                {familyBatchSuccess.receivedBy && (
+                  <div>
+                    <span className="text-slate-500 font-bold">المستلم: </span>
+                    <strong className="text-slate-900 font-bold">{familyBatchSuccess.receivedBy}</strong>
+                  </div>
+                )}
+              </div>
+
+              {/* Siblings Table */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="bg-slate-100/80 px-4 py-2 text-xs font-black text-slate-800 border-b border-slate-200 flex items-center justify-between">
+                  <span>تفاصيل الأبناء الذين تم السداد لهم:</span>
+                  <span className="text-[10px] text-slate-500 font-normal">تم إصدار سند لكل طالب</span>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {familyBatchSuccess.items.map((item) => (
+                    <div key={item.studentId} className="p-3 bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-900 text-xs sm:text-sm">{item.studentName}</span>
+                          {item.studentCode && (
+                            <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-bold">
+                              {item.studentCode}
+                            </span>
+                          )}
+                          {item.discountAmount && item.discountAmount > 0 ? (
+                            <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded font-bold">
+                              خصم: -{item.discountAmount} ج.م
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-semibold flex items-center gap-2">
+                          <span>{item.grade}</span>
+                          <span>•</span>
+                          <span>المجموعة: {item.groupName || 'غير محددة'}</span>
+                          <span>•</span>
+                          <span className="font-bold text-indigo-900">شهر: {item.month}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+                        {item.paymentId && (
+                          <span className="text-[10px] font-mono text-slate-400">
+                            سند #{item.paymentId.slice(-6)}
+                          </span>
+                        )}
+                        <span className="px-3 py-1 bg-emerald-100 text-emerald-900 rounded-lg text-xs font-black font-mono">
+                          {item.amountPaid} ج.م
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-2 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleSendFamilyWhatsApp(familyBatchSuccess)}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 transition cursor-pointer shadow-md shadow-emerald-950/20"
+                  >
+                    <MessageCircle className="w-4.5 h-4.5 text-white" />
+                    <span>إرسال إيصال عائلي موحد عبر واتساب 📲</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handlePrintFamilyReceipt(familyBatchSuccess)}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 transition cursor-pointer shadow-md shadow-indigo-950/20"
+                  >
+                    <Printer className="w-4.5 h-4.5 text-white" />
+                    <span>طباعة إيصال عائلي موحد 🖨️</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFamilyReceiptModalOpen(false);
+                      setFamilyBatchSuccessFeedback(null);
+                      setActiveFamilyKey(null);
+                    }}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>تسجيل سداد عائلة أخرى</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsFamilyReceiptModalOpen(false)}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                  >
+                    إغلاق النافذة
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
       {whatsAppToast && !selectedReceiptPayment && (
         <div className="fixed bottom-6 left-6 z-50 max-w-md animate-in slide-in-from-bottom-5 fade-in duration-200 pointer-events-auto">
           <div className={`p-4 rounded-xl text-xs font-bold flex items-center gap-3 shadow-xl border ${

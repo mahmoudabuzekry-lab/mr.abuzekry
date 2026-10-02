@@ -363,6 +363,100 @@ export function formatReceiptWhatsAppMessage(
   return message.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+export interface SiblingPaymentItem {
+  studentId: string;
+  studentName: string;
+  studentCode: string;
+  grade: GradeType;
+  month: string;
+  amountPaid: number;
+  amountDue: number;
+  basePrice?: number;
+  discountAmount?: number;
+  exemptionType?: ExemptionType;
+  paymentId?: string;
+  groupId?: string;
+  groupName?: string;
+}
+
+export interface FamilyBatchPaymentData {
+  familyPhone: string;
+  familyKey: string;
+  parentPhone: string;
+  studentNames: string[];
+  items: SiblingPaymentItem[];
+  totalPaid: number;
+  totalDue: number;
+  totalDiscount: number;
+  date: string;
+  paymentMethod: string;
+  receivedBy?: string;
+  notes?: string;
+  createdPaymentIds: string[];
+}
+
+export function formatFamilyReceiptWhatsAppMessage(
+  familyData: {
+    parentPhone?: string;
+    date?: string;
+    paymentMethod?: string;
+    receivedBy?: string;
+    notes?: string;
+    items: SiblingPaymentItem[];
+  },
+  settings: ReceiptSettings
+): string {
+  const teacher = settings.teacherName || 'الأستاذ محمود أبوذكري';
+  const center = settings.centerName || 'مجموعات العلوم المتطورة';
+  const contactPhone = settings.phone ? `📞 *للتواصل والاستفسار:* ${settings.phone}` : (settings.phone || '');
+  const receiver = familyData.receivedBy || settings.receiverName || 'إدارة المركز';
+  const payMethod = familyData.paymentMethod || 'نقدي';
+  const dateStr = familyData.date || new Date().toISOString().split('T')[0];
+
+  const totalPaid = familyData.items.reduce((sum, item) => sum + (Number(item.amountPaid) || 0), 0);
+  const totalDue = familyData.items.reduce((sum, item) => sum + (Number(item.amountDue) || 0), 0);
+  const totalSavings = Math.max(0, totalDue - totalPaid);
+
+  const studentLines = familyData.items.map((item, idx) => {
+    let line = `🔹 *${idx + 1}. الطالب/ـة:* ${item.studentName} (${item.grade})\n   ▫️ كود: ${item.studentCode || '—'} | شهر: ${item.month}\n   ▫️ المبلغ المقبوض: *${item.amountPaid} ج.م*`;
+    if (item.discountAmount && item.discountAmount > 0) {
+      line += ` (خصم إخوة: ${item.discountAmount} ج.م 🏷️)`;
+    } else if (item.exemptionType === 'full') {
+      line += ` (إعفاء كامل 100% 🎁)`;
+    }
+    return line;
+  }).join('\n\n');
+
+  let text = `السلام عليكم ورحمة الله وبركاته 🌸
+تحية طيبة لولي أمر أبنائنا الكرام المحترم/ـة،
+
+يسر إدارة *${center}* - *${teacher}* إفادتكم بصدور وتأكيد *إيصال السداد المالي العائلي الموحد* لأبنائكم:
+
+🧾 *تفاصيل سداد اشتراكات الإخوة:*
+━━━━━━━━━━━━━━━
+${studentLines}
+━━━━━━━━━━━━━━━
+💰 *إجمالي المبلغ المقبوض:* *${totalPaid} ج.م* (خالص ومسدد بالكامل ✅)`;
+
+  if (totalSavings > 0) {
+    text += `\n🎁 *إجمالي وفر خصم الأخوات الممنوح:* *${totalSavings} ج.م*`;
+  }
+
+  text += `\n📅 *تاريخ التحصيل:* ${dateStr}
+💳 *طريقة الدفع:* ${payMethod}
+👤 *المحصل/المستلم:* ${receiver}`;
+
+  if (familyData.notes) {
+    text += `\n📝 *ملاحظات:* ${familyData.notes}`;
+  }
+
+  text += `\n━━━━━━━━━━━━━━━
+✨ نشكركم دائماً على ثقتكم الغالية وحسن تعاونكم، متمنين لأبنائنا دوام التفوق والدرجات العالية 🌟
+${settings.footerMessage ? `_${settings.footerMessage}_\n` : ''}${contactPhone}`;
+
+  return text.trim();
+}
+
 
 
 
